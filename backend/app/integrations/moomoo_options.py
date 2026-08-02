@@ -1,0 +1,292 @@
+from __future__ import annotations
+
+from collections.abc import Callable
+from datetime import UTC, datetime
+from math import isfinite
+from typing import Any, Protocol
+
+import pandas as pd
+
+from app.analytics.options import OptionContract, summarize_expiration
+
+
+class OptionsCollectorAdapter(Protocol):
+    def options_snapshot(self) -> dict[str, object]: ...
+
+    def close(self) -> None: ...
+
+
+class DisabledOptionsAdapter:
+    def options_snapshot(self) -> dict[str, object]:
+        return {
+            "is_mock": True,
+            "status": "not_implemented",
+            "available": False,
+            "provider": None,
+            "symbols": [],
+            "note": "Moomoo 期权快照未启用。",
+        }
+
+    def close(self) -> None:
+        return None
+
+
+class MoomooOptionsAdapter:
+    """Snapshot-only Moomoo options collector; never calls subscribe()."""
+
+    def __init__(
+        self,
+        *,
+        host: str,
+        port: int,
+        symbols: list[str],
+        target_dtes: list[int],
+        max_dte: int,
+        strike_range_percent: float,
+        batch_size: int,
+        quote_context_factory: Callable[..., Any] | None = None,
+    ) -> None:
+        if not symbols:
+            raise ValueError("at least one option target symbol is required")
+        if not 1 <= batch_size <= 400:
+            raise ValueError("Moomoo option snapshot batch size must be between 1 and 400")
+        self.host = host
+        self.port = port
+        self.symbols = [self._market_code(item) for item in symbols]
+        self.target_dtes = target_dtes
+        self.max_dte = max_dte
+        self.strike_range_percent = strike_range_percent
+        self.batch_size = batch_size
+        self._quote_context_factory = quote_context_factory
+        self._quote_ctx: Any | None = None
+
+    @staticmethod
+    def _market_code(symbol: str) -> str:
+        normalized = symbol.strip().upper()
+        return normalized if "." in normalized else f"US.{normalized}"
+
+    def _context(self) -> Any:
+        if self._quote_ctx is None:
+            factory = self._quote_context_factory
+            if factory is None:
+                from futu import OpenQuoteContext
+
+                factory = OpenQuoteContext
+            self._quote_ctx = factory(host=self.host, port=self.port)
+        return self._quote_ctx
+
+    @staticmethod
+    def _require_ok(label: str, result: tuple[int, object]) -> object:
+        ret, data = result
+        if ret != 0:
+            raise RuntimeError(f"{label} failed: {data}")
+        return data
+
+    @staticmethod
+    def _number(value: object, default: float | None = None) -> float | None:
+        try:
+            result = float(value)
+        except (TypeError, ValueError):
+            return default
+        return result if isfinite(result) else default
+
+    @classmethod
+    def _integer(cls, value: object) -> int:
+        number = cls._number(value, 0.0)
+        return max(0, int(number or 0))
+
+    @staticmethod
+    def _chunks(values: list[str], size: int) -> list[list[str]]:
+        return [values[index : index + size] for index in range(0, len(values), size)]
+
+    def _select_expirations(self, frame: pd.DataFrame) -> list[tuple[str, int]]:
+        eligible = frame[
+            (frame["option_expiry_date_distance"] >= 0)
+            & (frame["option_expiry_date_distance"] <= self.max_dte)
+        ].copy()
+        if eligible.empty:
+            return []
+        selected_indexes = {
+            (eligible["option_expiry_date_distance"] - target).abs().idxmin()
+            for target in self.target_dtes
+        }
+        selected = eligible.loc[list(selected_indexes)].sort_values("option_expiry_date_distance")
+        return [
+            (str(row["strike_time"]), int(row["option_expiry_date_distance"]))
+            for _, row in selected.iterrows()
+        ]
+
+    def _snapshot_contracts(
+        self,
+        *,
+        underlying: str,
+        spot: float,
+        expiration: str,
+        chain: pd.DataFrame,
+    ) -> list[OptionContract]:
+        lower = spot * (1 - self.strike_range_percent / 100)
+        upper = spot * (1 + self.strike_range_percent / 100)
+        window = chain[(chain["strike_price"] >= lower) & (chain["strike_price"] <= upper)]
+        codes = [str(code) for code in window["code"].tolist()]
+        snapshots: list[pd.DataFrame] = []
+        for chunk in self._chunks(codes, self.batch_size):
+            frame = self._require_ok(
+                f"get_market_snapshot({underlying} options)",
+                self._context().get_market_snapshot(chunk),
+            )
+            if isinstance(frame, pd.DataFrame):
+                snapshots.append(frame)
+        if not snapshots:
+            return []
+        snapshot = pd.concat(snapshots, ignore_index=True)
+        static_by_code = window.set_index("code").to_dict("index")
+        contracts: list[OptionContract] = []
+        for row in snapshot.to_dict("records"):
+            code = str(row["code"])
+            static = static_by_code.get(code)
+            if static is None:
+                continue
+            multiplier = self._number(row.get("option_contract_multiplier"), 100.0) or 100.0
+            contracts.append(
+                OptionContract(
+                    code=code,
+                    option_type=str(static["option_type"]).upper(),
+                    expiration=expiration,
+                    strike=float(static["strike_price"]),
+                    spot=spot,
+                    multiplier=multiplier,
+                    bid=self._number(row.get("bid_price")),
+                    ask=self._number(row.get("ask_price")),
+                    last=self._number(row.get("last_price")),
+                    volume=self._integer(row.get("volume")),
+                    open_interest=self._integer(row.get("option_open_interest")),
+                    implied_volatility=self._number(row.get("option_implied_volatility")),
+                    delta=self._number(row.get("option_delta")),
+                    gamma=self._number(row.get("option_gamma")),
+                    quote_time=str(row.get("update_time") or "") or None,
+                )
+            )
+        return contracts
+
+    def options_snapshot(self) -> dict[str, object]:
+        context = self._context()
+        subscription_before = self._require_ok(
+            "query_subscription(before)", context.query_subscription()
+        )
+        underlying = self._require_ok(
+            "get_market_snapshot(underlyings)", context.get_market_snapshot(self.symbols)
+        )
+        overview = self._require_ok(
+            "get_option_underlying_overview", context.get_option_underlying_overview(self.symbols)
+        )
+        if not isinstance(underlying, pd.DataFrame) or not isinstance(overview, pd.DataFrame):
+            raise RuntimeError("Moomoo returned an invalid options overview response")
+        overview_by_code = overview.set_index("code").to_dict("index")
+        underlying_by_code = underlying.set_index("code").to_dict("index")
+
+        symbol_results: list[dict[str, object]] = []
+        warnings = [
+            "Open interest is the latest exchange daily update, not a real-time position change.",
+            "Modeled net GEX assumes calls are positive and puts are negative; dealer positions are unknown.",
+        ]
+        for code in self.symbols:
+            quote = underlying_by_code.get(code)
+            if quote is None:
+                warnings.append(f"{code} underlying snapshot is unavailable")
+                continue
+            spot = self._number(quote.get("last_price"))
+            if spot is None or spot <= 0:
+                warnings.append(f"{code} has no valid underlying price")
+                continue
+            expirations = self._require_ok(
+                f"get_option_expiration_date({code})", context.get_option_expiration_date(code)
+            )
+            if not isinstance(expirations, pd.DataFrame):
+                warnings.append(f"{code} expiration response is invalid")
+                continue
+
+            expiration_results: list[dict[str, object]] = []
+            for expiration, days_to_expiry in self._select_expirations(expirations):
+                chain = self._require_ok(
+                    f"get_option_chain({code}, {expiration})",
+                    context.get_option_chain(code, start=expiration, end=expiration),
+                )
+                if not isinstance(chain, pd.DataFrame) or chain.empty:
+                    warnings.append(f"{code} {expiration} option chain is empty")
+                    continue
+                contracts = self._snapshot_contracts(
+                    underlying=code,
+                    spot=spot,
+                    expiration=expiration,
+                    chain=chain,
+                )
+                if not contracts:
+                    warnings.append(f"{code} {expiration} has no contracts in snapshot window")
+                    continue
+                expiration_results.append(
+                    summarize_expiration(
+                        contracts,
+                        expiration=expiration,
+                        days_to_expiry=days_to_expiry,
+                    )
+                )
+
+            overview_row = overview_by_code.get(code, {})
+            symbol_results.append(
+                {
+                    "symbol": code.removeprefix("US."),
+                    "spot": spot,
+                    "spot_time": str(quote.get("update_time") or "") or None,
+                    "overview": {
+                        key: self._number(overview_row.get(key))
+                        for key in (
+                            "call_volume",
+                            "put_volume",
+                            "call_open_interest",
+                            "put_open_interest",
+                            "iv",
+                            "iv_rank",
+                            "iv_percentile",
+                            "hv_30d",
+                        )
+                    },
+                    "expirations": expiration_results,
+                }
+            )
+
+        subscription_after = self._require_ok(
+            "query_subscription(after)", context.query_subscription()
+        )
+        quota_keys = (
+            "option_used_quota",
+            "option_remain_quota",
+            "own_option_used_quota",
+        )
+        before_quota = {key: subscription_before.get(key) for key in quota_keys}
+        after_quota = {key: subscription_after.get(key) for key in quota_keys}
+        if before_quota != after_quota:
+            raise RuntimeError("option subscription quota changed in snapshot-only collector")
+
+        return {
+            "is_mock": False,
+            "status": "available" if symbol_results else "unavailable",
+            "available": bool(symbol_results),
+            "provider": "moomoo_openapi",
+            "source_mode": "snapshot",
+            "captured_at": datetime.now(UTC).isoformat(),
+            "symbols": symbol_results,
+            "subscription_quota": after_quota,
+            "model_assumptions": [
+                "DEX = delta × open_interest × contract_multiplier × spot.",
+                "GEX = gamma × open_interest × contract_multiplier × spot² × 1%.",
+                "Modeled net GEX assigns positive sign to calls and negative sign to puts.",
+                "Max pain is calculated independently for each expiration.",
+            ],
+            "warnings": warnings,
+            "note": "Moomoo LV1 snapshot-derived DEX/GEX and max-pain analytics; no option subscription used.",
+        }
+
+    def close(self) -> None:
+        if self._quote_ctx is not None:
+            self._quote_ctx.close()
+            self._quote_ctx = None

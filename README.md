@@ -1,6 +1,6 @@
 # Urus
 
-Urus 是一个股票分析与决策辅助系统的前后端分离框架。当前 `main` 只保留可离线运行的工作流骨架和 mock adapter；真实行情、宏观数据和技术指标在后续阶段分支中逐步接入。
+Urus 是一个股票分析与决策辅助系统的前后端分离框架。`stage2` 在 `main` 骨架上接入 Moomoo 美股期权 LV1 快照，计算 DEX、GEX、Gamma Wall、Max Pain 和预期波动，并保留其余阶段的 mock 边界。
 
 ## 目录
 
@@ -28,7 +28,7 @@ npm install
 npm run dev
 ```
 
-打开 `http://localhost:5173/`；FastAPI OpenAPI 位于 `http://127.0.0.1:8000/docs`。
+打开 `http://localhost:5173/options` 查看期权验证工作台；FastAPI OpenAPI 位于 `http://127.0.0.1:8000/docs`。
 
 ## 测试与构建
 
@@ -39,4 +39,4 @@ cd frontend && npm test && npm run build
 
 ## 框架行为
 
-`POST /api/runs` 使用 `pre_market` 或 `pre_close` 创建一次同步运行，按 `1a → 1b → 2 → 3a → 3b → 4 → 5` 保存状态。行情、事件、期权和决策均通过明确的 mock/disabled 边界运行，不访问外部网络；条件事件可通过 `simulate_macro_event` 和 `simulate_instrument_event` 验证。真实 provider 接入不属于 `main` 框架基线。
+`POST /api/runs` 使用 `pre_market` 或 `pre_close` 创建一次同步运行，按 `1a → 1b → 2 → 3a → 3b → 4 → 5` 保存状态。启用 `MOOMOO_ENABLED=true` 后，第 2 步只调用期权链和行情快照接口，不订阅实时推送；开发环境强制只允许 QQQ、INTC。OptionCharts CSV 不是运行依赖，VEX/Vanna 本阶段不计算。

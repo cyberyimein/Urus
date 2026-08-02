@@ -11,6 +11,11 @@ from app.core.time import utc_now
 from app.integrations.anomalo import MockAnomaloAdapter
 from app.integrations.decision import MockDecisionAdapter
 from app.integrations.moomoo import DisabledMoomooAdapter
+from app.integrations.moomoo_options import (
+    DisabledOptionsAdapter,
+    MoomooOptionsAdapter,
+    OptionsCollectorAdapter,
+)
 from app.models import RunModel, RunStatus, StepStatus
 from app.repositories import RunRepository
 from app.schemas.read_model import (
@@ -66,6 +71,7 @@ class RunService:
         self.repository.update_run(run, status=RunStatus.RUNNING.value, started_at=utc_now())
 
         market_adapter = self._build_market_adapter()
+        options_adapter = self._build_options_adapter()
         context = RunContext(
             run_id=run_id,
             run_type=request.run_type.value,
@@ -76,6 +82,7 @@ class RunService:
             fail_step=request.fail_step.value if request.fail_step else None,
             market_adapter=market_adapter,
             moomoo_adapter=market_adapter,
+            options_adapter=options_adapter,
             anomalo_adapter=MockAnomaloAdapter(),
             decision_adapter=MockDecisionAdapter(),
         )
@@ -148,6 +155,7 @@ class RunService:
         close = getattr(market_adapter, "close", None)
         if close:
             close()
+        options_adapter.close()
         errors = [
             f"{code}: {result.error_message}"
             for code, result in context.results.items()
@@ -205,6 +213,28 @@ class RunService:
 
     def _build_market_adapter(self) -> DisabledMoomooAdapter:
         return DisabledMoomooAdapter()
+
+    def _build_options_adapter(self) -> OptionsCollectorAdapter:
+        if not self.settings.moomoo_enabled:
+            return DisabledOptionsAdapter()
+        target_symbols = self.settings.options_target_symbol_list
+        if self.settings.app_env != "production":
+            unsupported = sorted(set(target_symbols) - {"QQQ", "INTC"})
+            if unsupported:
+                raise AppError(
+                    "开发环境期权真实请求只允许 QQQ、INTC：" + ", ".join(unsupported),
+                    code="invalid_options_development_allowlist",
+                    status_code=500,
+                )
+        return MoomooOptionsAdapter(
+            host=self.settings.moomoo_host,
+            port=self.settings.moomoo_port,
+            symbols=target_symbols,
+            target_dtes=self.settings.options_target_dte_list,
+            max_dte=self.settings.options_max_dte,
+            strike_range_percent=self.settings.options_strike_range_percent,
+            batch_size=self.settings.options_snapshot_batch_size,
+        )
 
     def _validate_symbols(self, requested: list[str] | None) -> list[str]:
         allowed = set(self.settings.enabled_symbol_list)

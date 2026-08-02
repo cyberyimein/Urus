@@ -32,6 +32,7 @@ export function statusLabel(value: string): string {
     succeeded: '成功',
     skipped: '已跳过',
     partial: '部分完成',
+    mixed: '混合数据',
     failed: '失败',
     not_implemented: '未实现',
     mock: '模拟',

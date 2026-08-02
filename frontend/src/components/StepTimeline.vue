@@ -8,7 +8,7 @@ const props = defineProps<{ steps: Array<StepRun | ReadModelStep> }>()
 const labels: Record<StepCode, string> = {
   '1a': '1A · 大盘采集',
   '1b': '1B · 宏观事件摘要',
-  '2': '2 · 期权占位',
+  '2': '2 · 期权结构',
   '3a': '3A · 个股采集',
   '3b': '3B · 个股事件摘要',
   '4': '4 · 决策占位',

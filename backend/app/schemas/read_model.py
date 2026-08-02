@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -9,7 +9,7 @@ from app.schemas.enums import RunStatusValue, RunTypeValue, StepCodeValue, StepS
 
 
 class MockBase(BaseModel):
-    is_mock: bool = True
+    is_mock: Literal[True] = True
 
 
 class MarketCard(MockBase):
@@ -43,6 +43,28 @@ class EventSummary(MockBase):
 class OptionsPlaceholder(MockBase):
     status: str
     available: bool = False
+    note: str
+
+
+class OptionsSnapshotSymbol(BaseModel):
+    symbol: str
+    spot: float
+    spot_time: str | None = None
+    overview: dict[str, float | None]
+    expirations: list[dict[str, Any]]
+
+
+class OptionsAnalysis(BaseModel):
+    is_mock: Literal[False]
+    status: str
+    available: bool
+    provider: str
+    source_mode: str
+    captured_at: datetime
+    symbols: list[OptionsSnapshotSymbol]
+    subscription_quota: dict[str, int | None]
+    model_assumptions: list[str]
+    warnings: list[str]
     note: str
 
 
@@ -83,7 +105,7 @@ class FrontendReadModel(BaseModel):
     market: MarketCard | None = None
     instrument: InstrumentCard | None = None
     macro_event: EventSummary
-    options: OptionsPlaceholder
+    options: Annotated[OptionsPlaceholder | OptionsAnalysis, Field(discriminator="is_mock")]
     instrument_event: EventSummary
     decision: DecisionPlaceholder
     steps: list[ReadModelStep]

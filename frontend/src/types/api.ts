@@ -1,5 +1,5 @@
 export type RunType = 'pre_market' | 'pre_close'
-export type RunStatus = 'pending' | 'running' | 'succeeded' | 'partial' | 'failed'
+export type RunStatus = 'pending' | 'running' | 'succeeded' | 'partial' | 'mixed' | 'failed'
 export type StepStatus = 'pending' | 'running' | 'succeeded' | 'skipped' | 'failed'
 export type StepCode = '1a' | '1b' | '2' | '3a' | '3b' | '4' | '5'
 
@@ -97,11 +97,76 @@ export interface EventSummary {
 }
 
 export interface OptionsPlaceholder {
-  is_mock: boolean
+  is_mock: true
   status: string
   available: boolean
+  provider?: null
+  symbols?: []
   note: string
 }
+
+export interface ExposureWall {
+  strike: number
+  exposure: number
+}
+
+export interface ExposureTotals {
+  call_dex: number
+  put_dex: number
+  net_dex: number
+  absolute_dex: number
+  call_gex: number
+  put_gex: number
+  modeled_net_gex: number
+  absolute_gex: number
+}
+
+export interface ExposureStrikeRow extends ExposureTotals {
+  strike: number
+}
+
+export interface OptionExpirationAnalysis {
+  expiration: string
+  days_to_expiry: number
+  contract_count: number
+  max_pain: number | null
+  expected_move: {
+    amount: number | null
+    percent: number | null
+    atm_strike: number | null
+  }
+  exposure: {
+    totals: ExposureTotals
+    walls: Record<string, ExposureWall | null>
+    by_strike: ExposureStrikeRow[]
+    usable_delta_contracts: number
+    usable_gamma_contracts: number
+  }
+}
+
+export interface OptionSymbolAnalysis {
+  symbol: string
+  spot: number
+  spot_time: string | null
+  overview: Record<string, number | null>
+  expirations: OptionExpirationAnalysis[]
+}
+
+export interface OptionsAnalysis {
+  is_mock: false
+  status: string
+  available: boolean
+  provider: string
+  source_mode: string
+  captured_at: string
+  symbols: OptionSymbolAnalysis[]
+  subscription_quota: Record<string, number | null>
+  model_assumptions: string[]
+  warnings: string[]
+  note: string
+}
+
+export type OptionsData = OptionsPlaceholder | OptionsAnalysis
 
 export interface DecisionPlaceholder {
   is_mock: boolean
@@ -140,7 +205,7 @@ export interface FrontendReadModel {
   market: MarketCard | null
   instrument: InstrumentCard | null
   macro_event: EventSummary
-  options: OptionsPlaceholder
+  options: OptionsData
   instrument_event: EventSummary
   decision: DecisionPlaceholder
   steps: ReadModelStep[]

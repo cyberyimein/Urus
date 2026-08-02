@@ -1,4 +1,4 @@
-# Urus 框架实现说明
+# Urus Stage 2 实现说明
 
 ## 当前基线
 
@@ -6,9 +6,11 @@
 - SQLAlchemy 最小 `Run`、`StepRun`、`Snapshot` 模型与可从空库执行的 Alembic migration。
 - 七个可替换的 workflow step：`1a`、`1b`、`2`、`3a`、`3b`、`4`、`5`。
 - `1B`、`3B` 的条件分支和 mock 事件开关；未命中条件时正常 `skipped`。
-- mock Anomalo、Moomoo、决策 adapter；框架不会创建真实 provider client，也不会访问外部网络。
+- 第 2 步可使用 Moomoo LV1 快照采集期权链；不会调用订阅接口，并在采集前后核对订阅额度。
+- 按到期日聚合 DEX、GEX、Gamma Wall、Max Pain、Expected Move，并保留逐行权价明细。
+- mock Anomalo、行情与决策 adapter 仍保持隔离，不扩大 Stage 2 的修改范围。
 - API 错误统一为 `{ error: { code, message, details? } }`，运行、步骤和 snapshot 均可查询。
-- Dashboard、Runs、Run Detail 三个页面，以及状态时间线、质量和错误提示。
+- Dashboard、Options、Runs、Run Detail 页面；Options 是独立的 Stage 1 风格数据验证工作台。
 - `OutputStep` 生成小型 frontend read model，snapshot 只保存 JSON，不保存大规模行情。
 
 ## 关键技术选择
@@ -20,4 +22,4 @@
 
 ## 已知限制
 
-真实行情、宏观数据、期权计算、个股技术指标、事件检索、AI prompt、交易日历和自动调度不属于本分支基线，需在对应阶段分支实现并单独验收。
+VEX/Vanna、做市商真实持仓方向、开平仓识别、组合腿识别、逐笔期权历史、宏观数据、个股技术指标、事件检索、AI prompt、交易日历和自动调度不属于本分支。开发验证只允许 QQQ、INTC；生产配置可扩展到 SPY、SMH、IGV 及自选股。

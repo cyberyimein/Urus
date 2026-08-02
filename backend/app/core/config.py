@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     moomoo_enabled: bool = False
     moomoo_host: str = "127.0.0.1"
     moomoo_port: int = 11111
+    options_target_symbols: str = "QQQ,INTC"
+    options_target_dtes: str = "0,7,30,60,90"
+    options_max_dte: int = 90
+    options_strike_range_percent: float = 20.0
+    options_snapshot_batch_size: int = 400
     anomalo_enabled: bool = False
     anomalo_base_url: str | None = None
     anomalo_timeout_seconds: float = 10.0
@@ -49,6 +54,24 @@ class Settings(BaseSettings):
     @property
     def enabled_symbol_list(self) -> list[str]:
         return [item.strip().upper() for item in self.enabled_symbols.split(",") if item.strip()]
+
+    @property
+    def options_target_symbol_list(self) -> list[str]:
+        return [
+            item.strip().upper()
+            for item in self.options_target_symbols.split(",")
+            if item.strip()
+        ]
+
+    @property
+    def options_target_dte_list(self) -> list[int]:
+        return sorted(
+            {
+                int(item.strip())
+                for item in self.options_target_dtes.split(",")
+                if item.strip()
+            }
+        )
 
 
 @lru_cache(maxsize=1)

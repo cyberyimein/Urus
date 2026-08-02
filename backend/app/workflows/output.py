@@ -10,7 +10,7 @@ from app.workflows.context import RunContext
 STEP_LABELS = {
     "1a": "1A · 大盘采集",
     "1b": "1B · 宏观事件摘要",
-    "2": "2 · 期权占位",
+    "2": "2 · 期权结构",
     "3a": "3A · 个股采集",
     "3b": "3B · 个股事件摘要",
     "4": "4 · 决策占位",
@@ -83,8 +83,9 @@ class OutputStep:
             "is_mock": True,
             "status": "unavailable",
             "available": False,
-            "note": "期权占位结果不可用。",
+            "note": "期权结构结果不可用。",
         }
+        options_is_mock = bool(options.get("is_mock", True))
         decision = _data_payload(context.results.get("4")) or {
             "is_mock": True,
             "status": "unavailable",
@@ -119,8 +120,12 @@ class OutputStep:
             ],
             "data_quality": {
                 "is_mock": True,
-                "status": "mock" if not errors else "error",
-                "message": "所有市场、事件、期权和决策字段均为框架 mock/read-model 占位。",
+                "status": ("error" if errors else "mock" if options_is_mock else "mixed"),
+                "message": (
+                    "市场、事件和决策仍含 mock；期权字段来自 Moomoo LV1 快照。"
+                    if not options_is_mock
+                    else "所有市场、事件、期权和决策字段均为框架 mock/read-model 占位。"
+                ),
                 "warnings": warnings,
                 "errors": errors,
             },

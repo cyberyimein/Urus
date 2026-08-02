@@ -210,12 +210,46 @@ h3 { margin-top: 6px; font-size: 19px; font-weight: 500; }
 .notice-list .notice-box { margin-top: 0; }
 .notice-list + .notice-list { margin-top: 12px; }
 
+.options-page .validation-header { grid-template-columns: minmax(0, 1fr) 300px; }
+.options-page .compact-launcher { align-self: stretch; }
+.options-page .tab-panel { margin-top: 24px; border-top: 1px solid var(--line); border-radius: 9px; }
+.option-selector, .expiry-selector { display: flex; gap: 7px; overflow-x: auto; padding-bottom: 3px; }
+.option-selector button, .expiry-selector button { min-width: 112px; padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: 7px; color: var(--muted); background: var(--surface); text-align: left; }
+.option-selector button:hover, .option-selector button.active, .expiry-selector button:hover, .expiry-selector button.active { border-color: #647b50; color: var(--ink); background: rgba(198, 213, 142, .08); }
+.option-selector strong, .option-selector small, .expiry-selector strong, .expiry-selector small { display: block; }
+.option-selector strong, .expiry-selector strong { color: inherit; font: 500 13px "SFMono-Regular", Consolas, monospace; }
+.option-selector small, .expiry-selector small { margin-top: 6px; color: var(--muted); font: 9px "SFMono-Regular", Consolas, monospace; white-space: nowrap; }
+.options-overview-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.options-level-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.wall-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.wall-grid > div { min-width: 0; padding: 13px; border: 1px solid var(--line-soft); border-radius: 7px; background: var(--surface); }
+.wall-grid span, .wall-grid strong { display: block; font-family: "SFMono-Regular", Consolas, monospace; }
+.wall-grid span { color: var(--muted); font-size: 10px; }
+.wall-grid strong { margin-top: 11px; color: var(--accent); font-size: 12px; overflow-wrap: anywhere; }
+.options-table { min-width: 1100px; }
+.exposure-map { position: relative; overflow: hidden; border: 1px solid var(--line-soft); border-radius: 7px; background: var(--surface); }
+.exposure-map-row, .exposure-map-legend { display: grid; grid-template-columns: 72px minmax(150px, 1fr) minmax(150px, 1fr) 92px 92px; align-items: center; gap: 10px; min-height: 28px; padding: 3px 10px; border-bottom: 1px solid rgba(53, 59, 52, .7); font: 9px "SFMono-Regular", Consolas, monospace; }
+.exposure-map-row > span:last-child, .exposure-map-row > span:nth-last-child(2) { color: var(--muted); text-align: right; }
+.strike-label { color: var(--soft-ink); }
+.strike-label.spot-nearby { color: var(--accent); font-weight: 600; }
+.exposure-track { position: relative; height: 13px; border-radius: 2px; background: rgba(53, 59, 52, .35); }
+.track-axis { position: absolute; top: 0; bottom: 0; left: 50%; width: 1px; background: var(--line); }
+.dex-bar, .gex-bar { position: absolute; top: 3px; height: 7px; border-radius: 2px; opacity: .85; }
+.positive-bar { background: var(--success); }
+.negative-bar { background: var(--danger); }
+.gex-bar { opacity: .58; }
+.exposure-map-legend { position: sticky; bottom: 0; border-bottom: 0; color: var(--muted); background: var(--surface-raised); }
+.assumptions-list { margin-top: 12px; }
+.options-empty { margin-top: 28px; }
+
 @media (max-width: 900px) {
   .validation-header { grid-template-columns: 1fr; }
   .primary-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .macro-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .history-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .validation-tabs { grid-template-columns: repeat(6, minmax(145px, 1fr)); }
+  .options-overview-grid, .options-level-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .exposure-map-row, .exposure-map-legend { grid-template-columns: 62px minmax(130px, 1fr) minmax(130px, 1fr) 78px 78px; }
 }
 
 @media (max-width: 760px) {
@@ -234,6 +268,7 @@ h3 { margin-top: 6px; font-size: 19px; font-weight: 500; }
   .launcher-actions .primary-button { width: 100%; }
   .event-tab-grid { grid-template-columns: 1fr; }
   .quality-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .wall-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .status-list > div { grid-template-columns: 90px 80px minmax(0, 1fr); }
 }
 
@@ -247,6 +282,9 @@ h3 { margin-top: 6px; font-size: 19px; font-weight: 500; }
   .step-marker { width: 42px; }
   .proxy-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .primary-metrics, .macro-metrics, .history-metrics, .validation-meta, .quality-summary { grid-template-columns: 1fr; }
+  .options-overview-grid, .options-level-grid, .wall-grid { grid-template-columns: 1fr; }
+  .exposure-map { overflow-x: auto; }
+  .exposure-map-row, .exposure-map-legend { min-width: 620px; }
   .section-label-row, .tab-titlebar { align-items: start; flex-direction: column; }
   .source-label { text-align: left; }
   .status-list > div { grid-template-columns: 1fr; gap: 7px; }

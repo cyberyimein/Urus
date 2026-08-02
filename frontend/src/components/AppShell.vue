@@ -13,6 +13,7 @@ import { RouterLink } from 'vue-router'
     </RouterLink>
     <nav class="topnav" aria-label="主导航">
       <RouterLink to="/" active-class="active">Dashboard</RouterLink>
+      <RouterLink to="/options" active-class="active">Options</RouterLink>
       <RouterLink to="/runs" active-class="active">Runs</RouterLink>
     </nav>
   </header>
