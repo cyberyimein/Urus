@@ -21,18 +21,23 @@ class OptionsCollectorStep:
                 raise RuntimeError("options adapter is not configured")
             payload = context.options_adapter.options_snapshot()
             is_mock = bool(payload.get("is_mock", True))
+            payload["data_state"] = "placeholder" if is_mock else "live"
+            if is_mock:
+                payload["status"] = StepStatus.PLACEHOLDER.value
             return StepResult(
-                status=StepStatus.SUCCEEDED,
+                status=StepStatus.PLACEHOLDER if is_mock else StepStatus.SUCCEEDED,
                 summary=(
                     "已生成 Moomoo 快照式 DEX/GEX、Gamma Wall 与 Max Pain。"
                     if not is_mock
                     else "期权数据源未启用，保留明确的 mock 状态。"
                 ),
                 payload=payload,
+                data_state="placeholder" if is_mock else "live",
             )
         except Exception as exc:
             return StepResult(
                 status=StepStatus.FAILED,
                 summary="期权结构采集或计算失败。",
                 error_message=str(exc),
+                data_state="unavailable",
             )

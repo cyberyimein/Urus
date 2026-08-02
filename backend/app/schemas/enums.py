@@ -10,10 +10,8 @@ class RunStatusValue(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
-    PARTIAL = "partial"
-    # Stage 1 wrote this legacy status into local databases. Keep it readable so
-    # one historical row cannot make the complete run list fail validation.
     MIXED = "mixed"
+    PARTIAL = "partial"
     FAILED = "failed"
 
 
@@ -21,6 +19,8 @@ class StepStatusValue(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
+    PLACEHOLDER = "placeholder"
+    UNAVAILABLE = "unavailable"
     SKIPPED = "skipped"
     FAILED = "failed"
 

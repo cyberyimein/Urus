@@ -8,6 +8,7 @@ const options: OptionsData = {
   is_mock: false,
   status: 'available',
   available: true,
+  data_state: 'live',
   provider: 'moomoo_openapi',
   source_mode: 'snapshot',
   captured_at: '2026-08-03T00:00:00Z',
@@ -90,6 +91,9 @@ describe('OptionsPanel', () => {
     expect(wrapper.text()).toContain('DEX 与 Gamma 墙')
     expect(wrapper.text()).toContain('VEX / Vanna')
     expect(wrapper.text()).toContain('订阅占用 0 / 剩余 20')
+    expect(wrapper.findAll('.focus-row').length).toBeGreaterThan(0)
+    expect(wrapper.text()).toContain('现价附近')
+    expect(wrapper.text()).toContain('Call DEX Wall')
   })
 
   it('renders the disabled state without pretending data is live', () => {
@@ -99,6 +103,7 @@ describe('OptionsPanel', () => {
           is_mock: true,
           status: 'not_implemented',
           available: false,
+          data_state: 'placeholder',
           note: 'Moomoo disabled',
         },
       },

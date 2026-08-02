@@ -8,12 +8,11 @@ import { RouterLink } from 'vue-router'
       <span class="brand-mark">U</span>
       <span>
         <strong>Urus</strong>
-        <small>workflow framework</small>
+        <small>stage 1A + 2 / data validation</small>
       </span>
     </RouterLink>
     <nav class="topnav" aria-label="主导航">
       <RouterLink to="/" active-class="active">Dashboard</RouterLink>
-      <RouterLink to="/options" active-class="active">Options</RouterLink>
       <RouterLink to="/runs" active-class="active">Runs</RouterLink>
     </nav>
   </header>

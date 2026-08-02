@@ -57,6 +57,24 @@ const maxDex = computed(() => Math.max(1, ...strikeRows.value.map((item) => Math
 const maxGex = computed(() =>
   Math.max(1, ...strikeRows.value.map((item) => Math.abs(item.modeled_net_gex))),
 )
+const nearestSpotStrike = computed<number | null>(() => {
+  if (!currentSymbol.value || !strikeRows.value.length) return null
+  return strikeRows.value.reduce((nearest, row) =>
+    Math.abs(row.strike - currentSymbol.value!.spot) <
+    Math.abs(nearest - currentSymbol.value!.spot)
+      ? row.strike
+      : nearest,
+  strikeRows.value[0].strike)
+})
+
+const focusWallLabels: Record<string, string> = {
+  call_dex: 'Call DEX Wall',
+  put_dex: 'Put DEX Wall',
+  net_dex: 'Net DEX Wall',
+  call_gamma: 'Call Gamma Wall',
+  put_gamma: 'Put Gamma Wall',
+  absolute_gamma: 'Gamma Wall',
+}
 
 function overview(key: string): number | null {
   return currentSymbol.value?.overview[key] ?? null
@@ -89,6 +107,30 @@ function wallLabel(key: string): string {
 
 function barWidth(value: number, max: number): string {
   return `${Math.max(1, Math.abs(value) / max * 50)}%`
+}
+
+function sameStrike(left: number | null | undefined, right: number): boolean {
+  return left !== null && left !== undefined && Math.abs(left - right) < 0.0001
+}
+
+function focusReasons(row: ExposureStrikeRow): string[] {
+  const reasons: string[] = []
+  if (sameStrike(nearestSpotStrike.value, row.strike)) reasons.push('现价附近')
+  if (sameStrike(currentExpiry.value?.max_pain, row.strike)) reasons.push('Max Pain')
+  for (const [key, label] of Object.entries(focusWallLabels)) {
+    if (sameStrike(wall(key)?.strike, row.strike)) reasons.push(label)
+  }
+  return [...new Set(reasons)]
+}
+
+function focusRowClass(row: ExposureStrikeRow): Record<string, boolean> {
+  const reasons = focusReasons(row)
+  return {
+    'focus-row': reasons.length > 0,
+    'focus-max-pain': reasons.includes('Max Pain'),
+    'focus-wall': reasons.some((reason) => reason.includes('Wall')),
+    'focus-spot': reasons.includes('现价附近'),
+  }
 }
 </script>
 
@@ -177,8 +219,8 @@ function barWidth(value: number, max: number): string {
         <section class="data-section">
           <div class="section-label-row"><div><span class="section-kicker">EXPOSURE MAP</span><h3>行权价结构图</h3></div><span class="source-label">中轴左侧为负，右侧为正</span></div>
           <div class="exposure-map">
-            <div v-for="row in strikeRows" :key="row.strike" class="exposure-map-row">
-              <span class="strike-label" :class="{ 'spot-nearby': Math.abs(row.strike - currentSymbol.spot) / currentSymbol.spot < 0.005 }">{{ formatNumber(row.strike) }}</span>
+            <div v-for="row in strikeRows" :key="row.strike" class="exposure-map-row" :class="focusRowClass(row)">
+              <span class="strike-label" :class="{ 'spot-nearby': sameStrike(nearestSpotStrike, row.strike) }">{{ formatNumber(row.strike) }}</span>
               <div class="exposure-track">
                 <span class="track-axis"></span>
                 <span class="dex-bar" :class="row.net_dex >= 0 ? 'positive-bar' : 'negative-bar'" :style="{ width: barWidth(row.net_dex, maxDex), left: row.net_dex >= 0 ? '50%' : `calc(50% - ${barWidth(row.net_dex, maxDex)})` }"></span>
@@ -188,8 +230,9 @@ function barWidth(value: number, max: number): string {
                 <span class="gex-bar" :class="row.modeled_net_gex >= 0 ? 'positive-bar' : 'negative-bar'" :style="{ width: barWidth(row.modeled_net_gex, maxGex), left: row.modeled_net_gex >= 0 ? '50%' : `calc(50% - ${barWidth(row.modeled_net_gex, maxGex)})` }"></span>
               </div>
               <span>{{ signedCompact(row.net_dex) }}</span><span>{{ signedCompact(row.modeled_net_gex) }}</span>
+              <span class="focus-badges"><small v-for="reason in focusReasons(row)" :key="reason" class="focus-tag">{{ reason }}</small></span>
             </div>
-            <div class="exposure-map-legend"><span>Strike</span><span>Net DEX</span><span>Modeled Net GEX</span><span>DEX value</span><span>GEX value</span></div>
+            <div class="exposure-map-legend"><span>Strike</span><span>Net DEX</span><span>Modeled Net GEX</span><span>DEX value</span><span>GEX value</span><span>关注</span></div>
           </div>
         </section>
 
@@ -197,8 +240,8 @@ function barWidth(value: number, max: number): string {
           <div class="section-label-row"><div><span class="section-kicker">RAW AGGREGATION</span><h3>按行权价聚合</h3></div><span class="source-label">{{ currentExpiry.exposure.usable_delta_contracts }} Delta · {{ currentExpiry.exposure.usable_gamma_contracts }} Gamma</span></div>
           <div class="table-wrap">
             <table class="data-table options-table">
-              <thead><tr><th>Strike</th><th>Call DEX</th><th>Put DEX</th><th>Net DEX</th><th>Abs DEX</th><th>Call GEX</th><th>Put GEX</th><th>Modeled Net GEX</th><th>Abs GEX</th></tr></thead>
-              <tbody><tr v-for="row in strikeRows" :key="row.strike"><td><strong>{{ formatNumber(row.strike) }}</strong></td><td>{{ signedCompact(row.call_dex) }}</td><td>{{ signedCompact(row.put_dex) }}</td><td>{{ signedCompact(row.net_dex) }}</td><td>{{ compactNumber(row.absolute_dex) }}</td><td>{{ compactNumber(row.call_gex) }}</td><td>{{ compactNumber(row.put_gex) }}</td><td>{{ signedCompact(row.modeled_net_gex) }}</td><td>{{ compactNumber(row.absolute_gex) }}</td></tr></tbody>
+              <thead><tr><th>Strike</th><th>关注</th><th>Call DEX</th><th>Put DEX</th><th>Net DEX</th><th>Abs DEX</th><th>Call GEX</th><th>Put GEX</th><th>Modeled Net GEX</th><th>Abs GEX</th></tr></thead>
+              <tbody><tr v-for="row in strikeRows" :key="row.strike" :class="focusRowClass(row)"><td><strong>{{ formatNumber(row.strike) }}</strong></td><td><span class="focus-badges"><small v-for="reason in focusReasons(row)" :key="reason" class="focus-tag">{{ reason }}</small><small v-if="!focusReasons(row).length" class="focus-empty">—</small></span></td><td>{{ signedCompact(row.call_dex) }}</td><td>{{ signedCompact(row.put_dex) }}</td><td>{{ signedCompact(row.net_dex) }}</td><td>{{ compactNumber(row.absolute_dex) }}</td><td>{{ compactNumber(row.call_gex) }}</td><td>{{ compactNumber(row.put_gex) }}</td><td>{{ signedCompact(row.modeled_net_gex) }}</td><td>{{ compactNumber(row.absolute_gex) }}</td></tr></tbody>
             </table>
           </div>
         </section>

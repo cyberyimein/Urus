@@ -7,10 +7,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Environment-backed settings for the framework skeleton.
+    """Environment-backed settings for the framework.
 
-    Provider-specific settings are intentionally not part of the framework
-    baseline. Real data adapters are added on their own stage branches.
+    The integration flags are intentionally conservative.  The framework always
+    uses local mock adapters; no real provider client is constructed here.
     """
 
     model_config = SettingsConfigDict(
@@ -37,6 +37,20 @@ class Settings(BaseSettings):
     options_max_dte: int = 90
     options_strike_range_percent: float = 20.0
     options_snapshot_batch_size: int = 400
+    moomoo_history_days: int = 260
+    moomoo_sdk_home: str = "data/moomoo_home"
+    moomoo_market_symbols: str = (
+        "QQQ,SPY,IWM,DIA,RSP,SMH,SOXX,IGV,HYG,LQD,TLT,IEF,UUP,GLD,USO"
+    )
+    market_timezone: str = "America/New_York"
+    fred_enabled: bool = False
+    fred_base_url: str = "https://fred.stlouisfed.org/graph/fredgraph.csv"
+    fred_timeout_seconds: float = 10.0
+    fred_lookback_days: int = 30
+    yahoo_enabled: bool = False
+    yahoo_base_url: str = "https://query2.finance.yahoo.com/v8/finance/chart"
+    yahoo_timeout_seconds: float = 10.0
+    yahoo_lookback_days: int = 30
     anomalo_enabled: bool = False
     anomalo_base_url: str | None = None
     anomalo_timeout_seconds: float = 10.0

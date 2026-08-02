@@ -22,14 +22,54 @@ class MarketCollectorStep:
                 raise RuntimeError("market adapter is not configured")
             payload = adapter.market_card("QQQ")
             payload.setdefault("is_mock", True)
+            macro_context = (
+                context.macro_adapter.daily_context(context.cutoff_time)
+                if context.macro_adapter is not None
+                else {
+                    "is_mock": True,
+                    "data_mode": "mock",
+                    "source": "fred_not_enabled",
+                    "observations": {},
+                    "derived": {},
+                    "quality_status": "unavailable",
+                    "quality_warnings": ["FRED 日频宏观数据源尚未启用。"],
+                    "quality_errors": [],
+                }
+            )
+            payload["macro_context"] = macro_context
+            if macro_context.get("quality_status") != "ok":
+                payload["quality_status"] = "partial"
+            is_mock = bool(payload.get("is_mock", True))
+            data_state = "mock" if is_mock else "live"
+            payload["data_state"] = data_state
+            macro_mode = str(macro_context.get("data_mode", "mock"))
+            market_snapshot = payload.get("market_snapshot", {})
+            returned_symbols = (
+                market_snapshot.get("returned_symbols", [])
+                if isinstance(market_snapshot, dict)
+                else []
+            )
+            unavailable_symbols = (
+                market_snapshot.get("unavailable_symbols", [])
+                if isinstance(market_snapshot, dict)
+                else []
+            )
             return StepResult(
                 status=StepStatus.SUCCEEDED,
-                summary="已生成 QQQ mock 大盘卡；未请求真实行情。",
+                summary=(
+                    f"已通过 Moomoo OpenD 批量采集 {len(returned_symbols)} 个大盘/跨资产快照，"
+                    f"并保留 QQQ 日线摘要；{macro_mode} 日频宏观上下文已接入。"
+                    + (f" 未返回：{', '.join(map(str, unavailable_symbols))}。" if unavailable_symbols else "")
+                    if not is_mock
+                    else "已生成 QQQ mock 大盘卡；未请求真实行情。"
+                ),
                 payload=payload,
+                data_state=data_state,
             )
         except Exception as exc:
             return StepResult(
                 status=StepStatus.FAILED,
-                summary="QQQ 大盘 mock 采集失败。",
+                summary="QQQ 大盘采集失败。",
                 error_message=str(exc),
+                data_state="unavailable",
             )
