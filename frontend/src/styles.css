@@ -224,26 +224,38 @@ h3 { margin-top: 6px; font-size: 19px; font-weight: 500; }
 .wall-grid span { color: var(--muted); font-size: 10px; }
 .wall-grid strong { margin-top: 11px; color: var(--accent); font-size: 12px; overflow-wrap: anywhere; }
 .options-table { min-width: 1260px; }
-.exposure-map { position: relative; overflow: hidden; border: 1px solid var(--line-soft); border-radius: 7px; background: var(--surface); }
-.exposure-map-row, .exposure-map-legend { display: grid; grid-template-columns: 72px minmax(145px, 1fr) minmax(145px, 1fr) 88px 88px minmax(150px, .8fr); align-items: center; gap: 10px; min-height: 30px; padding: 3px 10px; border-bottom: 1px solid rgba(53, 59, 52, .7); font: 9px "SFMono-Regular", Consolas, monospace; }
-.exposure-map-row > span:nth-child(4), .exposure-map-row > span:nth-child(5) { color: var(--muted); text-align: right; }
 .focus-row { box-shadow: inset 3px 0 0 rgba(198, 213, 142, .65); }
-.exposure-map-row.focus-spot, .options-table tr.focus-spot td { background: rgba(105, 139, 165, .09); }
-.exposure-map-row.focus-wall, .options-table tr.focus-wall td { background: rgba(121, 156, 99, .11); }
-.exposure-map-row.focus-max-pain, .options-table tr.focus-max-pain td { background: rgba(198, 213, 142, .14); }
+.options-table tr.focus-spot td { background: rgba(105, 139, 165, .09); }
+.options-table tr.focus-wall td { background: rgba(121, 156, 99, .11); }
+.options-table tr.focus-max-pain td { background: rgba(198, 213, 142, .14); }
 .options-table tr.focus-row td:first-child { box-shadow: inset 3px 0 0 rgba(198, 213, 142, .65); }
 .focus-badges { display: flex; flex-wrap: wrap; gap: 3px; min-width: 0; text-align: left; }
 .focus-tag { padding: 2px 5px; border: 1px solid rgba(198, 213, 142, .28); border-radius: 3px; color: var(--accent); background: rgba(198, 213, 142, .07); font: 8px "SFMono-Regular", Consolas, monospace; white-space: nowrap; }
 .focus-empty { color: var(--muted); }
-.strike-label { color: var(--soft-ink); }
-.strike-label.spot-nearby { color: var(--accent); font-weight: 600; }
-.exposure-track { position: relative; height: 13px; border-radius: 2px; background: rgba(53, 59, 52, .35); }
-.track-axis { position: absolute; top: 0; bottom: 0; left: 50%; width: 1px; background: var(--line); }
-.dex-bar, .gex-bar { position: absolute; top: 3px; height: 7px; border-radius: 2px; opacity: .85; }
+.horizontal-chart-key { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 8px; color: var(--muted); font: 9px "SFMono-Regular", Consolas, monospace; }
+.horizontal-chart-key span { display: inline-flex; align-items: center; gap: 5px; }
+.horizontal-chart-key i { width: 10px; height: 5px; border-radius: 2px; background: var(--success); }
+.horizontal-chart-key .gex-key { opacity: .55; }
+.horizontal-chart-key .positive-key { width: 6px; height: 6px; border-radius: 50%; background: var(--success); }
+.horizontal-chart-key .negative-key { width: 6px; height: 6px; border-radius: 50%; background: var(--danger); }
+.horizontal-exposure-scroll { overflow-x: auto; overflow-y: hidden; border: 1px solid var(--line-soft); border-radius: 7px; background: var(--surface); scrollbar-color: var(--line) transparent; }
+.horizontal-exposure-chart { position: relative; display: grid; grid-auto-flow: column; grid-auto-columns: 34px; width: max-content; min-width: 100%; height: 245px; padding: 8px 10px 0; }
+.horizontal-zero-axis { position: absolute; z-index: 2; top: 100px; right: 10px; left: 10px; height: 1px; background: var(--line); pointer-events: none; }
+.strike-column { position: relative; min-width: 0; border-right: 1px solid rgba(53, 59, 52, .28); }
+.strike-column.focus-row { box-shadow: inset 0 -3px 0 rgba(198, 213, 142, .65); }
+.strike-column.focus-spot { background: rgba(105, 139, 165, .11); }
+.strike-column.focus-wall { background: rgba(121, 156, 99, .12); }
+.strike-column.focus-max-pain { background: rgba(198, 213, 142, .15); }
+.vertical-exposure-bars { position: relative; height: 184px; }
+.vertical-bar { position: absolute; z-index: 1; width: 7px; max-height: 82px; border-radius: 2px 2px 0 0; opacity: .88; }
+.dex-vertical { left: 8px; }
+.gex-vertical { right: 8px; opacity: .55; }
 .positive-bar { background: var(--success); }
 .negative-bar { background: var(--danger); }
-.gex-bar { opacity: .58; }
-.exposure-map-legend { position: sticky; bottom: 0; border-bottom: 0; color: var(--muted); background: var(--surface-raised); }
+.horizontal-strike-label { display: block; height: 18px; color: var(--muted); font: 8px "SFMono-Regular", Consolas, monospace; text-align: center; transform: rotate(-55deg); transform-origin: center; white-space: nowrap; }
+.horizontal-strike-label.spot-nearby { color: var(--accent); font-weight: 600; }
+.horizontal-focus-badges { position: absolute; right: 1px; bottom: 2px; left: 1px; display: flex; justify-content: center; gap: 1px; }
+.horizontal-focus-badges small { padding: 1px 2px; border-radius: 2px; color: var(--accent); background: var(--surface-raised); font: 7px "SFMono-Regular", Consolas, monospace; }
 .assumptions-list { margin-top: 12px; }
 .options-empty { margin-top: 28px; }
 
@@ -254,7 +266,6 @@ h3 { margin-top: 6px; font-size: 19px; font-weight: 500; }
   .history-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .validation-tabs { grid-template-columns: repeat(6, minmax(145px, 1fr)); }
   .options-overview-grid, .options-level-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .exposure-map-row, .exposure-map-legend { grid-template-columns: 62px minmax(125px, 1fr) minmax(125px, 1fr) 74px 74px minmax(135px, .8fr); }
 }
 
 @media (max-width: 760px) {
@@ -288,8 +299,7 @@ h3 { margin-top: 6px; font-size: 19px; font-weight: 500; }
   .proxy-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .primary-metrics, .macro-metrics, .history-metrics, .validation-meta, .quality-summary { grid-template-columns: 1fr; }
   .options-overview-grid, .options-level-grid, .wall-grid { grid-template-columns: 1fr; }
-  .exposure-map { overflow-x: auto; }
-  .exposure-map-row, .exposure-map-legend { min-width: 780px; }
+  .horizontal-exposure-chart { grid-auto-columns: 31px; }
   .section-label-row, .tab-titlebar { align-items: start; flex-direction: column; }
   .source-label { text-align: left; }
   .status-list > div { grid-template-columns: 1fr; gap: 7px; }

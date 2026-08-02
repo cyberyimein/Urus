@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 
 import MockBadge from '@/components/MockBadge.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
@@ -16,6 +16,7 @@ const props = defineProps<{ options: OptionsData }>()
 
 const selectedSymbol = ref('')
 const selectedExpiration = ref('')
+const exposureScroller = ref<HTMLElement | null>(null)
 const liveOptions = computed(() => (props.options.is_mock ? null : props.options))
 const symbols = computed(() => liveOptions.value?.symbols ?? [])
 
@@ -67,6 +68,27 @@ const nearestSpotStrike = computed<number | null>(() => {
   strikeRows.value[0].strike)
 })
 
+async function centerExposureChart(): Promise<void> {
+  await nextTick()
+  window.requestAnimationFrame(() => {
+    window.requestAnimationFrame(() => {
+      const scroller = exposureScroller.value
+      const spotColumn = scroller?.querySelector<HTMLElement>('[data-spot="true"]')
+      if (!scroller || !spotColumn) return
+      scroller.scrollLeft = Math.max(
+        0,
+        spotColumn.offsetLeft - scroller.clientWidth / 2 + spotColumn.offsetWidth / 2,
+      )
+    })
+  })
+}
+
+watch(
+  () => [selectedSymbol.value, selectedExpiration.value, strikeRows.value.length],
+  () => void centerExposureChart(),
+  { flush: 'post', immediate: true },
+)
+
 const focusWallLabels: Record<string, string> = {
   call_dex: 'Call DEX Wall',
   put_dex: 'Put DEX Wall',
@@ -105,8 +127,8 @@ function wallLabel(key: string): string {
   return item ? `${formatNumber(item.strike)} · ${signedCompact(item.exposure)}` : '不可用'
 }
 
-function barWidth(value: number, max: number): string {
-  return `${Math.max(1, Math.abs(value) / max * 50)}%`
+function barHeight(value: number, max: number): string {
+  return `${Math.max(1, Math.abs(value) / max * 82)}px`
 }
 
 function sameStrike(left: number | null | undefined, right: number): boolean {
@@ -132,6 +154,22 @@ function focusRowClass(row: ExposureStrikeRow): Record<string, boolean> {
     'focus-spot': reasons.includes('现价附近'),
   }
 }
+
+function focusShortLabels(row: ExposureStrikeRow): string[] {
+  const labels = focusReasons(row).map((reason) => {
+    if (reason === '现价附近') return 'ATM'
+    if (reason === 'Max Pain') return 'MP'
+    if (reason.includes('DEX')) return 'DEX'
+    if (reason.includes('Gamma')) return 'Γ'
+    return reason
+  })
+  return [...new Set(labels)]
+}
+
+function showStrikeLabel(index: number, row: ExposureStrikeRow): boolean {
+  const interval = Math.max(1, Math.ceil(strikeRows.value.length / 22))
+  return focusReasons(row).length > 0 || index % interval === 0
+}
 </script>
 
 <template>
@@ -149,7 +187,7 @@ function focusRowClass(row: ExposureStrikeRow): Record<string, boolean> {
       <section class="data-section">
         <div class="section-label-row">
           <div><span class="section-kicker">UNDERLYING</span><h3>采集标的</h3></div>
-          <span class="source-label">{{ liveOptions.provider }} · {{ formatDate(liveOptions.captured_at) }}</span>
+          <span class="source-label">{{ liveOptions.provider }} · {{ symbols.length }}/{{ liveOptions.requested_symbols.length }} 返回 · {{ formatDate(liveOptions.captured_at) }}</span>
         </div>
         <div class="option-selector" role="tablist" aria-label="期权标的">
           <button
@@ -162,6 +200,7 @@ function focusRowClass(row: ExposureStrikeRow): Record<string, boolean> {
             <strong>{{ item.symbol }}</strong><small>{{ formatNumber(item.spot) }}</small>
           </button>
         </div>
+        <div v-if="liveOptions.unavailable_symbols.length" class="notice-box warning-box"><strong>未返回期权链</strong><span>{{ liveOptions.unavailable_symbols.join('、') }}</span></div>
       </section>
 
       <section class="data-section">
@@ -217,22 +256,27 @@ function focusRowClass(row: ExposureStrikeRow): Record<string, boolean> {
         </section>
 
         <section class="data-section">
-          <div class="section-label-row"><div><span class="section-kicker">EXPOSURE MAP</span><h3>行权价结构图</h3></div><span class="source-label">中轴左侧为负，右侧为正</span></div>
-          <div class="exposure-map">
-            <div v-for="row in strikeRows" :key="row.strike" class="exposure-map-row" :class="focusRowClass(row)">
-              <span class="strike-label" :class="{ 'spot-nearby': sameStrike(nearestSpotStrike, row.strike) }">{{ formatNumber(row.strike) }}</span>
-              <div class="exposure-track">
-                <span class="track-axis"></span>
-                <span class="dex-bar" :class="row.net_dex >= 0 ? 'positive-bar' : 'negative-bar'" :style="{ width: barWidth(row.net_dex, maxDex), left: row.net_dex >= 0 ? '50%' : `calc(50% - ${barWidth(row.net_dex, maxDex)})` }"></span>
+          <div class="section-label-row"><div><span class="section-kicker">EXPOSURE MAP</span><h3>行权价结构图</h3></div><span class="source-label">现价居中 · 左低右高 · 零轴上下表示正负</span></div>
+          <div class="horizontal-chart-key"><span><i class="dex-key"></i>Net DEX</span><span><i class="gex-key"></i>Modeled Net GEX</span><span><i class="positive-key"></i>正敞口</span><span><i class="negative-key"></i>负敞口</span></div>
+          <div ref="exposureScroller" class="horizontal-exposure-scroll">
+            <div class="horizontal-exposure-chart">
+              <span class="horizontal-zero-axis"></span>
+              <div
+                v-for="(row, index) in strikeRows"
+                :key="row.strike"
+                class="strike-column"
+                :class="focusRowClass(row)"
+                :data-spot="sameStrike(nearestSpotStrike, row.strike)"
+                :title="`${formatNumber(row.strike)} · DEX ${signedCompact(row.net_dex)} · GEX ${signedCompact(row.modeled_net_gex)}${focusReasons(row).length ? ` · ${focusReasons(row).join(' / ')}` : ''}`"
+              >
+                <div class="vertical-exposure-bars">
+                  <span class="vertical-bar dex-vertical" :class="row.net_dex >= 0 ? 'positive-bar' : 'negative-bar'" :style="{ height: barHeight(row.net_dex, maxDex), bottom: row.net_dex >= 0 ? '50%' : 'auto', top: row.net_dex < 0 ? '50%' : 'auto' }"></span>
+                  <span class="vertical-bar gex-vertical" :class="row.modeled_net_gex >= 0 ? 'positive-bar' : 'negative-bar'" :style="{ height: barHeight(row.modeled_net_gex, maxGex), bottom: row.modeled_net_gex >= 0 ? '50%' : 'auto', top: row.modeled_net_gex < 0 ? '50%' : 'auto' }"></span>
+                </div>
+                <span class="horizontal-strike-label" :class="{ 'spot-nearby': sameStrike(nearestSpotStrike, row.strike) }">{{ showStrikeLabel(index, row) ? formatNumber(row.strike, 0) : '' }}</span>
+                <span class="horizontal-focus-badges"><small v-for="label in focusShortLabels(row)" :key="label">{{ label }}</small></span>
               </div>
-              <div class="exposure-track">
-                <span class="track-axis"></span>
-                <span class="gex-bar" :class="row.modeled_net_gex >= 0 ? 'positive-bar' : 'negative-bar'" :style="{ width: barWidth(row.modeled_net_gex, maxGex), left: row.modeled_net_gex >= 0 ? '50%' : `calc(50% - ${barWidth(row.modeled_net_gex, maxGex)})` }"></span>
-              </div>
-              <span>{{ signedCompact(row.net_dex) }}</span><span>{{ signedCompact(row.modeled_net_gex) }}</span>
-              <span class="focus-badges"><small v-for="reason in focusReasons(row)" :key="reason" class="focus-tag">{{ reason }}</small></span>
             </div>
-            <div class="exposure-map-legend"><span>Strike</span><span>Net DEX</span><span>Modeled Net GEX</span><span>DEX value</span><span>GEX value</span><span>关注</span></div>
           </div>
         </section>
 

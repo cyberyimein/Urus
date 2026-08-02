@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from math import isfinite
+from time import monotonic, sleep
 from typing import Any, Protocol
 
 import pandas as pd
@@ -45,6 +46,10 @@ class MoomooOptionsAdapter:
         strike_range_percent: float,
         batch_size: int,
         quote_context_factory: Callable[..., Any] | None = None,
+        snapshot_interval_seconds: float = 0.51,
+        option_chain_interval_seconds: float = 3.05,
+        monotonic_clock: Callable[[], float] = monotonic,
+        sleeper: Callable[[float], None] = sleep,
     ) -> None:
         if not symbols:
             raise ValueError("at least one option target symbol is required")
@@ -57,7 +62,13 @@ class MoomooOptionsAdapter:
         self.max_dte = max_dte
         self.strike_range_percent = strike_range_percent
         self.batch_size = batch_size
+        self.snapshot_interval_seconds = max(0.0, snapshot_interval_seconds)
+        self.option_chain_interval_seconds = max(0.0, option_chain_interval_seconds)
         self._quote_context_factory = quote_context_factory
+        self._monotonic_clock = monotonic_clock
+        self._sleeper = sleeper
+        self._last_snapshot_request_at: float | None = None
+        self._last_option_chain_request_at: float | None = None
         self._quote_ctx: Any | None = None
 
     @staticmethod
@@ -99,6 +110,34 @@ class MoomooOptionsAdapter:
     def _chunks(values: list[str], size: int) -> list[list[str]]:
         return [values[index : index + size] for index in range(0, len(values), size)]
 
+    def _market_snapshot(self, codes: list[str], label: str) -> object:
+        now = self._monotonic_clock()
+        if self._last_snapshot_request_at is not None:
+            remaining = self.snapshot_interval_seconds - (now - self._last_snapshot_request_at)
+            if remaining > 0:
+                self._sleeper(remaining)
+        self._last_snapshot_request_at = self._monotonic_clock()
+        return self._require_ok(label, self._context().get_market_snapshot(codes))
+
+    def _option_chain(self, underlying: str, start: str, end: str) -> object:
+        now = self._monotonic_clock()
+        if self._last_option_chain_request_at is not None:
+            remaining = self.option_chain_interval_seconds - (
+                now - self._last_option_chain_request_at
+            )
+            if remaining > 0:
+                self._sleeper(remaining)
+        self._last_option_chain_request_at = self._monotonic_clock()
+        label = f"get_option_chain({underlying}, {start}..{end})"
+        result = self._context().get_option_chain(underlying, start=start, end=end)
+        ret, data = result
+        message = str(data).lower()
+        if ret != 0 and ("频率" in message or "frequency" in message):
+            self._sleeper(30.1)
+            self._last_option_chain_request_at = self._monotonic_clock()
+            result = self._context().get_option_chain(underlying, start=start, end=end)
+        return self._require_ok(label, result)
+
     def _select_expirations(self, frame: pd.DataFrame) -> list[tuple[str, int]]:
         eligible = frame[
             (frame["option_expiry_date_distance"] >= 0)
@@ -116,6 +155,23 @@ class MoomooOptionsAdapter:
             for _, row in selected.iterrows()
         ]
 
+    @staticmethod
+    def _expiration_groups(
+        expirations: list[tuple[str, int]],
+    ) -> list[list[tuple[str, int]]]:
+        groups: list[list[tuple[str, int]]] = []
+        for expiration in expirations:
+            if not groups:
+                groups.append([expiration])
+                continue
+            group_start = date.fromisoformat(groups[-1][0][0])
+            current = date.fromisoformat(expiration[0])
+            if (current - group_start).days <= 30:
+                groups[-1].append(expiration)
+            else:
+                groups.append([expiration])
+        return groups
+
     def _snapshot_contracts(
         self,
         *,
@@ -130,9 +186,9 @@ class MoomooOptionsAdapter:
         codes = [str(code) for code in window["code"].tolist()]
         snapshots: list[pd.DataFrame] = []
         for chunk in self._chunks(codes, self.batch_size):
-            frame = self._require_ok(
+            frame = self._market_snapshot(
+                chunk,
                 f"get_market_snapshot({underlying} options)",
-                self._context().get_market_snapshot(chunk),
             )
             if isinstance(frame, pd.DataFrame):
                 snapshots.append(frame)
@@ -173,9 +229,7 @@ class MoomooOptionsAdapter:
         subscription_before = self._require_ok(
             "query_subscription(before)", context.query_subscription()
         )
-        underlying = self._require_ok(
-            "get_market_snapshot(underlyings)", context.get_market_snapshot(self.symbols)
-        )
+        underlying = self._market_snapshot(self.symbols, "get_market_snapshot(underlyings)")
         overview = self._require_ok(
             "get_option_underlying_overview", context.get_option_underlying_overview(self.symbols)
         )
@@ -185,6 +239,7 @@ class MoomooOptionsAdapter:
         underlying_by_code = underlying.set_index("code").to_dict("index")
 
         symbol_results: list[dict[str, object]] = []
+        unavailable_symbols: list[str] = []
         warnings = [
             "Open interest is the latest exchange daily update, not a real-time position change.",
             "Modeled net GEX assumes calls are positive and puts are negative; dealer positions are unknown.",
@@ -193,43 +248,73 @@ class MoomooOptionsAdapter:
             quote = underlying_by_code.get(code)
             if quote is None:
                 warnings.append(f"{code} underlying snapshot is unavailable")
+                unavailable_symbols.append(code.removeprefix("US."))
                 continue
             spot = self._number(quote.get("last_price"))
             if spot is None or spot <= 0:
                 warnings.append(f"{code} has no valid underlying price")
+                unavailable_symbols.append(code.removeprefix("US."))
                 continue
-            expirations = self._require_ok(
-                f"get_option_expiration_date({code})", context.get_option_expiration_date(code)
-            )
+            try:
+                expirations = self._require_ok(
+                    f"get_option_expiration_date({code})", context.get_option_expiration_date(code)
+                )
+            except Exception as exc:
+                warnings.append(f"{code} expiration lookup failed: {exc}")
+                unavailable_symbols.append(code.removeprefix("US."))
+                continue
             if not isinstance(expirations, pd.DataFrame):
                 warnings.append(f"{code} expiration response is invalid")
+                unavailable_symbols.append(code.removeprefix("US."))
                 continue
 
             expiration_results: list[dict[str, object]] = []
-            for expiration, days_to_expiry in self._select_expirations(expirations):
-                chain = self._require_ok(
-                    f"get_option_chain({code}, {expiration})",
-                    context.get_option_chain(code, start=expiration, end=expiration),
-                )
-                if not isinstance(chain, pd.DataFrame) or chain.empty:
-                    warnings.append(f"{code} {expiration} option chain is empty")
-                    continue
-                contracts = self._snapshot_contracts(
-                    underlying=code,
-                    spot=spot,
-                    expiration=expiration,
-                    chain=chain,
-                )
-                if not contracts:
-                    warnings.append(f"{code} {expiration} has no contracts in snapshot window")
-                    continue
-                expiration_results.append(
-                    summarize_expiration(
-                        contracts,
-                        expiration=expiration,
-                        days_to_expiry=days_to_expiry,
+            selected_expirations = self._select_expirations(expirations)
+            for group in self._expiration_groups(selected_expirations):
+                group_start = group[0][0]
+                group_end = group[-1][0]
+                try:
+                    group_chain = self._option_chain(code, group_start, group_end)
+                except Exception as exc:
+                    warnings.append(
+                        f"{code} {group_start}..{group_end} option chain failed: {exc}"
                     )
-                )
+                    continue
+                if not isinstance(group_chain, pd.DataFrame) or group_chain.empty:
+                    warnings.append(f"{code} {group_start}..{group_end} option chain is empty")
+                    continue
+                for expiration, days_to_expiry in group:
+                    chain = group_chain[
+                        group_chain["strike_time"].astype(str) == expiration
+                    ].copy()
+                    if chain.empty:
+                        warnings.append(f"{code} {expiration} option chain is empty")
+                        continue
+                    try:
+                        contracts = self._snapshot_contracts(
+                            underlying=code,
+                            spot=spot,
+                            expiration=expiration,
+                            chain=chain,
+                        )
+                    except Exception as exc:
+                        warnings.append(f"{code} {expiration} option snapshots failed: {exc}")
+                        continue
+                    if not contracts:
+                        warnings.append(f"{code} {expiration} has no contracts in snapshot window")
+                        continue
+                    expiration_results.append(
+                        summarize_expiration(
+                            contracts,
+                            expiration=expiration,
+                            days_to_expiry=days_to_expiry,
+                        )
+                    )
+
+            if not expiration_results:
+                warnings.append(f"{code} returned no usable option expirations")
+                unavailable_symbols.append(code.removeprefix("US."))
+                continue
 
             overview_row = overview_by_code.get(code, {})
             symbol_results.append(
@@ -274,6 +359,8 @@ class MoomooOptionsAdapter:
             "provider": "moomoo_openapi",
             "source_mode": "snapshot",
             "captured_at": datetime.now(UTC).isoformat(),
+            "requested_symbols": [code.removeprefix("US.") for code in self.symbols],
+            "unavailable_symbols": unavailable_symbols,
             "symbols": symbol_results,
             "subscription_quota": after_quota,
             "model_assumptions": [

@@ -324,6 +324,8 @@ export interface OptionsAnalysis {
   provider: string
   source_mode: string
   captured_at: string
+  requested_symbols: string[]
+  unavailable_symbols: string[]
   symbols: OptionSymbolAnalysis[]
   subscription_quota: Record<string, number | null>
   model_assumptions: string[]

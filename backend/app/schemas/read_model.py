@@ -89,6 +89,8 @@ class OptionsAnalysis(BaseModel):
     provider: str
     source_mode: str
     captured_at: datetime
+    requested_symbols: list[str] = Field(default_factory=list)
+    unavailable_symbols: list[str] = Field(default_factory=list)
     symbols: list[OptionsSnapshotSymbol]
     subscription_quota: dict[str, int | None]
     model_assumptions: list[str]

@@ -12,6 +12,8 @@ const options: OptionsData = {
   provider: 'moomoo_openapi',
   source_mode: 'snapshot',
   captured_at: '2026-08-03T00:00:00Z',
+  requested_symbols: ['SPY', 'QQQ', 'SMH', 'IGV', 'INTC'],
+  unavailable_symbols: [],
   subscription_quota: {
     option_used_quota: 0,
     option_remain_quota: 20,
@@ -91,6 +93,7 @@ describe('OptionsPanel', () => {
     expect(wrapper.text()).toContain('DEX 与 Gamma 墙')
     expect(wrapper.text()).toContain('VEX / Vanna')
     expect(wrapper.text()).toContain('订阅占用 0 / 剩余 20')
+    expect(wrapper.find('.horizontal-exposure-chart').exists()).toBe(true)
     expect(wrapper.findAll('.focus-row').length).toBeGreaterThan(0)
     expect(wrapper.text()).toContain('现价附近')
     expect(wrapper.text()).toContain('Call DEX Wall')

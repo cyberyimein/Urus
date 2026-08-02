@@ -311,15 +311,7 @@ class RunService:
     def _build_options_adapter(self) -> OptionsCollectorAdapter:
         if not self.settings.moomoo_enabled:
             return DisabledOptionsAdapter()
-        target_symbols = self.settings.options_target_symbol_list
-        if self.settings.app_env != "production":
-            unsupported = sorted(set(target_symbols) - {"QQQ", "INTC"})
-            if unsupported:
-                raise AppError(
-                    "开发环境期权真实请求只允许 QQQ、INTC：" + ", ".join(unsupported),
-                    code="invalid_options_development_allowlist",
-                    status_code=500,
-                )
+        target_symbols = self.settings.options_collection_symbol_list
         return MoomooOptionsAdapter(
             host=self.settings.moomoo_host,
             port=self.settings.moomoo_port,

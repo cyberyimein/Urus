@@ -2,7 +2,7 @@
 
 Urus 是一个股票分析与决策辅助系统的前后端分离框架。当前 `stage2` 已合入阶段 1A：大盘模块通过 Moomoo/OpenD 批量采集 ETF 快照并叠加 FRED/Yahoo 宏观上下文；期权模块通过 Moomoo 美股期权 LV1 快照计算 DEX、GEX、Gamma Wall、Max Pain 和预期波动。未实现模块继续明确标记为 mock、placeholder 或 unavailable。
 
-开发白名单仍围绕 `QQQ` 与 `INTC`。阶段 1A 可按配置采集大盘和跨资产 ETF；阶段 2 的真实期权请求在开发环境强制限定 QQQ、INTC，生产配置再扩展至 SPY、SMH、IGV 和自选股。
+阶段 1A 可按配置采集大盘和跨资产 ETF。阶段 2 固定覆盖 SPY、QQQ、SMH、IGV，并自动合并 `ENABLED_SYMBOLS` 自选股列表；默认自选股会额外带入 INTC。
 
 ## 目录
 

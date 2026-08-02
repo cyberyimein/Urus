@@ -29,7 +29,7 @@
 ## 已知限制
 
 - 目前阶段 1A 的 QQQ/代理 ETF 快照、QQQ 日线指标和 FRED/Yahoo 宏观链路已接入；阶段 2 的期权快照与结构计算在启用 Moomoo 时为 live，未启用时为 placeholder。1B/3B 仍按条件跳过，4 是 placeholder，3A 是 unavailable；没有事件日历、INTC 个股模块真实采集、账户风险、AI prompt 或自动调度。
-- VEX/Vanna、做市商真实持仓方向、开平仓识别、组合腿识别和逐笔期权历史不属于本阶段。开发期权验证只允许 QQQ、INTC；生产配置可扩展到 SPY、SMH、IGV 及自选股。
+- VEX/Vanna、做市商真实持仓方向、开平仓识别、组合腿识别和逐笔期权历史不属于本阶段。期权范围固定包含 SPY、QQQ、SMH、IGV，并自动合并 `ENABLED_SYMBOLS` 中的自选股。
 - FRED 日频宏观源需要 `FRED_ENABLED=true` 才会请求；Yahoo 每次运行请求需要 `YAHOO_ENABLED=true`。市场广度、5 分钟历史、5 年日线归档、60/120/252 日收益、行业热力图和实时订阅、逐笔、盘口、期货属于延期项；交易日历和提前收盘在启用自动调度前必须补齐。
 - 本地启动时会 `create_all` 以降低首次运行摩擦；部署和版本演进仍应执行 Alembic migration。
 - 没有登录、权限、多租户、Sentry、Prometheus、容器编排或移动端完整适配。

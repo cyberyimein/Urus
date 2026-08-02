@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 import pytest
+import pandas as pd
 
 from app.analytics.options import (
     OptionContract,
@@ -10,6 +11,8 @@ from app.analytics.options import (
     calculate_exposure,
     calculate_max_pain,
 )
+from app.core.config import Settings
+from app.integrations.moomoo_options import MoomooOptionsAdapter
 from app.models import StepStatus
 from app.workflows.context import RunContext
 from app.workflows.options import OptionsCollectorStep
@@ -122,3 +125,73 @@ def test_options_workflow_uses_the_dedicated_snapshot_adapter() -> None:
     assert result.status == StepStatus.SUCCEEDED
     assert result.payload["provider"] == "test"
     assert "DEX/GEX" in result.summary
+
+
+def test_option_universe_merges_core_etfs_with_watchlist() -> None:
+    settings = Settings(
+        options_target_symbols="SPY,QQQ,SMH,IGV",
+        enabled_symbols="QQQ,INTC,NVDA",
+    )
+
+    assert settings.options_collection_symbol_list == [
+        "SPY",
+        "QQQ",
+        "SMH",
+        "IGV",
+        "INTC",
+        "NVDA",
+    ]
+
+
+class SnapshotContext:
+    def get_market_snapshot(self, codes: list[str]):
+        return 0, pd.DataFrame({"code": codes})
+
+    def close(self) -> None:
+        return None
+
+
+def test_snapshot_requests_are_spaced_below_moomoo_rate_limit() -> None:
+    clock = [0.0]
+    sleeps: list[float] = []
+
+    def monotonic_clock() -> float:
+        return clock[0]
+
+    def sleeper(seconds: float) -> None:
+        sleeps.append(seconds)
+        clock[0] += seconds
+
+    adapter = MoomooOptionsAdapter(
+        host="test",
+        port=11111,
+        symbols=["SPY"],
+        target_dtes=[0],
+        max_dte=7,
+        strike_range_percent=20,
+        batch_size=400,
+        quote_context_factory=lambda **_: SnapshotContext(),
+        snapshot_interval_seconds=0.51,
+        monotonic_clock=monotonic_clock,
+        sleeper=sleeper,
+    )
+
+    adapter._market_snapshot(["US.SPY"], "first")
+    adapter._market_snapshot(["US.SPY"], "second")
+
+    assert sleeps == [pytest.approx(0.51)]
+
+
+def test_expirations_are_grouped_into_thirty_day_chain_windows() -> None:
+    expirations = [
+        ("2026-08-03", 1),
+        ("2026-08-10", 8),
+        ("2026-08-31", 29),
+        ("2026-09-30", 59),
+        ("2026-10-30", 89),
+    ]
+
+    assert MoomooOptionsAdapter._expiration_groups(expirations) == [
+        expirations[:3],
+        expirations[3:],
+    ]

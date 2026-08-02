@@ -7,7 +7,7 @@ import pandas as pd
 from futu import OpenQuoteContext, RET_OK
 
 
-ALLOWED_UNDERLYINGS = ("US.QQQ", "US.INTC")
+DEFAULT_UNDERLYINGS = ("US.SPY", "US.QQQ", "US.SMH", "US.IGV", "US.INTC")
 
 
 def _require_ok(label: str, result: tuple[int, object]) -> object:
@@ -45,7 +45,7 @@ def _existing_columns(frame: pd.DataFrame, names: Iterable[str]) -> list[str]:
     return [name for name in names if name in frame.columns]
 
 
-def run_probe(host: str, port: int) -> None:
+def run_probe(host: str, port: int, underlyings: tuple[str, ...]) -> None:
     quote_ctx = OpenQuoteContext(host=host, port=port)
     try:
         before = _require_ok("query_subscription(before)", quote_ctx.query_subscription())
@@ -53,7 +53,7 @@ def run_probe(host: str, port: int) -> None:
 
         underlying_snapshot = _require_ok(
             "get_market_snapshot(underlyings)",
-            quote_ctx.get_market_snapshot(list(ALLOWED_UNDERLYINGS)),
+            quote_ctx.get_market_snapshot(list(underlyings)),
         )
         assert isinstance(underlying_snapshot, pd.DataFrame)
         print(
@@ -67,7 +67,7 @@ def run_probe(host: str, port: int) -> None:
 
         overview = _require_ok(
             "get_option_underlying_overview",
-            quote_ctx.get_option_underlying_overview(list(ALLOWED_UNDERLYINGS)),
+            quote_ctx.get_option_underlying_overview(list(underlyings)),
         )
         assert isinstance(overview, pd.DataFrame)
         print(
@@ -90,7 +90,7 @@ def run_probe(host: str, port: int) -> None:
         )
 
         option_codes: list[str] = []
-        for underlying in ALLOWED_UNDERLYINGS:
+        for underlying in underlyings:
             expirations = _require_ok(
                 f"get_option_expiration_date({underlying})",
                 quote_ctx.get_option_expiration_date(underlying),
@@ -161,12 +161,22 @@ def run_probe(host: str, port: int) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Probe Moomoo option snapshots for the two approved development symbols."
+        description="Probe Moomoo option snapshots for core ETFs and watchlist symbols."
     )
     parser.add_argument("--host", required=True)
     parser.add_argument("--port", type=int, default=11111)
+    parser.add_argument(
+        "--symbols",
+        default=",".join(DEFAULT_UNDERLYINGS),
+        help="Comma-separated symbols; US. prefix is optional.",
+    )
     args = parser.parse_args()
-    run_probe(args.host, args.port)
+    underlyings = tuple(
+        symbol if "." in symbol else f"US.{symbol.upper()}"
+        for item in args.symbols.split(",")
+        if (symbol := item.strip())
+    )
+    run_probe(args.host, args.port, underlyings)
 
 
 if __name__ == "__main__":
