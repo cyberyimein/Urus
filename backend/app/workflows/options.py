@@ -19,14 +19,20 @@ class OptionsCollectorStep:
         try:
             if context.moomoo_adapter is None:
                 raise RuntimeError("options adapter is not configured")
+            payload = context.moomoo_adapter.options_placeholder("QQQ")
+            payload["is_mock"] = True
+            payload["status"] = StepStatus.PLACEHOLDER.value
+            payload["data_state"] = "placeholder"
             return StepResult(
-                status=StepStatus.SUCCEEDED,
-                summary="期权模块保留 mock 占位结构，真实 IV/GEX 尚未实现。",
-                payload=context.moomoo_adapter.options_placeholder("QQQ"),
+                status=StepStatus.PLACEHOLDER,
+                summary="期权数据未接入；当前仅保留占位结构，不能作为 IV/GEX 证据。",
+                payload=payload,
+                data_state="placeholder",
             )
         except Exception as exc:
             return StepResult(
                 status=StepStatus.FAILED,
                 summary="期权占位状态生成失败。",
                 error_message=str(exc),
+                data_state="unavailable",
             )
