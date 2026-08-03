@@ -279,6 +279,11 @@ function instrumentBollingerValue(card: InstrumentCard, key: string): unknown {
     : null
 }
 
+function instrumentTechnicalAsOf(card: InstrumentCard): string {
+  const indicators = card.history?.technical_indicators as Record<string, unknown> | undefined
+  return typeof indicators?.as_of === 'string' ? indicators.as_of : '不可用'
+}
+
 function allInstrumentHistoryAvailable(): boolean {
   return instrumentCards.value.length > 0 && instrumentCards.value.every((card) => card.history?.available === true)
 }
@@ -469,10 +474,10 @@ onMounted(() => {
         <div class="tab-titlebar"><div><p class="eyebrow">COLLECTED / 3A</p><h2>个股与行业 ETF</h2></div><StatusBadge :status="store.latestReadModel.instrument?.data_state ?? 'unavailable'" /></div>
         <template v-if="instrumentCards.length">
           <section class="data-section">
-            <div class="section-label-row"><div><span class="section-kicker">CURRENT UNIVERSE</span><h3>QQQ 基准 · INTC 个股 · SMH 行业 ETF</h3></div><span class="source-label">{{ liveInstrumentCount }}/{{ instrumentCards.length }} live</span></div>
+            <div class="section-label-row"><div><span class="section-kicker">CURRENT UNIVERSE</span><h3>QQQ 基准 · INTC 个股 · SMH 行业 ETF</h3></div><span class="source-label">{{ liveInstrumentCount }}/{{ instrumentCards.length }} live · 本轮 {{ formatDate(store.latestReadModel.generated_at) }}</span></div>
             <div class="table-wrap">
               <table class="data-table">
-                <thead><tr><th>标的</th><th>类型</th><th>常规价</th><th>盘前 / 盘后</th><th>日变化</th><th>5D / 20D / 60D</th><th>相对 QQQ</th><th>ATR14%</th><th>布林上 / 下</th><th>布林 %B</th><th>MACD / 量价信号</th><th>状态</th></tr></thead>
+                <thead><tr><th>标的</th><th>类型</th><th>常规价</th><th>盘前 / 盘后</th><th>日变化</th><th>5D / 20D / 60D</th><th>相对 QQQ</th><th>ATR14%</th><th>布林上 / 下</th><th>布林 %B</th><th>MACD / 量价信号</th><th>日线截至</th><th>状态</th></tr></thead>
                 <tbody>
                   <tr v-for="card in instrumentCards" :key="card.symbol">
                     <td><strong>{{ card.symbol }}</strong><small>{{ card.label }}</small></td>
@@ -486,6 +491,7 @@ onMounted(() => {
                     <td>{{ formatNumber(toNumber(instrumentBollingerValue(card, 'upper'))) }} / {{ formatNumber(toNumber(instrumentBollingerValue(card, 'lower'))) }}</td>
                     <td>{{ displayPercent(instrumentBollingerValue(card, 'position_percent'), 2) }}</td>
                     <td><strong :class="signalClass(instrumentSignalValue(card, 'macd_12_26_9', 'momentum'))">{{ signalLabel(instrumentSignalValue(card, 'macd_12_26_9', 'momentum')) }}</strong><small>{{ signalLabel(instrumentSignalValue(card, 'volume_effort_result', 'signal')) }}</small></td>
+                    <td>{{ instrumentTechnicalAsOf(card) }}</td>
                     <td><StatusBadge :status="card.data_state ?? 'unavailable'" /></td>
                   </tr>
                 </tbody>
