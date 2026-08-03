@@ -28,6 +28,7 @@ export function formatNumber(value: number | null | undefined, digits = 2): stri
 }
 
 export function runTypeLabel(value: string): string {
+  if (value === 'post_close_review') return '收盘后复盘'
   return value === 'pre_close' ? '收盘前一小时' : '盘前'
 }
 

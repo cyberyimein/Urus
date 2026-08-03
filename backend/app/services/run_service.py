@@ -11,7 +11,11 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.core.time import utc_now
-from app.integrations.anomalo import MockAnomaloAdapter
+from app.integrations.anomalo import (
+    DisabledAnomaloAdapter,
+    HttpAnomaloAdapter,
+    MockAnomaloAdapter,
+)
 from app.integrations.decision import MockDecisionAdapter
 from app.integrations.fred import FredDailyAdapter
 from app.integrations.macro import FallbackDailyMacroAdapter
@@ -23,7 +27,7 @@ from app.integrations.moomoo_options import (
 )
 from app.integrations.yahoo import YahooDailyAdapter
 from app.models import RunModel, RunStatus, StepStatus
-from app.repositories import RunRepository
+from app.repositories import EventRepository, RunRepository
 from app.schemas.enums import StepCodeValue
 from app.schemas.read_model import (
     FrontendReadModel,
@@ -57,6 +61,7 @@ class RunService:
 
     def __init__(self, session: Session, settings: Settings) -> None:
         self.repository = RunRepository(session)
+        self.event_repository = EventRepository(session)
         self.settings = settings
 
     def create_run(self, request: RunCreateRequest) -> RunCreateResponse:
@@ -82,12 +87,16 @@ class RunService:
         market_adapter = self._build_market_adapter()
         options_adapter = self._build_options_adapter()
         macro_adapter = self._build_macro_adapter()
+        anomalo_adapter = self._build_anomalo_adapter(
+            simulate=request.simulate_macro_event or request.simulate_instrument_event
+        )
         context = RunContext(
             run_id=run_id,
             run_type=request.run_type.value,
             cutoff_time=cutoff_time,
             symbols=symbols,
             instrument_symbols=self.settings.instrument_validation_symbol_list,
+            event_instrument_symbols=self.settings.event_instrument_symbol_list,
             simulate_macro_event=request.simulate_macro_event,
             simulate_instrument_event=request.simulate_instrument_event,
             fail_step=request.fail_step.value if request.fail_step else None,
@@ -95,8 +104,14 @@ class RunService:
             macro_adapter=macro_adapter,
             moomoo_adapter=market_adapter,
             options_adapter=options_adapter,
-            anomalo_adapter=MockAnomaloAdapter(),
+            anomalo_adapter=anomalo_adapter,
             decision_adapter=MockDecisionAdapter(),
+            event_repository=self.event_repository,
+            expected_events_enabled=self.settings.expected_events_enabled,
+            breaking_events_enabled=self.settings.breaking_events_enabled,
+            scheduled_event_agent=self.settings.anomalo_scheduled_agent,
+            breaking_event_agent=self.settings.anomalo_breaking_agent,
+            event_horizon_days=self.settings.event_discovery_horizon_days,
         )
         pipeline = self._build_pipeline()
         snapshot_payload: dict[str, object] | None = None
@@ -153,7 +168,7 @@ class RunService:
                 context.snapshot_id,
             )
 
-        for adapter in (market_adapter, macro_adapter, options_adapter):
+        for adapter in (market_adapter, macro_adapter, options_adapter, anomalo_adapter):
             close = getattr(adapter, "close", None)
             if close:
                 close()
@@ -354,6 +369,16 @@ class RunService:
             risk_free_rate_percent=self.settings.options_risk_free_rate_percent,
             dividend_yield_percent=self.settings.options_dividend_yield_percent,
         )
+
+    def _build_anomalo_adapter(self, *, simulate: bool):
+        if simulate:
+            return MockAnomaloAdapter()
+        if self.settings.anomalo_enabled and self.settings.anomalo_base_url:
+            return HttpAnomaloAdapter(
+                base_url=self.settings.anomalo_base_url,
+                timeout_seconds=self.settings.anomalo_timeout_seconds,
+            )
+        return DisabledAnomaloAdapter()
 
     def _validate_symbols(self, requested: list[str] | None) -> list[str]:
         allowed = set(self.settings.enabled_symbol_list) | set(

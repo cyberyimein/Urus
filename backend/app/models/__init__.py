@@ -1,4 +1,13 @@
 from app.models.enums import RunStatus, RunType, StepStatus
+from app.models.events import (
+    EventAgentRunModel,
+    EventDefinitionModel,
+    EventMarketReactionModel,
+    EventModel,
+    EventResultModel,
+    EventScheduleInitializationModel,
+    EventSourceModel,
+)
 from app.models.instruments import (
     InstrumentAnalysisBatchModel,
     InstrumentDailyBarModel,
@@ -13,6 +22,7 @@ from app.models.options import (
     OptionSymbolSnapshotModel,
 )
 from app.models.run import RunModel, SnapshotModel, StepRunModel
+from app.models.strategy import StrategyResearchDatasetModel
 
 __all__ = [
     "RunModel",
@@ -30,4 +40,12 @@ __all__ = [
     "SnapshotModel",
     "StepRunModel",
     "StepStatus",
+    "StrategyResearchDatasetModel",
+    "EventAgentRunModel",
+    "EventDefinitionModel",
+    "EventMarketReactionModel",
+    "EventModel",
+    "EventResultModel",
+    "EventScheduleInitializationModel",
+    "EventSourceModel",
 ]

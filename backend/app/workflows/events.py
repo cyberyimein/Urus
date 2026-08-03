@@ -11,6 +11,17 @@ class MarketEventSummaryStep:
     label = "1B · 宏观事件摘要"
 
     def execute(self, context: RunContext) -> StepResult:
+        if not context.simulate_macro_event and context.event_repository is not None and context.expected_events_enabled:
+            from app.events.service import ScheduledEventCoordinator
+
+            if context.should_fail(self.code):
+                return StepResult(
+                    status=StepStatus.FAILED,
+                    summary="模拟失败：宏观事件调查未完成。",
+                    payload={"is_mock": True, "category": "macro", "status": StepStatus.FAILED.value},
+                    error_message="requested mock failure at step 1b",
+                )
+            return ScheduledEventCoordinator(context.event_repository).execute(context, "macro")
         if not context.simulate_macro_event:
             return StepResult(
                 status=StepStatus.SKIPPED,
@@ -75,6 +86,21 @@ class InstrumentEventSummaryStep:
     label = "3B · 个股事件摘要"
 
     def execute(self, context: RunContext) -> StepResult:
+        if not context.simulate_instrument_event and context.event_repository is not None and context.expected_events_enabled:
+            from app.events.service import ScheduledEventCoordinator
+
+            if context.should_fail(self.code):
+                return StepResult(
+                    status=StepStatus.FAILED,
+                    summary="模拟失败：个股事件调查未完成。",
+                    payload={
+                        "is_mock": True,
+                        "category": "instrument",
+                        "status": StepStatus.FAILED.value,
+                    },
+                    error_message="requested mock failure at step 3b",
+                )
+            return ScheduledEventCoordinator(context.event_repository).execute(context, "instrument")
         if not context.simulate_instrument_event:
             return StepResult(
                 status=StepStatus.SKIPPED,
@@ -140,4 +166,3 @@ class InstrumentEventSummaryStep:
                 },
                 error_message=str(exc),
             )
-

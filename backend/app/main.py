@@ -18,6 +18,13 @@ from app.core.errors import (
 )
 from app.core.logging import configure_logging, request_logging_middleware
 from app.models import (  # noqa: F401 - register ORM tables
+    EventAgentRunModel,
+    EventDefinitionModel,
+    EventMarketReactionModel,
+    EventModel,
+    EventResultModel,
+    EventScheduleInitializationModel,
+    EventSourceModel,
     InstrumentAnalysisBatchModel,
     InstrumentDailyBarModel,
     InstrumentSnapshotModel,
@@ -30,6 +37,7 @@ from app.models import (  # noqa: F401 - register ORM tables
     RunModel,
     SnapshotModel,
     StepRunModel,
+    StrategyResearchDatasetModel,
 )
 
 logger = logging.getLogger(__name__)

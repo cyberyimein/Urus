@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from app.integrations.anomalo import AnomaloAdapter
 from app.integrations.decision import DecisionAdapter
@@ -9,6 +10,9 @@ from app.integrations.fred import DailyMacroAdapter
 from app.integrations.moomoo import MarketCollectorAdapter, MoomooAdapter
 from app.integrations.moomoo_options import OptionsCollectorAdapter
 from app.workflows.base import StepResult
+
+if TYPE_CHECKING:
+    from app.repositories.events import EventRepository
 
 
 @dataclass
@@ -18,6 +22,7 @@ class RunContext:
     cutoff_time: datetime
     symbols: list[str]
     instrument_symbols: list[str] = field(default_factory=lambda: ["INTC", "SMH"])
+    event_instrument_symbols: list[str] = field(default_factory=lambda: ["INTC"])
     simulate_macro_event: bool = False
     simulate_instrument_event: bool = False
     fail_step: str | None = None
@@ -27,6 +32,12 @@ class RunContext:
     options_adapter: OptionsCollectorAdapter | None = None
     anomalo_adapter: AnomaloAdapter | None = None
     decision_adapter: DecisionAdapter | None = None
+    event_repository: "EventRepository | None" = None
+    expected_events_enabled: bool = False
+    breaking_events_enabled: bool = False
+    scheduled_event_agent: str = "scheduled-event-investigator"
+    breaking_event_agent: str = "breaking-event-investigator"
+    event_horizon_days: int = 120
     results: dict[str, StepResult] = field(default_factory=dict)
     snapshot_id: str | None = None
 

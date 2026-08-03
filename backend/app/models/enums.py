@@ -4,6 +4,7 @@ from enum import StrEnum
 class RunType(StrEnum):
     PRE_MARKET = "pre_market"
     PRE_CLOSE = "pre_close"
+    POST_CLOSE_REVIEW = "post_close_review"
 
 
 class RunStatus(StrEnum):

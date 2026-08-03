@@ -8,6 +8,13 @@ from sqlalchemy import engine_from_config, pool
 from app.core.config import get_settings
 from app.core.database import Base
 from app.models import (  # noqa: F401
+    EventAgentRunModel,
+    EventDefinitionModel,
+    EventMarketReactionModel,
+    EventModel,
+    EventResultModel,
+    EventScheduleInitializationModel,
+    EventSourceModel,
     InstrumentAnalysisBatchModel,
     InstrumentDailyBarModel,
     InstrumentSnapshotModel,
@@ -20,6 +27,7 @@ from app.models import (  # noqa: F401
     RunModel,
     SnapshotModel,
     StepRunModel,
+    StrategyResearchDatasetModel,
 )
 
 config = context.config

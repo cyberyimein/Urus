@@ -83,6 +83,16 @@ def test_pre_close_can_simulate_both_conditional_events(client: TestClient) -> N
     assert "模拟摘要" in read_model["instrument_event"]["summary"]
 
 
+def test_post_close_review_run_type_is_persisted(client: TestClient) -> None:
+    created = client.post("/api/runs", json={"run_type": "post_close_review"})
+    assert created.status_code == 201
+    body = created.json()
+    run = client.get(f"/api/runs/{body['run_id']}").json()
+    assert run["run_type"] == "post_close_review"
+    assert run["steps"][1]["status"] == "skipped"
+    assert run["steps"][4]["status"] == "skipped"
+
+
 def test_unsupported_symbol_is_rejected(client: TestClient) -> None:
     response = client.post(
         "/api/runs",

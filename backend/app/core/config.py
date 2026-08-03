@@ -69,7 +69,19 @@ class Settings(BaseSettings):
     yahoo_lookback_days: int = 30
     anomalo_enabled: bool = False
     anomalo_base_url: str | None = None
-    anomalo_timeout_seconds: float = 10.0
+    # Agent web-search runs can take several minutes; keep connection failure
+    # handling separate in the HTTP adapter while allowing a long read window.
+    anomalo_timeout_seconds: float = 600.0
+    # Scheduled events are opt-in during validation. The breaking/news agent
+    # remains defined but disabled until its source policy is finalized.
+    expected_events_enabled: bool = False
+    breaking_events_enabled: bool = False
+    anomalo_scheduled_agent: str = "scheduled-event-investigator"
+    anomalo_breaking_agent: str = "breaking-event-investigator"
+    event_discovery_horizon_days: int = 120
+    event_instrument_symbols: str = (
+        "LITE,COHR,MRVL,NOK,AMD,INTC,NVDA,NBIS,ORCL,MSFT,NOW,RKLB,AMZN,AAPL,GOOG"
+    )
 
     @property
     def cors_origin_list(self) -> list[str]:
@@ -90,6 +102,14 @@ class Settings(BaseSettings):
         return [
             item.strip().upper()
             for item in self.instrument_validation_symbols.split(",")
+            if item.strip()
+        ]
+
+    @property
+    def event_instrument_symbol_list(self) -> list[str]:
+        return [
+            item.strip().upper()
+            for item in self.event_instrument_symbols.split(",")
             if item.strip()
         ]
 

@@ -95,9 +95,22 @@ class InstrumentCard(MockBase):
 class EventSummary(MockBase):
     category: str
     status: StepStatusValue
+    mode: str = "scheduled"
+    agent: str | None = None
+    schedule_step: dict[str, Any] = Field(default_factory=dict)
+    result_step: dict[str, Any] = Field(default_factory=dict)
+    schedule_api_called: bool = False
+    result_api_call_count: int = 0
+    missing_future_definitions: list[str] = Field(default_factory=list)
+    missing_future_targets: list[dict[str, Any]] = Field(default_factory=list)
     title: str | None = None
     summary: str | None = None
     reason: str | None = None
+    events: list[dict[str, Any]] = Field(default_factory=list)
+    counts: dict[str, int] = Field(default_factory=dict)
+    next_check_at: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+    market_reaction_count: int = 0
     data_state: str = "skipped"
 
 

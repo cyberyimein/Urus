@@ -22,6 +22,8 @@ def app(tmp_path: Path):
         instrument_validation_symbols="INTC,SMH",
         moomoo_enabled=False,
         fred_enabled=False,
+        anomalo_enabled=False,
+        expected_events_enabled=False,
     )
     return create_app(settings)
 

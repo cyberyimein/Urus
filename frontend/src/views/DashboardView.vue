@@ -8,7 +8,7 @@ import OptionsPanel from '@/components/OptionsPanel.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import StepTimeline from '@/components/StepTimeline.vue'
 import { useUrusStore } from '@/stores/urus'
-import type { EventSummary, InstrumentCard, MarketCard, RunType } from '@/types/api'
+import type { EventRecord, EventSummary, InstrumentCard, MarketCard, RunType } from '@/types/api'
 import { formatDate, formatNumber, nullable, runTypeLabel } from '@/utils/format'
 
 type TabId = 'market' | 'instrument' | 'events' | 'options' | 'decision' | 'quality'
@@ -444,6 +444,10 @@ function eventText(event: EventSummary): string {
   return event.summary || event.reason || '当前没有摘要。'
 }
 
+function eventResultText(event: EventRecord): string {
+  return event.result?.summary || (event.result?.status === 'not_released' ? '尚未发布结果' : '结果尚未采集')
+}
+
 async function triggerRun() {
   await store.triggerRun(runType.value, {
     simulateMacroEvent: simulateMacroEvent.value,
@@ -469,6 +473,7 @@ onMounted(() => {
         <select id="run-type" v-model="runType">
           <option value="pre_market">盘前</option>
           <option value="pre_close">收盘前一小时</option>
+          <option value="post_close_review">收盘后复盘</option>
         </select>
         <div class="launcher-actions">
           <label class="check-row"><input v-model="simulateMacroEvent" type="checkbox" /><span>模拟宏观事件</span></label>
@@ -682,7 +687,26 @@ onMounted(() => {
         <div class="event-tab-grid">
           <section v-for="event in [store.latestReadModel.macro_event, store.latestReadModel.instrument_event]" :key="event.category" class="event-panel">
             <div class="section-label-row"><div><span class="section-kicker">{{ event.category === 'macro' ? '1B' : '3B' }}</span><h3>{{ event.category === 'macro' ? '宏观事件' : '个股事件' }}</h3></div><StatusBadge :status="event.status" /></div>
-            <dl class="field-list"><div><dt>状态</dt><dd>{{ event.status }}</dd></div><div><dt>标题</dt><dd>{{ event.title || '不可用' }}</dd></div><div><dt>摘要</dt><dd>{{ eventText(event) }}</dd></div></dl>
+            <dl class="field-list">
+              <div><dt>状态</dt><dd>{{ event.status }}</dd></div>
+              <div><dt>模式 / Agent</dt><dd>{{ event.mode || 'scheduled' }} · {{ event.agent || '未配置' }}</dd></div>
+              <div><dt>未来日历步骤</dt><dd>{{ event.reason === 'expected_events_enabled=false' ? '未启用' : `${event.schedule_step?.status || 'skipped'} · ${event.schedule_step?.api_called ? '已调用日历 API' : '未调用 API'}` }}</dd></div>
+              <div><dt>历史结果步骤</dt><dd>{{ event.reason === 'expected_events_enabled=false' ? '未启用' : `${event.result_step?.status || 'skipped'} · 调用结果 API ${event.result_step?.api_call_count || 0} 次` }}</dd></div>
+              <div v-if="event.missing_future_definitions?.length"><dt>待补未来定义</dt><dd>{{ event.missing_future_definitions.join('、') }}</dd></div>
+              <div><dt>摘要</dt><dd>{{ eventText(event) }}</dd></div>
+              <div><dt>下次检查</dt><dd>{{ formatDate(event.next_check_at || null) }}</dd></div>
+              <div><dt>复盘反应</dt><dd>{{ event.market_reaction_count || 0 }} 条</dd></div>
+            </dl>
+            <div v-if="event.warnings?.length" class="notice-box warning-box"><strong>调查提示</strong><span>{{ event.warnings.join('；') }}</span></div>
+            <div v-if="event.events?.length" class="event-record-list">
+              <article v-for="record in event.events" :key="record.event_key" class="event-record">
+                <div class="event-record-header"><strong>{{ record.title }}</strong><StatusBadge :status="record.status" /></div>
+                <small>{{ record.subject }} · 计划 {{ formatDate(record.scheduled_at) }} · 结果检查 {{ formatDate(record.result_expected_at) }}</small>
+                <p>{{ eventResultText(record) }}</p>
+                <div v-if="record.sources.length" class="event-sources">来源：<a v-for="source in record.sources" :key="source.url" :href="source.url" target="_blank" rel="noreferrer">{{ source.publisher }}</a></div>
+              </article>
+            </div>
+            <p v-else class="empty-state compact">当前没有登记的预期事件。</p>
           </section>
         </div>
       </section>

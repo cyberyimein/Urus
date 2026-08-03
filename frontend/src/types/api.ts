@@ -1,4 +1,4 @@
-export type RunType = 'pre_market' | 'pre_close'
+export type RunType = 'pre_market' | 'pre_close' | 'post_close_review'
 export type RunStatus = 'pending' | 'running' | 'succeeded' | 'mixed' | 'partial' | 'failed'
 export type StepStatus = 'pending' | 'running' | 'succeeded' | 'placeholder' | 'unavailable' | 'skipped' | 'failed'
 export type DataState = 'live' | 'mock' | 'mixed' | 'placeholder' | 'unavailable' | 'skipped'
@@ -339,10 +339,80 @@ export interface EventSummary {
   is_mock: boolean
   category: string
   status: StepStatus
+  mode?: string
+  agent?: string | null
+  schedule_step?: EventWorkflowPhase
+  result_step?: EventWorkflowPhase
+  schedule_api_called?: boolean
+  result_api_call_count?: number
+  missing_future_definitions?: string[]
+  missing_future_targets?: EventScheduleTarget[]
   title: string | null
   summary: string | null
   reason: string | null
+  events?: EventRecord[]
+  counts?: Record<string, number>
+  next_check_at?: string | null
+  warnings?: string[]
+  market_reaction_count?: number
   data_state: DataState
+}
+
+export interface EventWorkflowPhase {
+  operation: 'discover_schedule' | 'collect_result'
+  status: StepStatus
+  summary: string
+  data_state?: DataState
+  error_message?: string | null
+  api_called?: boolean
+  api_call_count?: number
+  discovered_count?: number
+  due_count?: number
+  completed_count?: number
+  missing_future_definitions?: string[]
+  missing_future_targets?: EventScheduleTarget[]
+  errors?: string[]
+  warnings?: string[]
+}
+
+export interface EventScheduleTarget {
+  definition_key: string
+  subject_type: string
+  subject: string
+}
+
+export interface EventRecord {
+  id: string
+  event_key: string
+  definition_key: string
+  category: string
+  subject_type: string
+  subject: string
+  event_type: string
+  title: string
+  period: string | null
+  status: string
+  discovery_mode: string
+  scheduled_at: string | null
+  result_expected_at: string | null
+  result_available_at: string | null
+  next_check_at: string | null
+  confidence: number | null
+  result: {
+    version: number
+    status: string
+    released_at: string | null
+    captured_at: string | null
+    facts: Array<Record<string, unknown>>
+    summary: string | null
+    guidance: string | null
+    confidence: number | null
+    needs_follow_up: boolean
+    next_check_at: string | null
+    source_count: number
+  } | null
+  sources: Array<{ publisher: string; url: string; source_type: string; published_at: string | null; is_primary: boolean }>
+  market_reactions?: Array<Record<string, unknown>>
 }
 
 export interface OptionsPlaceholder {
