@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import asdict
 from datetime import UTC, date, datetime
 from math import isfinite
 from time import monotonic, sleep
@@ -244,6 +245,7 @@ class MoomooOptionsAdapter:
         underlying_by_code = underlying.set_index("code").to_dict("index")
 
         symbol_results: list[dict[str, object]] = []
+        persistence_symbols: list[dict[str, object]] = []
         unavailable_symbols: list[str] = []
         warnings = [
             "Open interest is the latest exchange daily update, not a real-time position change.",
@@ -274,6 +276,7 @@ class MoomooOptionsAdapter:
                 continue
 
             expiration_results: list[dict[str, object]] = []
+            persistence_expirations: list[dict[str, object]] = []
             selected_expirations = self._select_expirations(expirations)
             for group in self._expiration_groups(selected_expirations):
                 group_start = group[0][0]
@@ -323,6 +326,12 @@ class MoomooOptionsAdapter:
                         strike_range_percent=self.strike_range_percent,
                     )
                     expiration_results.append(analysis)
+                    persistence_expirations.append(
+                        {
+                            "expiration": expiration,
+                            "contracts": [asdict(contract) for contract in contracts],
+                        }
+                    )
 
             if not expiration_results:
                 warnings.append(f"{code} returned no usable option expirations")
@@ -351,6 +360,12 @@ class MoomooOptionsAdapter:
                     "expirations": expiration_results,
                 }
             )
+            persistence_symbols.append(
+                {
+                    "symbol": code.removeprefix("US."),
+                    "expirations": persistence_expirations,
+                }
+            )
 
         subscription_after = self._require_ok(
             "query_subscription(after)", context.query_subscription()
@@ -365,13 +380,14 @@ class MoomooOptionsAdapter:
         if before_quota != after_quota:
             raise RuntimeError("option subscription quota changed in snapshot-only collector")
 
+        captured_at = datetime.now(UTC).isoformat()
         return {
             "is_mock": False,
             "status": "available" if symbol_results else "unavailable",
             "available": bool(symbol_results),
             "provider": "moomoo_openapi",
             "source_mode": "snapshot",
-            "captured_at": datetime.now(UTC).isoformat(),
+            "captured_at": captured_at,
             "requested_symbols": [code.removeprefix("US.") for code in self.symbols],
             "unavailable_symbols": unavailable_symbols,
             "symbols": symbol_results,
@@ -387,6 +403,10 @@ class MoomooOptionsAdapter:
             ],
             "warnings": warnings,
             "note": "Moomoo LV1 snapshot-derived DEX/GEX and max-pain analytics; no option subscription used.",
+            "_persistence": {
+                "captured_at": captured_at,
+                "symbols": persistence_symbols,
+            },
         }
 
     def close(self) -> None:

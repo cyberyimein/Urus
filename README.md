@@ -40,7 +40,7 @@ cd backend && uv run pytest
 cd frontend && npm test && npm run build
 ```
 
-后端启动时会为本地新 checkout 创建缺失表；正式的 schema 变更通过 Alembic 执行。数据库默认是 SQLite，可用 `DATABASE_URL` 切换到 SQLAlchemy 支持的 PostgreSQL URL。根目录 `.env` 使用用户提供的 `opend-host:11111`，启用 FRED 日频宏观源和每次运行必取的 Yahoo 源；如果 OpenD、FRED 或 Yahoo 尚未可用，阶段 1A 会把缺失和连接错误保存到运行记录和 read model，不会静默伪装成模拟数据。
+后端启动时会为本地新 checkout 创建缺失表；正式的 schema 变更通过 Alembic 执行。数据库默认是 SQLite，可用 `DATABASE_URL` 切换到 SQLAlchemy 支持的 PostgreSQL URL。期权分析会把批次、标的、到期日、原始合约、Spot Gamma Profile 点位和 Gamma Flip 规范化落库，并与前端 snapshot 在同一事务提交；这使后续可用动态利率、动态股息和新模型版本重算历史链。精度改善清单记录在 `docs/implementation.md`，本阶段不继续扩展。根目录 `.env` 使用用户提供的 `opend-host:11111`，启用 FRED 日频宏观源和每次运行必取的 Yahoo 源；如果 OpenD、FRED 或 Yahoo 尚未可用，阶段 1A 会把缺失和连接错误保存到运行记录和 read model，不会静默伪装成模拟数据。
 
 ## 阶段行为
 

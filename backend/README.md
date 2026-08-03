@@ -12,7 +12,7 @@ uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 uv run pytest
 ```
 
-The application also creates missing local tables on startup so a fresh checkout can be run directly. Alembic is the supported migration path for explicit schema management.
+The application also creates missing local tables on startup so a fresh checkout can be run directly. Alembic is the supported migration path for explicit schema management. Migration `0002_option_persistence` adds normalized SQLite tables for option batches, symbols, expirations, raw contracts, Spot Gamma Profile points, and Gamma Flips. The frontend snapshot and these option records are committed in one transaction.
 
 ## API
 

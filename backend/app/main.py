@@ -17,7 +17,17 @@ from app.core.errors import (
     validation_error_handler,
 )
 from app.core.logging import configure_logging, request_logging_middleware
-from app.models import RunModel, SnapshotModel, StepRunModel  # noqa: F401 - register ORM tables
+from app.models import (  # noqa: F401 - register ORM tables
+    OptionAnalysisBatchModel,
+    OptionContractSnapshotModel,
+    OptionExpirationAnalysisModel,
+    OptionGammaFlipModel,
+    OptionGammaProfilePointModel,
+    OptionSymbolSnapshotModel,
+    RunModel,
+    SnapshotModel,
+    StepRunModel,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -67,4 +77,3 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
 
 app = create_app()
-

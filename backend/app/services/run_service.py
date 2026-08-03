@@ -100,6 +100,7 @@ class RunService:
         pipeline = self._build_pipeline()
         snapshot_payload: dict[str, object] | None = None
         snapshot_id: str | None = None
+        option_persistence_payload: dict[str, object] | None = None
 
         for step in pipeline.steps:
             model = step_by_code[step.code]
@@ -128,6 +129,8 @@ class RunService:
                     error_message=str(exc),
                 )
                 logger.exception("workflow step crashed run_id=%s step_code=%s", run_id, step.code)
+            if step.code == "2" and isinstance(result.payload.get("_persistence"), dict):
+                option_persistence_payload = result.payload.pop("_persistence")
             context.results[step.code] = result
             completed_at = utc_now()
             self.repository.update_step(
@@ -198,7 +201,8 @@ class RunService:
                         }
                     )
             quality_status = self._quality_status(snapshot_payload)
-            self.repository.save_snapshot(
+            options_result = context.results.get("2")
+            self.repository.save_snapshot_with_options(
                 snapshot_id=snapshot_id,
                 run_id=run_id,
                 schema_version=str(snapshot_payload.get("schema_version", "1.0")),
@@ -206,6 +210,14 @@ class RunService:
                 created_at=utc_now(),
                 quality_status=quality_status,
                 payload=snapshot_payload,
+                options_payload=(
+                    dict(options_result.payload)
+                    if options_result and options_result.payload
+                    else None
+                ),
+                persistence_payload=(
+                    dict(option_persistence_payload) if option_persistence_payload else None
+                ),
             )
 
             output_model = step_by_code["5"]
