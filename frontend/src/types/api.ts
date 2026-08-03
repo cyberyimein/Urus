@@ -77,6 +77,7 @@ export interface MarketCard {
   source?: string
   quote_code?: string | null
   last_price: number | null
+  regular_price?: number | null
   change_percent: number | null
   regular_change_percent?: number | null
   previous_close?: number | null
@@ -174,6 +175,7 @@ export interface MarketSnapshotQuote {
   label: string
   quote_code: string | null
   last_price: number | null
+  regular_price?: number | null
   previous_close: number | null
   change_percent: number | null
   open_price?: number | null
@@ -255,6 +257,7 @@ export interface InstrumentCard {
   source?: string
   quote_code?: string | null
   last_price: number | null
+  regular_price?: number | null
   change_percent: number | null
   regular_change_percent?: number | null
   previous_close?: number | null

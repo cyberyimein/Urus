@@ -18,6 +18,7 @@
 - 阶段 1A 已增加懒加载的 Moomoo/OpenD adapter：一次批量读取配置的 ETF 代理快照、交易时段、盘前/盘后字段，并读取 QQQ 的最多 260 根日线摘要指标。美国指数不通过 Moomoo 请求，直接 VIX 的策略跳过状态保留在 read model。
 - QQQ 日线摘要通过共享技术指标模块计算收益窗口、移动平均、实现波动率、ATR14、ATR14%、布林带 20/2；每项保留 `as_of`、`sample_count`、`source`。
 - 阶段 3A 复用同一 Moomoo/OpenD adapter，以 QQQ 作为基准批量采集 `INSTRUMENT_VALIDATION_SYMBOLS`（默认 `INTC,SMH`）。每个标的返回快照、复权日线、1/5/20/60/120/252 日收益、MA10/20/50/100/200、波动/ATR/布林指标以及相对 QQQ 收益、Beta、相关性；采集前后记录股票订阅和历史 K 线额度。
+- 行情模型同时保留正规交易 `regular_price`、盘前价和盘后价；前端不再把“常规价”和“扩展时段价”混成一个数。布林带 20/2 的上轨、中轨、下轨和 `%B` 均保存在技术指标结果中。
 - 阶段 3A 的 SQLite migration `0003_instrument_technical_persistence` 新增分析批次、标的快照和逐日 K 线表，原始日线与 frontend snapshot 在同一事务保存，read model 仅暴露公开字段，不泄露内部持久化 payload。
 - OpenD 真实数据和未实现的 placeholder/unavailable 步骤在 read model 中分开标记；OpenD 连接失败会保留为失败步骤和错误 snapshot。
 

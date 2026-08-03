@@ -81,7 +81,9 @@ def test_opend_adapter_normalises_snapshot_and_daily_summary() -> None:
     assert card["data_mode"] == "opend"
     assert card["quote_code"] == "US.QQQ"
     assert card["previous_close"] == 100.0
+    assert card["regular_price"] == 101.25
     assert card["premarket_price"] == 101.8
+    assert card["afterhours_price"] == 100.75
     assert card["history"]["available"] is True
     assert card["history"]["returned_days"] == 25
     assert card["history"]["technical_indicators"]["quality_status"] == "ok"
@@ -126,6 +128,9 @@ def test_opend_adapter_collects_intc_smh_and_qqq_relative_strength() -> None:
     assert [item["symbol"] for item in payload["instruments"]] == ["QQQ", "INTC", "SMH"]
     assert payload["instruments"][1]["relative_strength"]["available"] is True
     assert payload["instruments"][2]["relative_strength"]["benchmark"] == "QQQ"
+    assert payload["instruments"][1]["regular_price"] == 101.25
+    assert payload["instruments"][1]["afterhours_price"] == 100.75
+    assert payload["instruments"][1]["history"]["technical_indicators"]["bollinger_20_2"]["upper"] > 0
     assert payload["quota_audit"]["subscription_unchanged"] is True
     assert quote_context.snapshot_calls[-1] == ["US.QQQ", "US.INTC", "US.SMH"]
 

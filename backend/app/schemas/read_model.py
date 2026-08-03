@@ -20,6 +20,7 @@ class MarketCard(MockBase):
     source: str = "mock_adapter"
     quote_code: str | None = None
     last_price: float | None = None
+    regular_price: float | None = None
     change_percent: float | None = None
     regular_change_percent: float | None = None
     previous_close: float | None = None
@@ -60,6 +61,7 @@ class InstrumentCard(MockBase):
     source: str = "mock_adapter"
     quote_code: str | None = None
     last_price: float | None = None
+    regular_price: float | None = None
     change_percent: float | None = None
     regular_change_percent: float | None = None
     previous_close: float | None = None

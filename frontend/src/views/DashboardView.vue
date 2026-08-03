@@ -335,7 +335,7 @@ onMounted(() => {
           <section class="data-section">
             <div class="section-label-row"><div><span class="section-kicker">PRIMARY</span><h3>QQQ 当前快照</h3></div><span class="source-label">{{ market.source }}</span></div>
             <div class="metric-grid primary-metrics">
-              <div class="metric-cell metric-cell-major"><span>当前价格</span><strong>{{ formatNumber(market.last_price) }}</strong><small>{{ market.session_label || '不可用' }}</small></div>
+              <div class="metric-cell metric-cell-major"><span>常规现价 / 收盘价</span><strong>{{ formatNumber(market.regular_price ?? market.last_price) }}</strong><small>正规交易价格 · {{ market.session_label || '不可用' }}</small></div>
               <div class="metric-cell"><span>相对昨收</span><strong :class="quoteChangeClass(market.change_percent)">{{ displayPercent(market.change_percent, 4) }}</strong><small>常规：{{ displayPercent(market.regular_change_percent, 4) }}</small></div>
               <div class="metric-cell"><span>昨收</span><strong>{{ formatNumber(market.previous_close) }}</strong><small>报价时间：{{ displayQuoteTime(market.quote_time) }}</small></div>
               <div class="metric-cell"><span>成交量</span><strong>{{ displayVolume(market.volume) }}</strong><small>来源：{{ market.source }}</small></div>
@@ -348,11 +348,11 @@ onMounted(() => {
             <div class="section-label-row"><div><span class="section-kicker">SNAPSHOT UNIVERSE</span><h3>大盘与跨资产代理</h3></div><span class="source-label">{{ market.market_snapshot?.returned_symbols.length ?? 0 }}/{{ market.market_snapshot?.requested_symbols.length ?? 0 }} 返回</span></div>
             <div class="table-wrap">
               <table class="data-table">
-                <thead><tr><th>标的</th><th>最新</th><th>变化</th><th>昨收</th><th>开 / 高 / 低</th><th>成交量</th><th>成交额</th><th>买 / 卖</th><th>价差</th><th>盘前 / 盘后</th><th>报价时间</th></tr></thead>
+                <thead><tr><th>标的</th><th>常规价</th><th>变化</th><th>昨收</th><th>开 / 高 / 低</th><th>成交量</th><th>成交额</th><th>买 / 卖</th><th>价差</th><th>盘前 / 盘后</th><th>报价时间</th></tr></thead>
                 <tbody>
                   <tr v-for="quote in market.market_snapshot?.quotes ?? []" :key="quote.quote_code || quote.symbol">
                     <td><strong>{{ quote.symbol }}</strong><small>{{ quote.label }}</small></td>
-                    <td>{{ formatNumber(quote.last_price) }}</td>
+                    <td>{{ formatNumber(quote.regular_price ?? quote.last_price) }}</td>
                     <td :class="quoteChangeClass(quote.change_percent)">{{ displayPercent(quote.change_percent, 4) }}</td>
                     <td>{{ formatNumber(quote.previous_close) }}</td>
                     <td>{{ formatNumber(quote.open_price) }} / {{ formatNumber(quote.high_price) }} / {{ formatNumber(quote.low_price) }}</td>
@@ -414,16 +414,18 @@ onMounted(() => {
             <div class="section-label-row"><div><span class="section-kicker">CURRENT UNIVERSE</span><h3>QQQ 基准 · INTC 个股 · SMH 行业 ETF</h3></div><span class="source-label">{{ liveInstrumentCount }}/{{ instrumentCards.length }} live</span></div>
             <div class="table-wrap">
               <table class="data-table">
-                <thead><tr><th>标的</th><th>类型</th><th>当前价</th><th>日变化</th><th>5D / 20D / 60D</th><th>相对 QQQ</th><th>ATR14%</th><th>布林 %B</th><th>状态</th></tr></thead>
+                <thead><tr><th>标的</th><th>类型</th><th>常规价</th><th>盘前 / 盘后</th><th>日变化</th><th>5D / 20D / 60D</th><th>相对 QQQ</th><th>ATR14%</th><th>布林上 / 下</th><th>布林 %B</th><th>状态</th></tr></thead>
                 <tbody>
                   <tr v-for="card in instrumentCards" :key="card.symbol">
                     <td><strong>{{ card.symbol }}</strong><small>{{ card.label }}</small></td>
                     <td>{{ card.symbol === 'SMH' || card.symbol === 'QQQ' ? 'ETF' : '个股' }}</td>
-                    <td>{{ formatNumber(card.last_price) }}</td>
+                    <td>{{ formatNumber(card.regular_price ?? card.last_price) }}</td>
+                    <td>{{ formatNumber(card.premarket_price) }} / {{ formatNumber(card.afterhours_price) }}</td>
                     <td :class="quoteChangeClass(card.change_percent)">{{ displayPercent(card.change_percent, 4) }}</td>
                     <td>{{ displayPercent(instrumentHistoryValue(card, '5d'), 2) }} / {{ displayPercent(instrumentHistoryValue(card, '20d'), 2) }} / {{ displayPercent(instrumentHistoryValue(card, '60d'), 2) }}</td>
                     <td>{{ displayPercent(instrumentRelativeValue(card, '20d'), 2) }}</td>
                     <td>{{ displayPercent(instrumentTechnicalValue(card, 'atr14_percent'), 2) }}</td>
+                    <td>{{ formatNumber(toNumber(instrumentBollingerValue(card, 'upper'))) }} / {{ formatNumber(toNumber(instrumentBollingerValue(card, 'lower'))) }}</td>
                     <td>{{ displayPercent(instrumentBollingerValue(card, 'position_percent'), 2) }}</td>
                     <td><StatusBadge :status="card.data_state ?? 'unavailable'" /></td>
                   </tr>
