@@ -35,8 +35,8 @@ watch(runId, () => void load())
         <div class="heading-meta"><StatusBadge :status="store.selectedRun.status" /></div>
       </section>
       <section class="detail-meta">
-        <div><span>截止时间</span><strong>{{ formatDate(store.selectedRun.cutoff_time) }}</strong></div>
-        <div><span>完成时间</span><strong>{{ formatDate(store.selectedRun.completed_at) }}</strong></div>
+        <div><span>截止时间（JST）</span><strong>{{ formatDate(store.selectedRun.cutoff_time) }}</strong></div>
+        <div><span>完成时间（JST）</span><strong>{{ formatDate(store.selectedRun.completed_at) }}</strong></div>
         <div><span>snapshot</span><strong class="mono">{{ store.selectedRun.snapshot_id || '不可用' }}</strong></div>
       </section>
       <section class="section-block detail-section">

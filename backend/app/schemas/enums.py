@@ -10,6 +10,7 @@ class RunStatusValue(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
+    MIXED = "mixed"
     PARTIAL = "partial"
     FAILED = "failed"
 
@@ -18,6 +19,8 @@ class StepStatusValue(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
+    PLACEHOLDER = "placeholder"
+    UNAVAILABLE = "unavailable"
     SKIPPED = "skipped"
     FAILED = "failed"
 

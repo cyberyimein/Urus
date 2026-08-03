@@ -8,8 +8,8 @@ export const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/', name: 'dashboard', component: DashboardView },
+    { path: '/options', redirect: { path: '/', query: { tab: 'options' } } },
     { path: '/runs', name: 'runs', component: RunsView },
     { path: '/runs/:runId', name: 'run-detail', component: RunDetailView },
   ],
 })
-
