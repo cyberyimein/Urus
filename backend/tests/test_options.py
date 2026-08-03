@@ -10,6 +10,7 @@ from app.analytics.options import (
     calculate_expected_move,
     calculate_exposure,
     calculate_max_pain,
+    trim_exposure_display,
 )
 from app.core.config import Settings
 from app.integrations.moomoo_options import MoomooOptionsAdapter
@@ -71,9 +72,10 @@ def test_dex_uses_delta_sign_and_gex_keeps_model_assumption_explicit() -> None:
     assert totals["put_dex"] == pytest.approx(-80_000)
     assert totals["net_dex"] == pytest.approx(-30_000)
     assert totals["call_gex"] == pytest.approx(2_000)
-    assert totals["put_gex"] == pytest.approx(6_000)
+    assert totals["put_gex"] == pytest.approx(-6_000)
     assert totals["modeled_net_gex"] == pytest.approx(-4_000)
     assert result["walls"]["net_dex"]["strike"] == 100
+    assert result["walls"]["put_gamma"] == {"strike": 100.0, "exposure": -6_000.0}
 
 
 def test_gamma_zones_group_significant_contiguous_strikes_and_mark_flips() -> None:
@@ -95,7 +97,28 @@ def test_gamma_zones_group_significant_contiguous_strikes_and_mark_flips() -> No
         ("negative", 100.0, 100.0),
         ("positive", 110.0, 110.0),
     ]
-    assert [item["level"] for item in result["gamma_flip_levels"]] == [95.0, 105.0]
+    assert [item["level"] for item in result["strike_gex_sign_changes"]] == [95.0, 105.0]
+
+
+def test_display_trim_keeps_full_chain_totals_and_walls() -> None:
+    contracts = [
+        contract("CALL", 50, open_interest=100, delta=1.0, gamma=0.001),
+        contract("PUT", 100, open_interest=10, delta=-0.5, gamma=0.02),
+        contract("CALL", 110, open_interest=20, delta=0.4, gamma=0.02),
+        contract("CALL", 150, open_interest=1, delta=0.01, gamma=0.001),
+    ]
+    exposure = calculate_exposure(contracts)
+    totals_before = exposure["totals"].copy()
+    walls_before = exposure["walls"].copy()
+
+    trim_exposure_display(exposure, spot=100, strike_range_percent=20)
+
+    assert exposure["totals"] == totals_before
+    assert exposure["walls"] == walls_before
+    assert exposure["calculation_strike_count"] == 4
+    assert exposure["display_strike_count"] == 2
+    assert [row["strike"] for row in exposure["by_strike"]] == [100, 110]
+    assert "gamma_flip_levels" not in exposure
 
 
 def test_expected_move_uses_atm_call_and_put_midpoints() -> None:

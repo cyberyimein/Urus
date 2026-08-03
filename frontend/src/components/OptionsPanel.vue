@@ -52,6 +52,11 @@ const currentExpiry = computed<OptionExpirationAnalysis | null>(
     currentSymbol.value?.expirations[0] ??
     null,
 )
+const strikeGexSignChanges = computed(
+  () => currentExpiry.value?.exposure.strike_gex_sign_changes
+    ?? currentExpiry.value?.exposure.gamma_flip_levels
+    ?? [],
+)
 
 const strikeRows = computed<ExposureStrikeRow[]>(() => currentExpiry.value?.exposure.by_strike ?? [])
 const maxDex = computed(() => Math.max(1, ...strikeRows.value.map((item) => Math.abs(item.net_dex))))
@@ -181,7 +186,7 @@ function gammaFlipAtRow(index: number): number | null {
   if (index <= 0 || !currentExpiry.value) return null
   const previousStrike = strikeRows.value[index - 1].strike
   const strike = strikeRows.value[index].strike
-  return currentExpiry.value.exposure.gamma_flip_levels.find(
+  return strikeGexSignChanges.value.find(
     (item) => item.level > previousStrike && item.level <= strike,
   )?.level ?? null
 }
@@ -285,9 +290,9 @@ function gammaZoneSummary(sign: 'positive' | 'negative'): string {
           <div class="gamma-zone-summary">
             <div class="positive-zone"><span>正 Gamma 区间</span><strong>{{ gammaZoneSummary('positive') }}</strong></div>
             <div class="negative-zone"><span>负 Gamma 区间</span><strong>{{ gammaZoneSummary('negative') }}</strong></div>
-            <div><span>建模 Gamma Flip</span><strong>{{ currentExpiry.exposure.gamma_flip_levels.length ? currentExpiry.exposure.gamma_flip_levels.map((item) => formatNumber(item.level)).join('、') : '未出现' }}</strong></div>
+            <div><span>行权价 GEX 符号切换</span><strong>{{ strikeGexSignChanges.length ? strikeGexSignChanges.map((item) => formatNumber(item.level)).join('、') : '未出现' }}</strong></div>
           </div>
-          <div class="horizontal-chart-key"><span><i class="dex-key"></i>Net DEX</span><span><i class="gex-key"></i>Modeled Net GEX</span><span><i class="positive-zone-key"></i>正 Gamma 区间</span><span><i class="negative-zone-key"></i>负 Gamma 区间</span><span><i class="flip-key"></i>建模 Flip</span></div>
+          <div class="horizontal-chart-key"><span><i class="dex-key"></i>Net DEX</span><span><i class="gex-key"></i>Modeled Net GEX</span><span><i class="positive-zone-key"></i>正 Gamma 区间</span><span><i class="negative-zone-key"></i>负 Gamma 区间</span><span><i class="sign-change-key"></i>符号切换</span></div>
           <div ref="exposureScroller" class="horizontal-exposure-scroll">
             <div class="horizontal-exposure-chart">
               <span class="horizontal-zero-axis"></span>
@@ -299,7 +304,7 @@ function gammaZoneSummary(sign: 'positive' | 'negative'): string {
                 :data-spot="sameStrike(nearestSpotStrike, row.strike)"
                 :title="`${formatNumber(row.strike)} · DEX ${signedCompact(row.net_dex)} · GEX ${signedCompact(row.modeled_net_gex)}${focusReasons(row).length ? ` · ${focusReasons(row).join(' / ')}` : ''}`"
               >
-                <span v-if="gammaFlipAtRow(index) !== null" class="gamma-flip-marker"><small>Γ FLIP</small></span>
+                <span v-if="gammaFlipAtRow(index) !== null" class="strike-sign-change-marker"><small>Γ ±</small></span>
                 <div class="vertical-exposure-bars">
                   <span class="vertical-bar dex-vertical" :class="row.net_dex >= 0 ? 'positive-bar' : 'negative-bar'" :style="{ height: barHeight(row.net_dex, maxDex), bottom: row.net_dex >= 0 ? '50%' : 'auto', top: row.net_dex < 0 ? '50%' : 'auto' }"></span>
                   <span class="vertical-bar gex-vertical" :class="row.modeled_net_gex >= 0 ? 'positive-bar' : 'negative-bar'" :style="{ height: barHeight(row.modeled_net_gex, maxGex), bottom: row.modeled_net_gex >= 0 ? '50%' : 'auto', top: row.modeled_net_gex < 0 ? '50%' : 'auto' }"></span>
@@ -316,7 +321,7 @@ function gammaZoneSummary(sign: 'positive' | 'negative'): string {
           <div class="table-wrap">
             <table class="data-table options-table">
               <thead><tr><th>Strike</th><th>关注</th><th>Gamma 区间</th><th>Call DEX</th><th>Put DEX</th><th>Net DEX</th><th>Abs DEX</th><th>Call GEX</th><th>Put GEX</th><th>Modeled Net GEX</th><th>Abs GEX</th></tr></thead>
-              <tbody><tr v-for="row in strikeRows" :key="row.strike" :class="[focusRowClass(row), `gamma-${row.gamma_regime}`]"><td><strong>{{ formatNumber(row.strike) }}</strong></td><td><span class="focus-badges"><small v-for="reason in focusReasons(row)" :key="reason" class="focus-tag">{{ reason }}</small><small v-if="!focusReasons(row).length" class="focus-empty">—</small></span></td><td><small class="gamma-regime-tag" :class="`gamma-${row.gamma_regime}`">{{ gammaRegimeLabel(row.gamma_regime) }}</small></td><td>{{ signedCompact(row.call_dex) }}</td><td>{{ signedCompact(row.put_dex) }}</td><td>{{ signedCompact(row.net_dex) }}</td><td>{{ compactNumber(row.absolute_dex) }}</td><td>{{ compactNumber(row.call_gex) }}</td><td>{{ compactNumber(row.put_gex) }}</td><td>{{ signedCompact(row.modeled_net_gex) }}</td><td>{{ compactNumber(row.absolute_gex) }}</td></tr></tbody>
+              <tbody><tr v-for="row in strikeRows" :key="row.strike" :class="[focusRowClass(row), `gamma-${row.gamma_regime}`]"><td><strong>{{ formatNumber(row.strike) }}</strong></td><td><span class="focus-badges"><small v-for="reason in focusReasons(row)" :key="reason" class="focus-tag">{{ reason }}</small><small v-if="!focusReasons(row).length" class="focus-empty">—</small></span></td><td><small class="gamma-regime-tag" :class="`gamma-${row.gamma_regime}`">{{ gammaRegimeLabel(row.gamma_regime) }}</small></td><td>{{ signedCompact(row.call_dex) }}</td><td>{{ signedCompact(row.put_dex) }}</td><td>{{ signedCompact(row.net_dex) }}</td><td>{{ compactNumber(row.absolute_dex) }}</td><td>{{ signedCompact(row.call_gex) }}</td><td>{{ signedCompact(row.put_gex) }}</td><td>{{ signedCompact(row.modeled_net_gex) }}</td><td>{{ compactNumber(row.absolute_gex) }}</td></tr></tbody>
             </table>
           </div>
         </section>
@@ -330,7 +335,7 @@ function gammaZoneSummary(sign: 'positive' | 'negative'): string {
 
       <section class="data-section unfinished-section">
         <div class="section-label-row"><div><span class="section-kicker">NOT COLLECTED</span><h3>明确不在本模块</h3></div></div>
-        <div class="unfinished-list"><span>VEX / Vanna</span><span>做市商真实净仓位</span><span>开仓 / 平仓方向</span><span>多腿成交识别</span><span>逐笔期权历史</span><span>OptionCharts 依赖</span></div>
+        <div class="unfinished-list"><span>Spot Gamma Profile / Gamma Flip</span><span>VEX / Vanna</span><span>做市商真实净仓位</span><span>开仓 / 平仓方向</span><span>多腿成交识别</span><span>逐笔期权历史</span><span>OptionCharts 依赖</span></div>
       </section>
     </template>
 

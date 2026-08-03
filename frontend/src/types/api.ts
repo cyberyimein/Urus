@@ -324,8 +324,11 @@ export interface OptionExpirationAnalysis {
     walls: Record<string, ExposureWall | null>
     by_strike: ExposureStrikeRow[]
     gamma_zones: GammaZone[]
-    gamma_flip_levels: GammaFlipLevel[]
+    strike_gex_sign_changes?: GammaFlipLevel[]
+    gamma_flip_levels?: GammaFlipLevel[]
     gamma_noise_threshold: number
+    calculation_strike_count?: number
+    display_strike_count?: number
     usable_delta_contracts: number
     usable_gamma_contracts: number
   }

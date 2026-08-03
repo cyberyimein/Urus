@@ -240,7 +240,7 @@ h3 { margin-top: 6px; font-size: 19px; font-weight: 500; }
 .horizontal-chart-key .negative-key { width: 6px; height: 6px; border-radius: 50%; background: var(--danger); }
 .horizontal-chart-key .positive-zone-key { background: rgba(80, 150, 105, .4); }
 .horizontal-chart-key .negative-zone-key { background: rgba(188, 85, 79, .4); }
-.horizontal-chart-key .flip-key { width: 2px; height: 10px; border-radius: 0; background: var(--accent); }
+.horizontal-chart-key .sign-change-key { width: 2px; height: 10px; border-radius: 0; background: var(--accent); }
 .gamma-zone-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
 .gamma-zone-summary > div { padding: 9px 11px; border: 1px solid var(--line-soft); border-radius: 6px; background: var(--surface); }
 .gamma-zone-summary span, .gamma-zone-summary strong { display: block; font-family: "SFMono-Regular", Consolas, monospace; }
@@ -269,8 +269,8 @@ h3 { margin-top: 6px; font-size: 19px; font-weight: 500; }
 .horizontal-strike-label.spot-nearby { color: var(--accent); font-weight: 600; }
 .horizontal-focus-badges { position: absolute; right: 1px; bottom: 2px; left: 1px; display: flex; justify-content: center; gap: 1px; }
 .horizontal-focus-badges small { padding: 1px 2px; border-radius: 2px; color: var(--accent); background: var(--surface-raised); font: 7px "SFMono-Regular", Consolas, monospace; }
-.gamma-flip-marker { position: absolute; z-index: 3; top: 4px; bottom: 42px; left: -1px; border-left: 1px dashed var(--accent); pointer-events: none; }
-.gamma-flip-marker small { position: absolute; top: 0; left: 2px; color: var(--accent); font: 7px "SFMono-Regular", Consolas, monospace; white-space: nowrap; }
+.strike-sign-change-marker { position: absolute; z-index: 3; top: 4px; bottom: 42px; left: -1px; border-left: 1px dashed var(--accent); pointer-events: none; }
+.strike-sign-change-marker small { position: absolute; top: 0; left: 2px; color: var(--accent); font: 7px "SFMono-Regular", Consolas, monospace; white-space: nowrap; }
 .gamma-regime-tag { display: inline-block; padding: 2px 5px; border-radius: 3px; font: 8px "SFMono-Regular", Consolas, monospace; white-space: nowrap; }
 .gamma-regime-tag.gamma-positive { color: var(--success); background: rgba(80, 150, 105, .1); }
 .gamma-regime-tag.gamma-negative { color: var(--danger); background: rgba(188, 85, 79, .1); }

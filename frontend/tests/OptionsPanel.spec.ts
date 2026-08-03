@@ -50,7 +50,7 @@ const options: OptionsData = {
               net_dex: 30,
               absolute_dex: 170,
               call_gex: 20,
-              put_gex: 10,
+              put_gex: -10,
               modeled_net_gex: 10,
               absolute_gex: 30,
             },
@@ -73,7 +73,7 @@ const options: OptionsData = {
                 peak_exposure: 10,
               },
             ],
-            gamma_flip_levels: [],
+            strike_gex_sign_changes: [],
             gamma_noise_threshold: 0.2,
             by_strike: [
               {
@@ -83,7 +83,7 @@ const options: OptionsData = {
                 net_dex: 30,
                 absolute_dex: 170,
                 call_gex: 20,
-                put_gex: 10,
+                put_gex: -10,
                 modeled_net_gex: 10,
                 absolute_gex: 30,
                 gamma_regime: 'positive',

@@ -8,7 +8,7 @@ from typing import Any, Protocol
 
 import pandas as pd
 
-from app.analytics.options import OptionContract, summarize_expiration
+from app.analytics.options import OptionContract, summarize_expiration, trim_exposure_display
 
 
 class OptionsCollectorAdapter(Protocol):
@@ -180,10 +180,7 @@ class MoomooOptionsAdapter:
         expiration: str,
         chain: pd.DataFrame,
     ) -> list[OptionContract]:
-        lower = spot * (1 - self.strike_range_percent / 100)
-        upper = spot * (1 + self.strike_range_percent / 100)
-        window = chain[(chain["strike_price"] >= lower) & (chain["strike_price"] <= upper)]
-        codes = [str(code) for code in window["code"].tolist()]
+        codes = [str(code) for code in chain["code"].tolist()]
         snapshots: list[pd.DataFrame] = []
         for chunk in self._chunks(codes, self.batch_size):
             frame = self._market_snapshot(
@@ -195,7 +192,7 @@ class MoomooOptionsAdapter:
         if not snapshots:
             return []
         snapshot = pd.concat(snapshots, ignore_index=True)
-        static_by_code = window.set_index("code").to_dict("index")
+        static_by_code = chain.set_index("code").to_dict("index")
         contracts: list[OptionContract] = []
         for row in snapshot.to_dict("records"):
             code = str(row["code"])
@@ -301,15 +298,19 @@ class MoomooOptionsAdapter:
                         warnings.append(f"{code} {expiration} option snapshots failed: {exc}")
                         continue
                     if not contracts:
-                        warnings.append(f"{code} {expiration} has no contracts in snapshot window")
+                        warnings.append(f"{code} {expiration} has no contracts in option snapshots")
                         continue
-                    expiration_results.append(
-                        summarize_expiration(
-                            contracts,
-                            expiration=expiration,
-                            days_to_expiry=days_to_expiry,
-                        )
+                    analysis = summarize_expiration(
+                        contracts,
+                        expiration=expiration,
+                        days_to_expiry=days_to_expiry,
                     )
+                    trim_exposure_display(
+                        analysis["exposure"],
+                        spot=spot,
+                        strike_range_percent=self.strike_range_percent,
+                    )
+                    expiration_results.append(analysis)
 
             if not expiration_results:
                 warnings.append(f"{code} returned no usable option expirations")
@@ -368,7 +369,7 @@ class MoomooOptionsAdapter:
                 "GEX = gamma × open_interest × contract_multiplier × spot² × 1%.",
                 "Modeled net GEX assigns positive sign to calls and negative sign to puts.",
                 "Positive/negative Gamma zones group strikes by modeled net GEX sign; values within 2% of the largest strike exposure are treated as neutral noise.",
-                "Gamma flip markers are interpolated between adjacent modeled sign zones and do not reveal dealer positions.",
+                "Strike GEX sign-change markers interpolate between adjacent modeled strike zones; they are not a spot Gamma Profile or Gamma Flip.",
                 "Max pain is calculated independently for each expiration.",
             ],
             "warnings": warnings,
