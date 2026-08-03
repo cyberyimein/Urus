@@ -8,6 +8,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models import (
+    InstrumentAnalysisBatchModel,
+    InstrumentDailyBarModel,
+    InstrumentSnapshotModel,
     OptionAnalysisBatchModel,
     OptionContractSnapshotModel,
     OptionExpirationAnalysisModel,
@@ -109,6 +112,8 @@ class RunRepository:
         payload: dict[str, Any],
         options_payload: dict[str, Any] | None,
         persistence_payload: dict[str, Any] | None,
+        instrument_payload: dict[str, Any] | None = None,
+        instrument_persistence_payload: dict[str, Any] | None = None,
     ) -> SnapshotModel:
         """Atomically save the read model and normalized option inputs/analytics."""
         snapshot = SnapshotModel(
@@ -130,11 +135,113 @@ class RunRepository:
                     options_payload=options_payload,
                     persistence_payload=persistence_payload,
                 )
+            if (
+                instrument_payload
+                and instrument_payload.get("is_mock") is False
+                and instrument_persistence_payload
+            ):
+                self._add_instrument_analysis(
+                    run_id=run_id,
+                    snapshot_id=snapshot_id,
+                    persisted_at=created_at,
+                    instrument_payload=instrument_payload,
+                    persistence_payload=instrument_persistence_payload,
+                )
             self.session.commit()
         except Exception:
             self.session.rollback()
             raise
         return snapshot
+
+    def _add_instrument_analysis(
+        self,
+        *,
+        run_id: str,
+        snapshot_id: str,
+        persisted_at: datetime,
+        instrument_payload: dict[str, Any],
+        persistence_payload: dict[str, Any],
+    ) -> None:
+        captured_raw = str(
+            persistence_payload.get("captured_at")
+            or instrument_payload.get("captured_at")
+            or persisted_at.isoformat()
+        )
+        captured_at = datetime.fromisoformat(captured_raw.replace("Z", "+00:00"))
+        public_symbols = {
+            str(item.get("symbol")): item
+            for item in instrument_payload.get("instruments", [])
+            if isinstance(item, dict)
+        }
+        raw_symbols = {
+            str(item.get("symbol")): item
+            for item in persistence_payload.get("symbols", [])
+            if isinstance(item, dict)
+        }
+        batch_id = str(uuid4())
+        batch = InstrumentAnalysisBatchModel(
+            id=batch_id,
+            run_id=run_id,
+            snapshot_id=snapshot_id,
+            provider=str(instrument_payload.get("provider") or "unknown"),
+            source_mode=str(instrument_payload.get("source_mode") or "snapshot"),
+            captured_at=captured_at,
+            persisted_at=persisted_at,
+            feature_version="technical_v1",
+            requested_symbols=[
+                str(item)
+                for item in instrument_payload.get("requested_symbols", raw_symbols.keys())
+            ],
+            quota_audit=dict(instrument_payload.get("quota_audit") or {}),
+        )
+        self.session.add(batch)
+        for symbol, public_symbol in public_symbols.items():
+            raw_symbol = raw_symbols.get(symbol, {})
+            raw_quote = dict(raw_symbol.get("quote") or {})
+            raw_history = dict(raw_symbol.get("history") or {})
+            history = dict(public_symbol.get("history") or {})
+            technical = dict(history.get("technical_indicators") or {})
+            history_metadata = {
+                key: value
+                for key, value in history.items()
+                if key not in {"technical_indicators", "bars"}
+            }
+            snapshot_id_for_instrument = str(uuid4())
+            instrument_snapshot = InstrumentSnapshotModel(
+                id=snapshot_id_for_instrument,
+                batch_id=batch_id,
+                symbol=symbol,
+                asset_type=str(raw_symbol.get("asset_type") or "equity"),
+                captured_at=captured_at,
+                quote_time=public_symbol.get("quote_time"),
+                spot=public_symbol.get("last_price"),
+                previous_close=public_symbol.get("previous_close"),
+                quality_status=str(public_symbol.get("quality_status") or "unavailable"),
+                quote_payload=raw_quote,
+                history_metadata=history_metadata,
+                feature_payload=technical,
+                relative_payload=dict(public_symbol.get("relative_strength") or {}),
+            )
+            self.session.add(instrument_snapshot)
+            bars = raw_history.get("bars", [])
+            self.session.add_all(
+                [
+                    InstrumentDailyBarModel(
+                        instrument_snapshot_id=snapshot_id_for_instrument,
+                        bar_date=date.fromisoformat(str(bar["date"])),
+                        adjustment="QFQ",
+                        open=float(bar["open"]),
+                        high=float(bar["high"]),
+                        low=float(bar["low"]),
+                        close=float(bar["close"]),
+                        volume=float(bar.get("volume") or 0),
+                        turnover=bar.get("turnover"),
+                        turnover_rate=bar.get("turnover_rate"),
+                    )
+                    for bar in bars
+                    if isinstance(bar, dict) and bar.get("date")
+                ]
+            )
 
     def _add_option_analysis(
         self,

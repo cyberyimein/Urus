@@ -1,4 +1,4 @@
-# 阶段 1A 数据来源矩阵
+# 阶段 1A / 3A 数据来源矩阵
 
 本文件把当前已经确认的“两次执行策略”数据边界写成可验收记录。每个来源保留来源、时间和质量状态；无法取得的数据标记为 `unavailable`/`partial`，不会填 0、旧值或 mock。
 
@@ -9,6 +9,8 @@
 - VIX 直接指数不通过 Moomoo 请求；每次运行都请求 Yahoo `^VIX`，Yahoo 值优先，FRED VIX 保留作交叉校验。
 - 宏观日频数据优先使用 Yahoo 可用的 `^VIX/^TNX/^TYX`；FRED 提供官方 2Y 常期限收益率，并保留 10Y/30Y/VIX 交叉值，2s10s 使用选定的 10Y 与 FRED 2Y 计算。
 - QQQ 已返回的 OHLC 日线直接计算 20 日年化实现波动率、ATR14、ATR14%、布林带 20/2；不增加 Moomoo 请求。
+- 3A 默认使用 `INSTRUMENT_VALIDATION_SYMBOLS=INTC,SMH`，自动加入 QQQ 作为相对强弱基准。一次 `get_market_snapshot` 批量读取三只标的，再按标的请求复权日线；不建立实时订阅。日线直接计算 1/5/20/60/120/252 日收益、MA10/20/50/100/200、实现波动率、ATR14、布林带和相对 QQQ 收益、Beta、相关性。
+- 3A 在采集前后读取 Moomoo 订阅状态和历史 K 线额度，记录 `subscription_unchanged`、`history_used_delta` 和告警；额度检查本身不发起订阅。
 - 期货、实时订阅、逐笔、完整盘口不在本轮范围；5 分钟历史和 5 年日线历史不由快照提供，只有策略指标明确需要时再单独接入。
 
 ## 实际验证记录（2026-08-03）
@@ -23,6 +25,7 @@
 | 2Y Treasury | FRED `DGS2` | 已验证 | Yahoo chart 不提供可靠的官方 2Y 常期限系列，FRED 为选定来源 |
 | 10Y/30Y 与 2s10s | Yahoo `^TNX/^TYX` + FRED `DGS10/DGS30` 交叉 | 已验证 | Yahoo 10Y/30Y 为选定值；2s10s 由 Yahoo 10Y - FRED 2Y 机械计算 |
 | Anomalo 旧工具 | 旧版代码检视 | 未复用 | 没有可直接复用的非 Moomoo 行情 provider |
+| 3A 个股/行业 ETF | 一次 Moomoo snapshot + QQQ/INTC/SMH 复权日线 | 已验证 | 三只标的各返回 357 根日线；相对强弱和技术指标质量为 `ok`，不改变实时订阅状态 |
 
 ## 当前 read model 结构
 
@@ -33,6 +36,8 @@
 - `market.macro_context.cross_checks`：另一来源的交叉值，例如 `vix_fred`、`us_10y_yield_fred`。
 - `market.macro_context.yahoo`：Yahoo 是否实际请求、优先指标是否返回和来源质量。
 - `market.history.technical_indicators`：QQQ 技术指标及各项 `as_of`、`sample_count`、`source`。
+- `instrument_cards`：3A QQQ 基准、INTC 个股、SMH 行业 ETF 的快照、日线收益、技术指标和相对 QQQ 强弱。
+- `instrument.quota_audit`：3A 采集前后订阅/历史额度快照及变化量。
 - 所有宏观观测保留 `as_of`；Yahoo 数据不会伪装成实时行情。
 
 ## 延期项（不阻塞本次 1A 手动验收）
@@ -40,7 +45,7 @@
 1. Moomoo OpenD 当前不能通过 `get_market_snapshot` 返回直接 VIX 指数；按策略不再请求该指数。Yahoo `^VIX` 已设置为每次运行必取并优先使用，FRED VIX 作为交叉校验，Yahoo 不能替代官方 2Y 数据。
 2. 5 年日线原始归档、5 分钟 OHLCV 和复播仍未实现。
 3. 市场全体涨跌家数、完整市场宽度和成分热力图不是少量 ETF 快照，仍需单独的市场广度来源。
-4. 60/120/252 日收益延期；相对强弱放到 3A，计算个股相对 QQQ、行业 ETF 相对 QQQ。
+4. 5 年日线原始归档、分钟级 OHLCV 和更丰富的行业基准仍延期；3A 当前只保存本轮请求返回的日线窗口。
 5. 交易日历与提前收盘不阻塞本次手动验收，但在启用每天两次自动调度前必须实现。
 6. 期货、订阅、逐笔、盘口和事件/新闻层按当前两次执行策略暂不实现。
 
@@ -51,4 +56,10 @@
 - Yahoo 每次运行的 VIX/收益率采集：已完成并通过真实 Yahoo chart 请求验证。
 - VIX 直接 Moomoo 快照：受 OpenD/权限限制按策略跳过；Yahoo 每次运行必取并优先使用，FRED 保留交叉校验。
 - 1A 手动验收范围：真实 ETF 批量快照、Yahoo/FRED 宏观、QQQ 日线指标、UTC 时间和状态语义均已完成；延期项不再阻塞本次签收。
-- 当前真实运行的整体状态为 `mixed`：1A 为 `succeeded + live`，1B/3B 为 `skipped`，2/4 为 `placeholder`，3A 为 `unavailable`。
+- 当前真实运行的整体状态为 `mixed`：1A、3A 为 `succeeded + live`，1B/3B 为 `skipped`，2/4 为 `placeholder`；整体为 `mixed` 是因为后续步骤仍未实现，不代表 3A 失败。
+
+## 阶段 3A 技术验收
+
+- 已通过真实 OpenD 验证 `QQQ + INTC + SMH` 的同批快照和日线采集；三只标的各返回 357 根日线，技术指标质量均为 `ok`。
+- 以 QQQ 为基准，3A 同时输出 5/20/60 日绝对收益、相对收益、20/60 日 Beta 与相关性；前端“个股与行业 ETF”页显示 3/3 live。
+- SQLite migration `0003_instrument_technical_persistence` 保存分析批次、标的快照和逐日 OHLCV/成交数据；与 frontend snapshot 在同一事务写入。

@@ -87,12 +87,13 @@ class RunService:
             run_type=request.run_type.value,
             cutoff_time=cutoff_time,
             symbols=symbols,
+            instrument_symbols=self.settings.instrument_validation_symbol_list,
             simulate_macro_event=request.simulate_macro_event,
             simulate_instrument_event=request.simulate_instrument_event,
             fail_step=request.fail_step.value if request.fail_step else None,
             market_adapter=market_adapter,
             macro_adapter=macro_adapter,
-            moomoo_adapter=DisabledMoomooAdapter(),
+            moomoo_adapter=market_adapter,
             options_adapter=options_adapter,
             anomalo_adapter=MockAnomaloAdapter(),
             decision_adapter=MockDecisionAdapter(),
@@ -101,6 +102,7 @@ class RunService:
         snapshot_payload: dict[str, object] | None = None
         snapshot_id: str | None = None
         option_persistence_payload: dict[str, object] | None = None
+        instrument_persistence_payload: dict[str, object] | None = None
 
         for step in pipeline.steps:
             model = step_by_code[step.code]
@@ -131,6 +133,8 @@ class RunService:
                 logger.exception("workflow step crashed run_id=%s step_code=%s", run_id, step.code)
             if step.code == "2" and isinstance(result.payload.get("_persistence"), dict):
                 option_persistence_payload = result.payload.pop("_persistence")
+            if step.code == "3a" and isinstance(result.payload.get("_persistence"), dict):
+                instrument_persistence_payload = result.payload.pop("_persistence")
             context.results[step.code] = result
             completed_at = utc_now()
             self.repository.update_step(
@@ -202,6 +206,7 @@ class RunService:
                     )
             quality_status = self._quality_status(snapshot_payload)
             options_result = context.results.get("2")
+            instrument_result = context.results.get("3a")
             self.repository.save_snapshot_with_options(
                 snapshot_id=snapshot_id,
                 run_id=run_id,
@@ -217,6 +222,16 @@ class RunService:
                 ),
                 persistence_payload=(
                     dict(option_persistence_payload) if option_persistence_payload else None
+                ),
+                instrument_payload=(
+                    dict(instrument_result.payload)
+                    if instrument_result and instrument_result.payload
+                    else None
+                ),
+                instrument_persistence_payload=(
+                    dict(instrument_persistence_payload)
+                    if instrument_persistence_payload
+                    else None
                 ),
             )
 
@@ -341,10 +356,12 @@ class RunService:
         )
 
     def _validate_symbols(self, requested: list[str] | None) -> list[str]:
-        allowed = set(self.settings.enabled_symbol_list)
+        allowed = set(self.settings.enabled_symbol_list) | set(
+            self.settings.instrument_validation_symbol_list
+        )
         if not {"QQQ", "INTC"}.issubset(allowed):
             raise AppError(
-                "当前框架白名单必须包含 QQQ 和 INTC",
+                "当前框架白名单必须包含 QQQ 和 INTC；3A 可额外配置 SMH 等标的",
                 code="invalid_development_allowlist",
                 status_code=500,
             )
@@ -352,13 +369,13 @@ class RunService:
         unsupported = sorted(set(symbols) - allowed)
         if unsupported:
             raise AppError(
-                f"标的不在开发白名单中：{', '.join(unsupported)}；当前只允许 QQQ、INTC",
+                f"标的不在开发白名单中：{', '.join(unsupported)}；当前允许配置的标的是 QQQ、INTC、SMH 等",
                 code="unsupported_symbol",
                 status_code=422,
             )
         if not {"QQQ", "INTC"}.issubset(set(symbols)):
             raise AppError(
-                "框架运行必须同时包含 QQQ 和 INTC",
+                "框架运行必须同时包含 QQQ 和 INTC；3A 另行验证 SMH",
                 code="incomplete_development_allowlist",
                 status_code=422,
             )

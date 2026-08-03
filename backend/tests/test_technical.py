@@ -1,4 +1,4 @@
-from app.analytics.technical import calculate_technical_indicators
+from app.analytics.technical import calculate_relative_strength, calculate_technical_indicators
 
 
 def _bars(count: int = 30) -> list[dict[str, object]]:
@@ -37,3 +37,35 @@ def test_daily_technical_indicators_report_insufficient_samples() -> None:
     assert result["available"] is False
     assert result["quality_status"] == "partial"
     assert result["warnings"]
+
+
+def test_daily_technical_indicators_include_extended_windows() -> None:
+    result = calculate_technical_indicators(_bars(260), source="test_history")
+
+    assert result["returns_percent"]["252d"] is not None
+    assert result["moving_average"]["200d"] is not None
+    assert result["realized_volatility_10d"]["sample_count"] == 10
+    assert result["realized_volatility_60d"]["sample_count"] == 60
+
+
+def test_relative_strength_aligns_returns_and_calculates_beta() -> None:
+    instrument = _bars(80)
+    benchmark = [
+        {
+            **bar,
+            "close": 100.0 + index * 0.5,
+        }
+        for index, bar in enumerate(_bars(80))
+    ]
+
+    result = calculate_relative_strength(
+        instrument,
+        benchmark,
+        benchmark="QQQ",
+        source="test_history",
+    )
+
+    assert result["available"] is True
+    assert result["excess_returns_percent"]["20d"] is not None
+    assert result["beta"]["20d"] is not None
+    assert result["correlation"]["20d"] is not None

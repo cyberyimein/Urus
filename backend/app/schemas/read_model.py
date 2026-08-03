@@ -48,11 +48,42 @@ class MarketCard(MockBase):
 class InstrumentCard(MockBase):
     symbol: str
     label: str
+    status: str = "unavailable"
+    available: bool = False
+    provider: str = "mock_adapter"
+    source_mode: str = "mock"
+    captured_at: str | None = None
+    requested_symbols: list[str] = Field(default_factory=list)
+    unavailable_symbols: list[str] = Field(default_factory=list)
+    quota_audit: dict[str, Any] = Field(default_factory=dict)
+    data_mode: str = "mock"
+    source: str = "mock_adapter"
+    quote_code: str | None = None
     last_price: float | None = None
     change_percent: float | None = None
+    regular_change_percent: float | None = None
+    previous_close: float | None = None
+    volume: int | None = None
+    turnover: float | None = None
+    turnover_rate: float | None = None
+    bid_price: float | None = None
+    ask_price: float | None = None
+    price_spread: float | None = None
+    quote_time: str | None = None
+    session: str | None = None
+    session_label: str | None = None
+    session_price_source: str | None = None
+    premarket_price: float | None = None
+    premarket_volume: int | None = None
+    afterhours_price: float | None = None
+    afterhours_volume: int | None = None
+    history: dict[str, Any] = Field(default_factory=dict)
+    relative_strength: dict[str, Any] = Field(default_factory=dict)
     trend: str | None = None
     technical_note: str | None = None
     data_state: str = "unavailable"
+    quality_status: str = "unavailable"
+    quality_warnings: list[str] = Field(default_factory=list)
     note: str
 
 
@@ -139,6 +170,7 @@ class FrontendReadModel(BaseModel):
     is_mock: bool = True
     market: MarketCard | None = None
     instrument: InstrumentCard | None = None
+    instrument_cards: list[InstrumentCard] = Field(default_factory=list)
     macro_event: EventSummary
     options: Annotated[OptionsPlaceholder | OptionsAnalysis, Field(discriminator="is_mock")]
     instrument_event: EventSummary

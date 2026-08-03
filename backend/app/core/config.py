@@ -9,8 +9,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Environment-backed settings for the framework.
 
-    The integration flags are intentionally conservative.  The framework always
-    uses local mock adapters; no real provider client is constructed here.
+    Provider flags are intentionally explicit.  Moomoo/OpenD is constructed
+    only when ``MOOMOO_ENABLED`` is true; other adapters remain optional.
     """
 
     model_config = SettingsConfigDict(
@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./urus.db"
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     enabled_symbols: str = "QQQ,INTC"
+    instrument_validation_symbols: str = "INTC,SMH"
     moomoo_enabled: bool = False
     moomoo_host: str = "127.0.0.1"
     moomoo_port: int = 11111
@@ -78,6 +79,14 @@ class Settings(BaseSettings):
     @property
     def enabled_symbol_list(self) -> list[str]:
         return [item.strip().upper() for item in self.enabled_symbols.split(",") if item.strip()]
+
+    @property
+    def instrument_validation_symbol_list(self) -> list[str]:
+        return [
+            item.strip().upper()
+            for item in self.instrument_validation_symbols.split(",")
+            if item.strip()
+        ]
 
     @property
     def options_target_symbol_list(self) -> list[str]:

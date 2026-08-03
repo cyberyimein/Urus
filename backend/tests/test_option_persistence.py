@@ -6,6 +6,9 @@ from sqlalchemy import func, select
 
 from app.core.database import Base, create_database
 from app.models import (
+    InstrumentAnalysisBatchModel,
+    InstrumentDailyBarModel,
+    InstrumentSnapshotModel,
     OptionAnalysisBatchModel,
     OptionContractSnapshotModel,
     OptionExpirationAnalysisModel,
@@ -94,6 +97,52 @@ def test_normalized_option_inputs_and_profile_are_saved_with_snapshot(tmp_path) 
             }
         ],
     }
+    instrument_payload = {
+        "is_mock": False,
+        "provider": "moomoo_openapi",
+        "source_mode": "snapshot",
+        "captured_at": now.isoformat(),
+        "requested_symbols": ["QQQ", "INTC", "SMH"],
+        "quota_audit": {"subscription_unchanged": True},
+        "instruments": [
+            {
+                "symbol": "INTC",
+                "last_price": 100.0,
+                "previous_close": 99.0,
+                "quote_time": now.isoformat(),
+                "quality_status": "ok",
+                "history": {
+                    "available": True,
+                    "technical_indicators": {"returns_percent": {"20d": 5.0}},
+                },
+                "relative_strength": {"benchmark": "QQQ", "available": True},
+            }
+        ],
+    }
+    instrument_persistence_payload = {
+        "captured_at": now.isoformat(),
+        "symbols": [
+            {
+                "symbol": "INTC",
+                "asset_type": "equity",
+                "quote": {"symbol": "INTC", "last_price": 100.0},
+                "history": {
+                    "bars": [
+                        {
+                            "date": "2026-08-01",
+                            "open": 98.0,
+                            "high": 101.0,
+                            "low": 97.0,
+                            "close": 100.0,
+                            "volume": 1000,
+                            "turnover": 100000.0,
+                            "turnover_rate": 1.0,
+                        }
+                    ]
+                },
+            }
+        ],
+    }
 
     with session_factory() as session:
         repository = RunRepository(session)
@@ -108,6 +157,8 @@ def test_normalized_option_inputs_and_profile_are_saved_with_snapshot(tmp_path) 
             payload={"schema_version": "1.0"},
             options_payload=options_payload,
             persistence_payload=persistence_payload,
+            instrument_payload=instrument_payload,
+            instrument_persistence_payload=instrument_persistence_payload,
         )
 
         assert session.scalar(select(func.count()).select_from(OptionAnalysisBatchModel)) == 1
@@ -123,5 +174,8 @@ def test_normalized_option_inputs_and_profile_are_saved_with_snapshot(tmp_path) 
         assert contract.implied_volatility == 25.0
         flip = session.scalar(select(OptionGammaFlipModel))
         assert flip is not None and flip.is_primary is True
+        assert session.scalar(select(func.count()).select_from(InstrumentAnalysisBatchModel)) == 1
+        assert session.scalar(select(func.count()).select_from(InstrumentSnapshotModel)) == 1
+        assert session.scalar(select(func.count()).select_from(InstrumentDailyBarModel)) == 1
 
     engine.dispose()

@@ -243,11 +243,41 @@ export interface InstrumentCard {
   is_mock: boolean
   symbol: string
   label: string
+  status?: string
+  available?: boolean
+  provider?: string
+  source_mode?: string
+  captured_at?: string | null
+  requested_symbols?: string[]
+  unavailable_symbols?: string[]
+  quota_audit?: Record<string, unknown>
+  data_mode?: string
+  source?: string
+  quote_code?: string | null
   last_price: number | null
   change_percent: number | null
+  regular_change_percent?: number | null
+  previous_close?: number | null
+  volume?: number | null
+  turnover?: number | null
+  turnover_rate?: number | null
+  bid_price?: number | null
+  ask_price?: number | null
+  price_spread?: number | null
+  quote_time?: string | null
+  session?: string | null
+  session_label?: string | null
+  premarket_price?: number | null
+  premarket_volume?: number | null
+  afterhours_price?: number | null
+  afterhours_volume?: number | null
+  history?: HistorySummary
+  relative_strength?: Record<string, unknown>
   trend: string | null
   technical_note: string | null
   data_state?: DataState
+  quality_status?: string
+  quality_warnings?: string[]
   note: string
 }
 
@@ -426,6 +456,7 @@ export interface FrontendReadModel {
   is_mock: boolean
   market: MarketCard | null
   instrument: InstrumentCard | null
+  instrument_cards?: InstrumentCard[]
   macro_event: EventSummary
   options: OptionsData
   instrument_event: EventSummary

@@ -1,4 +1,4 @@
-# Urus Stage 2 实现说明
+# Urus Stage 2 / Stage 3A 实现说明
 
 ## 框架与阶段 1A
 
@@ -16,7 +16,9 @@
 - 阶段 1A 的 FRED 与 Yahoo 日频宏观 adapter 已独立接入；Yahoo chart 每次运行请求 `^VIX/^TNX/^TYX`，可用时作为 VIX/10Y/30Y 选定值；FRED 提供官方 2Y，并保留 VIX/10Y/30Y 交叉值；2s10s 使用选定的 10Y 与 FRED 2Y 计算，不伪装成官方 2Y 数据。
 - 所有 API 时间统一按带 `+00:00` offset 的 UTC 输出；前端固定显示 `JST`，不会把数据库中 SQLite 取回的 naive UTC 当作浏览器本地时间。
 - 阶段 1A 已增加懒加载的 Moomoo/OpenD adapter：一次批量读取配置的 ETF 代理快照、交易时段、盘前/盘后字段，并读取 QQQ 的最多 260 根日线摘要指标。美国指数不通过 Moomoo 请求，直接 VIX 的策略跳过状态保留在 read model。
-- QQQ 日线摘要通过共享技术指标模块计算 20 日年化实现波动率、ATR14、ATR14%、布林带 20/2；每项保留 `as_of`、`sample_count`、`source`，后续 3A 可复用同一模块。
+- QQQ 日线摘要通过共享技术指标模块计算收益窗口、移动平均、实现波动率、ATR14、ATR14%、布林带 20/2；每项保留 `as_of`、`sample_count`、`source`。
+- 阶段 3A 复用同一 Moomoo/OpenD adapter，以 QQQ 作为基准批量采集 `INSTRUMENT_VALIDATION_SYMBOLS`（默认 `INTC,SMH`）。每个标的返回快照、复权日线、1/5/20/60/120/252 日收益、MA10/20/50/100/200、波动/ATR/布林指标以及相对 QQQ 收益、Beta、相关性；采集前后记录股票订阅和历史 K 线额度。
+- 阶段 3A 的 SQLite migration `0003_instrument_technical_persistence` 新增分析批次、标的快照和逐日 K 线表，原始日线与 frontend snapshot 在同一事务保存，read model 仅暴露公开字段，不泄露内部持久化 payload。
 - OpenD 真实数据和未实现的 placeholder/unavailable 步骤在 read model 中分开标记；OpenD 连接失败会保留为失败步骤和错误 snapshot。
 
 ## 关键技术选择
@@ -29,9 +31,9 @@
 
 ## 已知限制
 
-- 目前阶段 1A 的 QQQ/代理 ETF 快照、QQQ 日线指标和 FRED/Yahoo 宏观链路已接入；阶段 2 的期权快照与结构计算在启用 Moomoo 时为 live，未启用时为 placeholder。1B/3B 仍按条件跳过，4 是 placeholder，3A 是 unavailable；没有事件日历、INTC 个股模块真实采集、账户风险、AI prompt 或自动调度。
+- 目前阶段 1A 的 QQQ/代理 ETF 快照、QQQ 日线指标和 FRED/Yahoo 宏观链路已接入；阶段 2 的期权快照与结构计算在启用 Moomoo 时为 live，未启用时为 placeholder；阶段 3A 已通过真实 OpenD 验证 QQQ/INTC/SMH。1B/3B 仍按条件跳过，4 是 placeholder；没有事件日历、个股财务与事件、账户风险、AI prompt 或自动调度。
 - 动态利率/股息率、VEX/Vanna、做市商真实持仓方向、开平仓识别、组合腿识别和逐笔期权历史不属于本阶段。期权范围包含 SPY、QQQ、SMH、IGV 与配置的 15 个上市个股关注标的；SPCX 是私募标的，明确不发起期权链请求。正负 Gamma 与 Spot Gamma Profile 都基于 Call 正、Put 负的持仓方向假设，不代表已知做市商净仓位。
-- FRED 日频宏观源需要 `FRED_ENABLED=true` 才会请求；Yahoo 每次运行请求需要 `YAHOO_ENABLED=true`。市场广度、5 分钟历史、5 年日线归档、60/120/252 日收益、行业热力图和实时订阅、逐笔、盘口、期货属于延期项；交易日历和提前收盘在启用自动调度前必须补齐。
+- FRED 日频宏观源需要 `FRED_ENABLED=true` 才会请求；Yahoo 每次运行请求需要 `YAHOO_ENABLED=true`。市场广度、5 分钟历史、5 年日线归档、行业热力图和实时订阅、逐笔、盘口、期货属于延期项；交易日历和提前收盘在启用自动调度前必须补齐。
 - 本地启动时会 `create_all` 以降低首次运行摩擦；部署和版本演进仍应执行 Alembic migration。
 - 没有登录、权限、多租户、Sentry、Prometheus、容器编排或移动端完整适配。
 - `MOOMOO_ENABLED=true` 才会启用阶段 1A OpenD；Anomalo 即使配置为 enabled 也没有真实 HTTP wiring。
@@ -47,6 +49,13 @@
 - 为重算结果保留模型版本和参数版本；与 OptionCharts 对比时必须对齐标的、到期范围、OI 截止时间、现价与采集时间。
 - 当前 Call 正、Put 负仍是持仓方向假设；在缺少做市商真实净仓与开平仓数据时，Gamma Flip 只能解释为模型结果。
 
+## 阶段 3A 验收记录
+
+- 真实 OpenD 验证时间：2026-08-03；端点为配置的 `MOOMOO_HOST:MOOMOO_PORT`。
+- 请求集合为 `QQQ + INTC + SMH`，三只标的均返回快照和 357 根复权日线，技术指标质量为 `ok`；相对 QQQ 的 5/20/60 日收益、20/60 日 Beta 和相关性均按共同交易日对齐计算。
+- 采集前后股票实时订阅额度保持不变；历史 K 线额度只按 OpenD 实际新增的历史请求变化，结果写入 `quota_audit`，不会为了 3A 建立实时订阅。
+- 前端 Dashboard 的“个股与行业 ETF”页显示 `3/3 live`；整次工作流仍可能显示 `mixed`，原因是 1B/3B/4 尚未实现，不是 3A 数据不可用。
+
 ## 下一阶段接入点
 
-阶段 1A 与阶段 2 已在同一工作流和 Dashboard 中合流。下一步进入 3A，接入 INTC 真实行情并复用同一技术指标模块，另计算个股相对 QQQ、行业 ETF 相对 QQQ。交易日历与提前收盘应在启用每天两次自动调度前补齐。
+阶段 1A、阶段 2 与阶段 3A 已在同一工作流和 Dashboard 中合流。下一步为 3B 个股事件/财务摘要、更多关注列表标的和行业基准；交易日历与提前收盘应在启用每天两次自动调度前补齐。

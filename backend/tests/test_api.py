@@ -46,6 +46,7 @@ def test_pre_market_run_persists_order_skip_states_and_read_model(client: TestCl
     assert read_model["data_state"] == "mock"
     assert read_model["market"]["symbol"] == "QQQ"
     assert read_model["instrument"]["symbol"] == "INTC"
+    assert [item["symbol"] for item in read_model["instrument_cards"]] == ["INTC", "SMH"]
     assert read_model["macro_event"]["status"] == "skipped"
     assert read_model["options"]["available"] is False
     assert read_model["options"]["status"] == "placeholder"

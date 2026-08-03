@@ -17,6 +17,7 @@ class RunContext:
     run_type: str
     cutoff_time: datetime
     symbols: list[str]
+    instrument_symbols: list[str] = field(default_factory=lambda: ["INTC", "SMH"])
     simulate_macro_event: bool = False
     simulate_instrument_event: bool = False
     fail_step: str | None = None

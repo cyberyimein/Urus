@@ -108,6 +108,45 @@ def test_opend_adapter_accepts_a_configured_primary_proxy() -> None:
     assert card["quote_code"] == "US.INTC"
 
 
+def test_opend_adapter_collects_intc_smh_and_qqq_relative_strength() -> None:
+    quote_context = FakeQuoteContext()
+    adapter = OpenDMarketAdapter(
+        "test",
+        11111,
+        history_days=20,
+        sdk=FakeSdk(),
+        quote_context=quote_context,
+    )
+
+    payload = adapter.instrument_cards(["INTC", "SMH"])
+    adapter.close()
+
+    assert payload["is_mock"] is False
+    assert payload["requested_symbols"] == ["QQQ", "INTC", "SMH"]
+    assert [item["symbol"] for item in payload["instruments"]] == ["QQQ", "INTC", "SMH"]
+    assert payload["instruments"][1]["relative_strength"]["available"] is True
+    assert payload["instruments"][2]["relative_strength"]["benchmark"] == "QQQ"
+    assert payload["quota_audit"]["subscription_unchanged"] is True
+    assert quote_context.snapshot_calls[-1] == ["US.QQQ", "US.INTC", "US.SMH"]
+
+
+def test_opend_single_instrument_card_does_not_return_qqq_benchmark() -> None:
+    quote_context = FakeQuoteContext()
+    adapter = OpenDMarketAdapter(
+        "test",
+        11111,
+        history_days=20,
+        sdk=FakeSdk(),
+        quote_context=quote_context,
+    )
+
+    card = adapter.instrument_card("INTC")
+    adapter.close()
+
+    assert card["symbol"] == "INTC"
+    assert card["quote_code"] == "US.INTC"
+
+
 def test_market_step_preserves_live_marker() -> None:
     adapter = OpenDMarketAdapter(
         "test",

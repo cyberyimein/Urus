@@ -8,7 +8,7 @@ import OptionsPanel from '@/components/OptionsPanel.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import StepTimeline from '@/components/StepTimeline.vue'
 import { useUrusStore } from '@/stores/urus'
-import type { EventSummary, MarketCard, RunType } from '@/types/api'
+import type { EventSummary, InstrumentCard, MarketCard, RunType } from '@/types/api'
 import { formatDate, formatNumber, nullable, runTypeLabel } from '@/utils/format'
 
 type TabId = 'market' | 'instrument' | 'events' | 'options' | 'decision' | 'quality'
@@ -37,6 +37,8 @@ const simulateInstrumentEvent = ref(false)
 const runSteps = computed(() => store.latestRun?.steps ?? [])
 const readModel = computed(() => store.latestReadModel)
 const market = computed<MarketCard | null>(() => readModel.value?.market ?? null)
+const instrumentCards = computed<InstrumentCard[]>(() => readModel.value?.instrument_cards ?? [])
+const liveInstrumentCount = computed(() => instrumentCards.value.filter((card) => card.is_mock === false).length)
 
 const macroCards = [
   { key: 'vix', label: 'VIX', unit: '点' },
@@ -202,6 +204,49 @@ function quoteChangeClass(value: unknown): string {
   return numeric >= 0 ? 'positive-text' : 'negative-text'
 }
 
+function instrumentHistoryValue(card: InstrumentCard, key: string): unknown {
+  return card.history?.returns_percent?.[key]
+}
+
+function instrumentTechnicalValue(card: InstrumentCard, key: string): unknown {
+  const indicators = card.history?.technical_indicators as Record<string, unknown> | undefined
+  const metric = indicators?.[key]
+  return typeof metric === 'object' && metric !== null ? (metric as Record<string, unknown>).value : null
+}
+
+function instrumentRelativeValue(card: InstrumentCard, key: string): unknown {
+  const relative = card.relative_strength as Record<string, unknown> | undefined
+  const values = relative?.excess_returns_percent
+  return typeof values === 'object' && values !== null ? (values as Record<string, unknown>)[key] : null
+}
+
+function instrumentBollingerValue(card: InstrumentCard, key: string): unknown {
+  const indicators = card.history?.technical_indicators as Record<string, unknown> | undefined
+  const bollinger = indicators?.bollinger_20_2
+  return typeof bollinger === 'object' && bollinger !== null
+    ? (bollinger as Record<string, unknown>)[key]
+    : null
+}
+
+function allInstrumentHistoryAvailable(): boolean {
+  return instrumentCards.value.length > 0 && instrumentCards.value.every((card) => card.history?.available === true)
+}
+
+function hasInstrumentRelativeStrength(): boolean {
+  return instrumentCards.value.some((card) => card.symbol === 'INTC' && card.relative_strength?.available === true)
+}
+
+function instrumentQuotaText(): string {
+  const audit = store.latestReadModel?.instrument?.quota_audit as Record<string, unknown> | undefined
+  const unchanged = audit?.subscription_unchanged
+  const historyDelta = audit?.history_used_delta
+  const subscriptionText = unchanged === true ? '订阅状态未变化' : unchanged === false ? '订阅状态有变化' : '订阅额度未返回'
+  const historyText = typeof historyDelta === 'number'
+    ? `历史 K 线额度 ${historyDelta >= 0 ? '+' : ''}${historyDelta}`
+    : '历史 K 线额度未返回'
+  return `${subscriptionText} · ${historyText}`
+}
+
 function eventText(event: EventSummary): string {
   return event.summary || event.reason || '当前没有摘要。'
 }
@@ -223,7 +268,7 @@ onMounted(() => {
   <main class="page-shell validation-page">
     <header class="validation-header">
       <div>
-        <p class="eyebrow">STAGE 1A + 2 / DATA VALIDATION</p>
+        <p class="eyebrow">STAGE 1A + 2 + 3A / DATA VALIDATION</p>
         <h1>数据采集验证</h1>
       </div>
       <div class="run-launcher compact-launcher">
@@ -356,20 +401,37 @@ onMounted(() => {
 
           <section class="data-section unfinished-section">
             <div class="section-label-row"><div><span class="section-kicker">NOT COLLECTED</span><h3>当前未接入</h3></div></div>
-            <div class="unfinished-list"><span>5年日线原始归档</span><span>市场涨跌家数</span><span>行业热力图</span><span>60/120/252日收益</span><span>5分钟 OHLCV</span><span>交易日历与提前收盘（自动调度前补）</span><span>相对强弱（延期至 3A）</span></div>
+            <div class="unfinished-list"><span>5年日线原始归档</span><span>市场涨跌家数</span><span>行业热力图</span><span>5分钟 OHLCV</span><span>交易日历与提前收盘（自动调度前补）</span><span>个股财务与事件（3B）</span></div>
           </section>
         </template>
         <div v-else class="empty-panel"><h3>大盘数据不可用</h3><p>1A 步骤没有返回市场数据。</p></div>
       </section>
 
       <section v-else-if="activeTab === 'instrument'" class="tab-panel" role="tabpanel">
-        <div class="tab-titlebar"><div><p class="eyebrow">COLLECTED / 3A</p><h2>个股数据</h2></div><StatusBadge :status="store.latestReadModel.instrument?.data_state ?? 'unavailable'" /></div>
-        <template v-if="store.latestReadModel.instrument">
+        <div class="tab-titlebar"><div><p class="eyebrow">COLLECTED / 3A</p><h2>个股与行业 ETF</h2></div><StatusBadge :status="store.latestReadModel.instrument?.data_state ?? 'unavailable'" /></div>
+        <template v-if="instrumentCards.length">
           <section class="data-section">
-            <div class="section-label-row"><div><span class="section-kicker">CURRENT OBJECT</span><h3>{{ store.latestReadModel.instrument.symbol }}</h3></div><span class="source-label">{{ store.latestReadModel.instrument.label }}</span></div>
-            <div class="metric-grid primary-metrics"><div class="metric-cell metric-cell-major"><span>当前价格</span><strong>{{ formatNumber(store.latestReadModel.instrument.last_price) }}</strong><small>状态：{{ store.latestReadModel.instrument.data_state }}</small></div><div class="metric-cell"><span>变化</span><strong>{{ displayPercent(store.latestReadModel.instrument.change_percent) }}</strong><small>状态：{{ store.latestReadModel.instrument.data_state }}</small></div><div class="metric-cell"><span>趋势</span><strong>{{ store.latestReadModel.instrument.trend || '不可用' }}</strong><small>未计算</small></div></div>
+            <div class="section-label-row"><div><span class="section-kicker">CURRENT UNIVERSE</span><h3>QQQ 基准 · INTC 个股 · SMH 行业 ETF</h3></div><span class="source-label">{{ liveInstrumentCount }}/{{ instrumentCards.length }} live</span></div>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead><tr><th>标的</th><th>类型</th><th>当前价</th><th>日变化</th><th>5D / 20D / 60D</th><th>相对 QQQ</th><th>ATR14%</th><th>布林 %B</th><th>状态</th></tr></thead>
+                <tbody>
+                  <tr v-for="card in instrumentCards" :key="card.symbol">
+                    <td><strong>{{ card.symbol }}</strong><small>{{ card.label }}</small></td>
+                    <td>{{ card.symbol === 'SMH' || card.symbol === 'QQQ' ? 'ETF' : '个股' }}</td>
+                    <td>{{ formatNumber(card.last_price) }}</td>
+                    <td :class="quoteChangeClass(card.change_percent)">{{ displayPercent(card.change_percent, 4) }}</td>
+                    <td>{{ displayPercent(instrumentHistoryValue(card, '5d'), 2) }} / {{ displayPercent(instrumentHistoryValue(card, '20d'), 2) }} / {{ displayPercent(instrumentHistoryValue(card, '60d'), 2) }}</td>
+                    <td>{{ displayPercent(instrumentRelativeValue(card, '20d'), 2) }}</td>
+                    <td>{{ displayPercent(instrumentTechnicalValue(card, 'atr14_percent'), 2) }}</td>
+                    <td>{{ displayPercent(instrumentBollingerValue(card, 'position_percent'), 2) }}</td>
+                    <td><StatusBadge :status="card.data_state ?? 'unavailable'" /></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </section>
-          <section class="data-section"><div class="section-label-row"><div><span class="section-kicker">FIELD STATUS</span><h3>字段状态</h3></div></div><div class="status-list"><div><span>行情快照</span><StatusBadge status="unavailable" /><small>3A 尚未接入真实个股行情</small></div><div><span>技术指标</span><StatusBadge status="unavailable" /><small>{{ store.latestReadModel.instrument.technical_note || '尚未实现' }}</small></div><div><span>事件与财务</span><StatusBadge status="unavailable" /><small>{{ store.latestReadModel.instrument.note }}</small></div></div></section>
+          <section class="data-section"><div class="section-label-row"><div><span class="section-kicker">FIELD STATUS</span><h3>技术验证状态</h3></div></div><div class="status-list"><div><span>行情快照</span><StatusBadge :status="store.latestReadModel.instrument?.data_state ?? 'unavailable'" /><small>{{ store.latestReadModel.instrument?.source || '不可用' }} · {{ store.latestReadModel.instrument?.quality_status || '不可用' }}</small></div><div><span>历史日线</span><StatusBadge :status="allInstrumentHistoryAvailable() ? 'succeeded' : 'partial'" /><small>来源：Moomoo OpenD；指标可从保存的原始 K 线重算</small></div><div><span>相对强弱</span><StatusBadge :status="hasInstrumentRelativeStrength() ? 'succeeded' : 'unavailable'" /><small>INTC / SMH 相对 QQQ；财务与事件属于后续阶段</small></div><div><span>额度审计</span><StatusBadge :status="store.latestReadModel.instrument?.quota_audit?.subscription_unchanged === true ? 'succeeded' : 'partial'" /><small>{{ instrumentQuotaText() }}</small></div></div></section>
         </template>
         <div v-else class="empty-panel"><h3>个股数据不可用</h3><p>3A 步骤没有返回个股数据。</p></div>
       </section>

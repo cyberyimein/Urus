@@ -1,6 +1,6 @@
 # Urus
 
-Urus 是一个股票分析与决策辅助系统的前后端分离框架。当前 `stage2` 已合入阶段 1A：大盘模块通过 Moomoo/OpenD 批量采集 ETF 快照并叠加 FRED/Yahoo 宏观上下文；期权模块通过 Moomoo 美股期权 LV1 快照计算 DEX、GEX、Gamma Wall、Max Pain 和预期波动。未实现模块继续明确标记为 mock、placeholder 或 unavailable。
+Urus 是一个股票分析与决策辅助系统的前后端分离框架。当前 `stage3` 已从 `main` 合并 `stage2`：大盘模块通过 Moomoo/OpenD 批量采集 ETF 快照并叠加 FRED/Yahoo 宏观上下文；3A 使用同一 OpenD 批量快照与历史日线验证 QQQ、INTC、SMH，并计算统一技术指标和相对 QQQ 强弱；期权模块通过 Moomoo 美股期权 LV1 快照计算 DEX、GEX、Gamma Wall、Max Pain 和预期波动。未实现模块继续明确标记为 mock、placeholder 或 unavailable。
 
 阶段 1A 可按配置采集大盘和跨资产 ETF。阶段 2 固定覆盖 SPY、QQQ、SMH、IGV，并采集正式关注列表中的 15 个上市个股期权；私募标的 SPCX 保留为明确排除项。行权价结构图展示建模正负 Gamma 区间与符号切换位，并通过 Black–Scholes 现价网格生成 Spot Gamma Profile 与主 Gamma Flip。
 
@@ -40,8 +40,8 @@ cd backend && uv run pytest
 cd frontend && npm test && npm run build
 ```
 
-后端启动时会为本地新 checkout 创建缺失表；正式的 schema 变更通过 Alembic 执行。数据库默认是 SQLite，可用 `DATABASE_URL` 切换到 SQLAlchemy 支持的 PostgreSQL URL。期权分析会把批次、标的、到期日、原始合约、Spot Gamma Profile 点位和 Gamma Flip 规范化落库，并与前端 snapshot 在同一事务提交；这使后续可用动态利率、动态股息和新模型版本重算历史链。精度改善清单记录在 `docs/implementation.md`，本阶段不继续扩展。根目录 `.env` 使用用户提供的 `opend-host:11111`，启用 FRED 日频宏观源和每次运行必取的 Yahoo 源；如果 OpenD、FRED 或 Yahoo 尚未可用，阶段 1A 会把缺失和连接错误保存到运行记录和 read model，不会静默伪装成模拟数据。
+后端启动时会为本地新 checkout 创建缺失表；正式的 schema 变更通过 Alembic 执行。数据库默认是 SQLite，可用 `DATABASE_URL` 切换到 SQLAlchemy 支持的 PostgreSQL URL。期权分析会把批次、标的、到期日、原始合约、Spot Gamma Profile 点位和 Gamma Flip 规范化落库；3A 会把 QQQ/INTC/SMH 的快照、技术输入和日线原始条目写入独立表，并与前端 snapshot 在同一事务提交；这使后续可用动态利率、动态股息和新模型版本重算历史数据。精度改善清单记录在 `docs/implementation.md`，本阶段不继续扩展。根目录 `.env` 使用用户提供的 `opend-host:11111`，启用 FRED 日频宏观源和每次运行必取的 Yahoo 源；如果 OpenD、FRED 或 Yahoo 尚未可用，采集步骤会把缺失和连接错误保存到运行记录和 read model，不会静默伪装成模拟数据。
 
 ## 阶段行为
 
-`POST /api/runs` 使用 `pre_market` 或 `pre_close` 创建一次同步运行，按 `1a → 1b → 2 → 3a → 3b → 4 → 5` 保存状态。启用 `MOOMOO_ENABLED=true` 时，1A 获取 ETF 快照、QQQ 日线摘要和共享技术指标；第 2 步只调用期权链与行情快照接口，不订阅实时推送，并核对采集前后的订阅额度。OptionCharts CSV 不是运行依赖，VEX/Vanna 本阶段不计算。
+`POST /api/runs` 使用 `pre_market` 或 `pre_close` 创建一次同步运行，按 `1a → 1b → 2 → 3a → 3b → 4 → 5` 保存状态。启用 `MOOMOO_ENABLED=true` 时，1A 获取 ETF 快照、QQQ 日线摘要和共享技术指标；3A 默认通过 `INSTRUMENT_VALIDATION_SYMBOLS=INTC,SMH` 加入 QQQ 基准，一次批量获取快照和日线，核对订阅/历史额度并保存原始 K 线；第 2 步只调用期权链与行情快照接口，不订阅实时推送，并核对采集前后的订阅额度。OptionCharts CSV 不是运行依赖，VEX/Vanna 本阶段不计算。

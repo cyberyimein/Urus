@@ -18,6 +18,9 @@ from app.core.errors import (
 )
 from app.core.logging import configure_logging, request_logging_middleware
 from app.models import (  # noqa: F401 - register ORM tables
+    InstrumentAnalysisBatchModel,
+    InstrumentDailyBarModel,
+    InstrumentSnapshotModel,
     OptionAnalysisBatchModel,
     OptionContractSnapshotModel,
     OptionExpirationAnalysisModel,

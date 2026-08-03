@@ -1,4 +1,9 @@
 from app.models.enums import RunStatus, RunType, StepStatus
+from app.models.instruments import (
+    InstrumentAnalysisBatchModel,
+    InstrumentDailyBarModel,
+    InstrumentSnapshotModel,
+)
 from app.models.options import (
     OptionAnalysisBatchModel,
     OptionContractSnapshotModel,
@@ -17,6 +22,9 @@ __all__ = [
     "OptionGammaFlipModel",
     "OptionGammaProfilePointModel",
     "OptionSymbolSnapshotModel",
+    "InstrumentAnalysisBatchModel",
+    "InstrumentDailyBarModel",
+    "InstrumentSnapshotModel",
     "RunStatus",
     "RunType",
     "SnapshotModel",

@@ -6,12 +6,12 @@ import logging
 import socket
 import threading
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
-from app.analytics.technical import calculate_technical_indicators
+from app.analytics.technical import calculate_relative_strength, calculate_technical_indicators
 
 logger = logging.getLogger(__name__)
 
@@ -94,16 +94,46 @@ class MockMoomooAdapter:
         ).as_dict()
 
     def instrument_card(self, symbol: str) -> dict[str, object]:
-        if symbol != "INTC":
-            raise ValueError(f"mock instrument adapter only supports INTC, got {symbol}")
-        return MockQuote(
-            symbol="INTC",
-            label="INTC · mock instrument",
-            last_price=31.25,
-            change_percent=-0.18,
-            trend="mock trend unavailable",
-            technical_note="技术指标尚未实现；当前仅展示占位字段。",
-        ).as_dict()
+        quotes = {
+            "INTC": MockQuote(
+                symbol="INTC",
+                label="INTC · mock instrument",
+                last_price=31.25,
+                change_percent=-0.18,
+                trend="mock trend unavailable",
+                technical_note="技术指标尚未实现；当前仅展示占位字段。",
+            ),
+            "SMH": MockQuote(
+                symbol="SMH",
+                label="SMH · mock ETF",
+                last_price=250.0,
+                change_percent=0.25,
+                trend="mock trend unavailable",
+                technical_note="技术指标尚未实现；当前仅展示占位字段。",
+            ),
+        }
+        if symbol not in quotes:
+            raise ValueError(f"mock instrument adapter only supports INTC and SMH, got {symbol}")
+        return quotes[symbol].as_dict()
+
+    def instrument_cards(self, symbols: list[str]) -> dict[str, object]:
+        cards = [self.instrument_card(symbol) for symbol in symbols]
+        for card in cards:
+            card["data_state"] = "unavailable"
+        return {
+            "is_mock": True,
+            "status": "unavailable",
+            "available": False,
+            "data_state": "unavailable",
+            "provider": "mock_adapter",
+            "source_mode": "mock",
+            "requested_symbols": symbols,
+            "unavailable_symbols": symbols,
+            "instruments": cards,
+            "quality_status": "unavailable",
+            "quality_warnings": ["3A 尚未启用 Moomoo OpenD，当前为 mock 结构。"],
+            "note": "3A 真实行情尚未启用。",
+        }
 
     def options_placeholder(self, symbol: str) -> dict[str, object]:
         return {
@@ -277,6 +307,143 @@ class OpenDMarketAdapter:
             ),
         }
 
+    def instrument_card(self, symbol: str) -> dict[str, object]:
+        """Collect one instrument card through the same snapshot-only boundary."""
+        display_symbol = _display_symbol(_normalise_quote_code(symbol))
+        payload = self.instrument_cards([display_symbol])
+        cards = payload.get("instruments", [])
+        if not isinstance(cards, list) or not cards:
+            raise RuntimeError(f"OpenD 未返回 {symbol} 个股/ETF 数据")
+        card_payload = next(
+            (item for item in cards if isinstance(item, dict) and item.get("symbol") == display_symbol),
+            None,
+        )
+        if card_payload is None:
+            raise RuntimeError(f"OpenD 未返回 {symbol} 个股/ETF 数据")
+        card = dict(card_payload)
+        persistence = payload.get("_persistence")
+        if isinstance(persistence, dict):
+            card["_persistence"] = persistence
+        return card
+
+    def instrument_cards(self, symbols: list[str]) -> dict[str, object]:
+        """Collect a small 3A universe in one quote snapshot and daily histories."""
+        if not symbols:
+            raise ValueError("3A 至少需要一个个股或 ETF 标的")
+        quote_codes = _unique_quote_codes(["QQQ", *symbols])
+        captured_at = datetime.now(UTC).isoformat()
+        quota_before = self._quota_snapshot()
+        market_snapshot = self._collect_market_snapshot(quote_codes)
+        cards: list[dict[str, object]] = []
+        persistence_symbols: list[dict[str, object]] = []
+        unavailable_symbols: list[str] = []
+        quality_warnings = list(market_snapshot.get("quality_warnings", []))
+        records: dict[str, tuple[dict[str, object], dict[str, object], list[dict[str, object]]]] = {}
+
+        for quote_code in quote_codes:
+            row = market_snapshot["rows"].get(quote_code)
+            if not isinstance(row, dict):
+                unavailable_symbols.append(_display_symbol(quote_code))
+                continue
+            quote = _normalise_snapshot_quote(row)
+            previous_close = quote.get("previous_close")
+            history = self._history_summary(
+                quote_code,
+                float(previous_close) if isinstance(previous_close, (int, float)) else 0.0,
+                include_bars=True,
+            )
+            history_public = dict(history)
+            bars = history_public.pop("bars", [])
+            display_symbol = _display_symbol(quote_code)
+            card_warnings = list(history_public.get("warnings", []))
+            card_quality = "ok" if history_public.get("available") and quote.get("last_price") is not None else "partial"
+            quality_warnings.extend(f"{display_symbol}：{item}" for item in card_warnings)
+            records[display_symbol] = (quote, history_public, bars)
+
+        benchmark_bars = records.get("QQQ", ({}, {}, []))[2]
+        for display_symbol, (quote, history_public, bars) in records.items():
+            if display_symbol == "QQQ":
+                relative_strength = {
+                    "is_mock": False,
+                    "available": False,
+                    "quality_status": "not_applicable",
+                    "benchmark": "QQQ",
+                    "source": "moomoo_opend_history",
+                    "as_of": history_public.get("technical_indicators", {}).get("as_of")
+                    if isinstance(history_public.get("technical_indicators"), dict)
+                    else None,
+                    "sample_count": 0,
+                    "warnings": ["QQQ 是相对强弱基准，不对自身计算超额收益。"],
+                }
+            else:
+                relative_strength = calculate_relative_strength(
+                    bars,
+                    benchmark_bars,
+                    benchmark="QQQ",
+                    source="moomoo_opend_history",
+                )
+            card_warnings = list(history_public.get("warnings", []))
+            if relative_strength.get("warnings"):
+                card_warnings.extend(str(item) for item in relative_strength["warnings"])
+            card = {
+                **quote,
+                "is_mock": False,
+                "data_mode": "opend",
+                "data_state": "live",
+                "source": "moomoo_opend_snapshot",
+                "label": f"{display_symbol} · Moomoo OpenD",
+                "trend": _trend_from_history(history_public),
+                "technical_note": "日线技术指标由 SQLite 可重算的 Moomoo 历史 K 线生成。",
+                "history": history_public,
+                "relative_strength": relative_strength,
+                "quality_status": card_quality,
+                "quality_warnings": card_warnings,
+                "note": "3A 当前只采集价格、成交、日线技术指标与相对基准输入；财务和事件属于后续步骤。",
+            }
+            cards.append(card)
+            persistence_symbols.append(
+                {
+                    "symbol": display_symbol,
+                    "asset_type": "etf" if display_symbol in DEFAULT_MARKET_SNAPSHOT_SYMBOLS else "equity",
+                    "quote": quote,
+                    "history": {"bars": bars},
+                }
+            )
+
+        quota_after = self._quota_snapshot()
+        quota_audit = _quota_audit(
+            quota_before,
+            quota_after,
+            requested_symbols=[_display_symbol(code) for code in quote_codes],
+        )
+        quality_warnings.extend(str(item) for item in quota_audit.get("warnings", []))
+        if unavailable_symbols:
+            quality_warnings.extend(f"3A 未返回标的：{symbol}" for symbol in unavailable_symbols)
+        return {
+            "is_mock": False,
+            "status": "available" if cards else "unavailable",
+            "available": bool(cards),
+            "data_state": "live" if cards else "unavailable",
+            "provider": "moomoo_openapi",
+            "source_mode": "snapshot",
+            "captured_at": captured_at,
+            "requested_symbols": [_display_symbol(code) for code in quote_codes],
+            "unavailable_symbols": unavailable_symbols,
+            "instruments": cards,
+            "quota_audit": quota_audit,
+            "quality_status": "ok" if cards and not unavailable_symbols and all(
+                card.get("quality_status") == "ok" for card in cards
+            ) else "partial" if cards else "unavailable",
+            "quality_warnings": quality_warnings,
+            "note": "3A 使用 Moomoo OpenD 批量快照和历史日线；未开启实时订阅。",
+            "_persistence": {
+                "captured_at": captured_at,
+                "provider": "moomoo_openapi",
+                "source_mode": "snapshot",
+                "symbols": persistence_symbols,
+            },
+        }
+
     def _collect_market_snapshot(self, quote_codes: list[str]) -> dict[str, object]:
         rows: list[dict[str, Any]] = []
         request_errors: list[str] = []
@@ -329,7 +496,13 @@ class OpenDMarketAdapter:
             "reason": "按策略不请求 Moomoo 美国指数；使用 Yahoo/FRED 宏观数据。",
         }
 
-    def _history_summary(self, quote_code: str, previous_close: float) -> dict[str, object]:
+    def _history_summary(
+        self,
+        quote_code: str,
+        previous_close: float,
+        *,
+        include_bars: bool = False,
+    ) -> dict[str, object]:
         today = datetime.now(ZoneInfo(self.market_timezone)).date()
         start = today - timedelta(days=max(self.history_days * 2, 365))
         kwargs: dict[str, object] = {
@@ -360,28 +533,43 @@ class OpenDMarketAdapter:
                 source="moomoo_opend_history",
             )
             warnings.extend(str(item) for item in technical_indicators.get("warnings", []))
-            return {
+            technical_returns = technical_indicators.get("returns_percent")
+            returns_percent = (
+                dict(technical_returns)
+                if isinstance(technical_returns, dict)
+                else {
+                    "1d": _lookback_return(closes, 1),
+                    "5d": _lookback_return(closes, 5),
+                    "20d": _lookback_return(closes, 20),
+                }
+            )
+            technical_moving_average = technical_indicators.get("moving_average")
+            moving_average = (
+                dict(technical_moving_average)
+                if isinstance(technical_moving_average, dict)
+                else {
+                    "20d": _average(closes, 20),
+                    "50d": _average(closes, 50),
+                    "200d": _average(closes, 200),
+                }
+            )
+            result = {
                 "is_mock": False,
                 "available": True,
                 "requested_days": self.history_days,
                 "returned_days": len(bars),
                 "latest_completed_bar": latest,
-                "returns_percent": {
-                    "1d": _lookback_return(closes, 1),
-                    "5d": _lookback_return(closes, 5),
-                    "20d": _lookback_return(closes, 20),
-                },
-                "moving_average": {
-                    "20d": _average(closes, 20),
-                    "50d": _average(closes, 50),
-                    "200d": _average(closes, 200),
-                },
+                "returns_percent": returns_percent,
+                "moving_average": moving_average,
                 "technical_indicators": technical_indicators,
                 "reference_previous_close": previous_close,
                 "warnings": warnings,
             }
+            if include_bars:
+                result["bars"] = bars
+            return result
         except Exception as exc:
-            return {
+            result = {
                 "is_mock": False,
                 "available": False,
                 "requested_days": self.history_days,
@@ -397,6 +585,28 @@ class OpenDMarketAdapter:
                 "warnings": [f"历史日线不可用：{exc}"],
                 "error": str(exc),
             }
+            if include_bars:
+                result["bars"] = []
+            return result
+
+    def _quota_snapshot(self) -> dict[str, object]:
+        """Read quota state without subscribing or changing OpenD state."""
+        result: dict[str, object] = {"available": False}
+        try:
+            if hasattr(self._ensure_sdk(), "RET_OK") and hasattr(self._quote_ctx, "query_subscription"):
+                try:
+                    subscription = self._call("query_subscription", is_all_conn=True)
+                except TypeError:
+                    subscription = self._call("query_subscription")
+                result["subscription"] = _normalise_subscription_quota(subscription)
+                result["available"] = True
+            if hasattr(self._quote_ctx, "get_history_kl_quota"):
+                history = self._call("get_history_kl_quota", get_detail=True)
+                result["history"] = _normalise_history_quota(history)
+                result["available"] = True
+        except Exception as exc:
+            result["warning"] = f"Moomoo 额度查询不可用：{exc}"
+        return result
 
     def _ensure_sdk(self) -> Any:
         if self._sdk is None:
@@ -508,6 +718,7 @@ def _normalise_snapshot_quote(row: dict[str, Any]) -> dict[str, object]:
         "low_price": _optional_number(row, ["low_price", "low"]),
         "volume": _optional_integer(row, ["volume"]),
         "turnover": _optional_number(row, ["turnover"]),
+        "turnover_rate": _optional_number(row, ["turnover_rate"]),
         "bid_price": _optional_number(row, ["bid_price", "bid"]),
         "ask_price": _optional_number(row, ["ask_price", "ask"]),
         "bid_volume": _optional_integer(row, ["bid_vol", "bid_volume"]),
@@ -616,6 +827,8 @@ def _normalise_bars(rows: list[dict[str, Any]]) -> list[dict[str, object]]:
                 "low": _number(row, ["low"]),
                 "close": _number(row, ["close"]),
                 "volume": _integer(row, ["volume"], default=0),
+                "turnover": _optional_number(row, ["turnover"]),
+                "turnover_rate": _optional_number(row, ["turnover_rate"]),
             }
         )
     return sorted(bars, key=lambda item: str(item["date"]))
@@ -644,6 +857,88 @@ def _lookback_return(values: list[float], periods: int) -> float | None:
 def _history_indicators_ok(history: dict[str, object]) -> bool:
     indicators = history.get("technical_indicators")
     return isinstance(indicators, dict) and indicators.get("quality_status") == "ok"
+
+
+def _trend_from_history(history: dict[str, object]) -> str:
+    indicators = history.get("technical_indicators")
+    if not isinstance(indicators, dict):
+        return "不可用"
+    current = _optional_float(indicators.get("moving_average"), "20d")
+    latest = history.get("latest_completed_bar")
+    latest_close = latest.get("close") if isinstance(latest, dict) else None
+    if current is None or not isinstance(latest_close, (int, float)):
+        return "不可用"
+    return "高于 MA20" if float(latest_close) >= current else "低于 MA20"
+
+
+def _optional_float(value: object, key: str) -> float | None:
+    if not isinstance(value, dict):
+        return None
+    candidate = value.get(key)
+    return float(candidate) if isinstance(candidate, (int, float)) else None
+
+
+def _normalise_subscription_quota(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {"raw": value}
+    result: dict[str, object] = {
+        "total_used": value.get("total_used", value.get("totalUsed")),
+        "own_used": value.get("own_used", value.get("ownUsed")),
+        "remain": value.get("remain", value.get("remainQuota")),
+        "sub_list": value.get("sub_list", value.get("subList", {})),
+    }
+    return result
+
+
+def _normalise_history_quota(value: object) -> dict[str, object]:
+    if isinstance(value, tuple) and len(value) >= 2:
+        used, remain = value[0], value[1]
+        details = value[2] if len(value) > 2 else []
+        return {"used_quota": used, "remain_quota": remain, "detail_list": details}
+    if isinstance(value, dict):
+        return {
+            "used_quota": value.get("used_quota", value.get("usedQuota")),
+            "remain_quota": value.get("remain_quota", value.get("remainQuota")),
+            "detail_list": value.get("detail_list", value.get("detailList", [])),
+        }
+    return {"raw": value}
+
+
+def _quota_audit(
+    before: dict[str, object],
+    after: dict[str, object],
+    *,
+    requested_symbols: list[str],
+) -> dict[str, object]:
+    warnings: list[str] = []
+    before_subscription = before.get("subscription")
+    after_subscription = after.get("subscription")
+    subscription_unchanged = before_subscription == after_subscription
+    if before.get("warning"):
+        warnings.append(str(before["warning"]))
+    if after.get("warning"):
+        warnings.append(str(after["warning"]))
+    if before_subscription is not None and after_subscription is not None and not subscription_unchanged:
+        warnings.append("3A 采集前后股票实时订阅状态发生变化，请检查是否有其他连接修改订阅。")
+    before_history = before.get("history")
+    after_history = after.get("history")
+    history_delta = None
+    if isinstance(before_history, dict) and isinstance(after_history, dict):
+        before_used = before_history.get("used_quota")
+        after_used = after_history.get("used_quota")
+        if isinstance(before_used, int) and isinstance(after_used, int):
+            history_delta = after_used - before_used
+    return {
+        "subscription_before": before_subscription,
+        "subscription_after": after_subscription,
+        "subscription_unchanged": subscription_unchanged,
+        "history_before": before_history,
+        "history_after": after_history,
+        "history_used_delta": history_delta,
+        "requested_symbols": requested_symbols,
+        "warnings": warnings,
+        "quality_status": "ok" if not warnings else "partial",
+    }
 
 
 def _percent(current: float | None, previous: float | None) -> float | None:

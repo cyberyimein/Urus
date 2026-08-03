@@ -87,6 +87,11 @@ class OutputStep:
 
         market = _data_payload(context.results.get("1a"))
         instrument = _data_payload(context.results.get("3a"))
+        instrument_cards = [
+            item
+            for item in (instrument or {}).get("instruments", [])
+            if isinstance(item, dict)
+        ]
         options = _data_payload(context.results.get("2")) or {
             "is_mock": True,
             "status": "unavailable",
@@ -119,7 +124,12 @@ class OutputStep:
                 macro_errors = macro_context.get("quality_errors", [])
                 if isinstance(macro_errors, list):
                     errors.extend(f"macro: {item}" for item in macro_errors)
+        if instrument:
+            instrument_warnings = instrument.get("quality_warnings", [])
+            if isinstance(instrument_warnings, list):
+                warnings.extend(f"3a: {item}" for item in instrument_warnings)
         has_live_market = bool(market and market.get("is_mock") is False)
+        has_live_instrument = bool(instrument and instrument.get("is_mock") is False)
         has_live_options = bool(options.get("is_mock") is False and options.get("available"))
         market_quality_status = str(market.get("quality_status", "mock")) if market else "unavailable"
         macro_quality_status = "unavailable"
@@ -134,13 +144,22 @@ class OutputStep:
             and (market_quality_status not in {"ok"} or macro_quality_status not in {"ok"})
         ):
             data_quality_status = "degraded"
-        elif (has_live_market or has_live_options) and contains_mock:
+        elif (has_live_market or has_live_instrument or has_live_options) and contains_mock:
             data_quality_status = "mixed"
-        elif has_live_market or has_live_options:
+        elif has_live_market or has_live_instrument or has_live_options:
             data_quality_status = "live"
         else:
             data_quality_status = "mock"
-        if has_live_market and has_live_options:
+        if has_live_market and has_live_instrument and has_live_options:
+            data_quality_message = (
+                "大盘、3A 个股/ETF 与期权来自 Moomoo OpenD/LV1 快照；"
+                "宏观数据按 Stage 1A 来源策略采集，事件或决策中仍可能包含 mock/placeholder。"
+            )
+        elif has_live_market and has_live_instrument:
+            data_quality_message = (
+                "大盘与 3A 个股/ETF 来自 Moomoo OpenD；宏观、期权、事件和决策中仍可能包含 mock/placeholder。"
+            )
+        elif has_live_market and has_live_options:
             data_quality_message = (
                 "大盘与期权来自 Moomoo OpenD 快照；宏观数据按 Stage 1A 来源策略采集，"
                 "个股、事件或决策中仍可能包含 mock/placeholder。"
@@ -158,22 +177,34 @@ class OutputStep:
             data_quality_message = "所有市场、事件、期权和决策字段均为框架 mock/read-model 占位。"
         data_mode = (
             "mixed"
-            if has_live_market and has_live_options
+            if sum([has_live_market, has_live_instrument, has_live_options]) > 1
             else str(market.get("data_mode", "mock"))
             if has_live_market and market
+            else "opend"
+            if has_live_instrument
             else str(options.get("source_mode", "mock"))
             if has_live_options
             else "mock"
         )
         data_state = (
             "mixed"
-            if (has_live_market or has_live_options) and contains_mock
+            if (has_live_market or has_live_instrument or has_live_options) and contains_mock
             else "live"
-            if has_live_market or has_live_options
+            if has_live_market or has_live_instrument or has_live_options
             else "mock"
             if contains_mock
             else "unavailable"
         )
+        if has_live_market and has_live_instrument and has_live_options:
+            output_summary = "已组合 Stage 1A 大盘、3A 个股/ETF 与 Stage 2 期权快照，生成统一前端 read model。"
+        elif has_live_market and has_live_options:
+            output_summary = "已组合 Stage 1A 大盘与 Stage 2 期权快照，生成统一前端 read model。"
+        elif has_live_market and has_live_instrument:
+            output_summary = "已组合 Stage 1A 大盘与 3A 个股/ETF，生成统一前端 read model。"
+        elif has_live_market or has_live_instrument or has_live_options:
+            output_summary = "已组合真实采集结果与其余 mock/placeholder，生成前端 read model。"
+        else:
+            output_summary = "已组合 mock 步骤结果并生成前端 read model。"
         read_model = {
             "schema_version": "1.0",
             "data_mode": data_mode,
@@ -187,6 +218,7 @@ class OutputStep:
             "is_mock": contains_mock,
             "market": market,
             "instrument": instrument,
+            "instrument_cards": instrument_cards,
             "macro_event": _event_payload(context.results.get("1b"), "macro"),
             "options": options,
             "instrument_event": _event_payload(context.results.get("3b"), "instrument"),
@@ -197,13 +229,7 @@ class OutputStep:
                     "label": STEP_LABELS["5"],
                     "status": StepStatus.SUCCEEDED.value,
                     "data_state": data_state,
-                    "summary": (
-                        "已组合 Stage 1A 大盘与 Stage 2 期权快照，生成统一前端 read model。"
-                        if has_live_market and has_live_options
-                        else "已组合真实采集结果与其余 mock/placeholder，生成前端 read model。"
-                        if has_live_market or has_live_options
-                        else "已组合 mock 步骤结果并生成前端 read model。"
-                    ),
+                    "summary": output_summary,
                     "error_message": None,
                 }
             ],
@@ -218,13 +244,7 @@ class OutputStep:
         }
         return StepResult(
             status=StepStatus.SUCCEEDED,
-            summary=(
-                "已组合 Stage 1A 大盘与 Stage 2 期权快照，生成统一前端 read model。"
-                if has_live_market and has_live_options
-                else "已组合真实采集结果与其余 mock/placeholder，生成前端 read model。"
-                if has_live_market or has_live_options
-                else "已组合 mock 步骤结果并生成前端 read model。"
-            ),
+            summary=output_summary,
             payload=read_model,
             data_state=data_state,
         )
