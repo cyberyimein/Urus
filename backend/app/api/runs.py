@@ -64,5 +64,15 @@ def get_frontend_read_model(
 
 @router.get("/watchlist", response_model=WatchlistResponse)
 def get_watchlist(settings: Settings = Depends(get_settings)) -> WatchlistResponse:
-    return WatchlistResponse(symbols=settings.enabled_symbol_list)
-
+    return WatchlistResponse(
+        symbols=list(
+            dict.fromkeys(
+                settings.options_watchlist_symbol_list
+                + settings.options_watchlist_excluded_symbol_list
+            )
+        ),
+        option_symbols=settings.options_collection_symbol_list,
+        option_excluded_symbols=settings.options_watchlist_excluded_symbol_list,
+        is_development_allowlist=False,
+        is_mock=False,
+    )

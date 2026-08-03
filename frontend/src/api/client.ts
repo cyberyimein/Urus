@@ -29,6 +29,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   try {
     response = await fetch(`${baseUrl}${path}`, {
       ...init,
+      cache: init?.cache ?? 'no-store',
       headers: {
         'Content-Type': 'application/json',
         ...(init?.headers ?? {}),
@@ -71,4 +72,3 @@ export const api = {
       body: JSON.stringify(requestBody),
     }),
 }
-
