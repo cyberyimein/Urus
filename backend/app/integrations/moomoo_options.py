@@ -367,6 +367,8 @@ class MoomooOptionsAdapter:
                 "DEX = delta × open_interest × contract_multiplier × spot.",
                 "GEX = gamma × open_interest × contract_multiplier × spot² × 1%.",
                 "Modeled net GEX assigns positive sign to calls and negative sign to puts.",
+                "Positive/negative Gamma zones group strikes by modeled net GEX sign; values within 2% of the largest strike exposure are treated as neutral noise.",
+                "Gamma flip markers are interpolated between adjacent modeled sign zones and do not reveal dealer positions.",
                 "Max pain is calculated independently for each expiration.",
             ],
             "warnings": warnings,

@@ -76,6 +76,28 @@ def test_dex_uses_delta_sign_and_gex_keeps_model_assumption_explicit() -> None:
     assert result["walls"]["net_dex"]["strike"] == 100
 
 
+def test_gamma_zones_group_significant_contiguous_strikes_and_mark_flips() -> None:
+    contracts = [
+        contract("CALL", 90, open_interest=10, delta=0.4, gamma=0.02),
+        contract("PUT", 100, open_interest=20, delta=-0.5, gamma=0.02),
+        contract("CALL", 110, open_interest=30, delta=0.6, gamma=0.02),
+    ]
+
+    result = calculate_exposure(contracts)
+
+    assert [row["gamma_regime"] for row in result["by_strike"]] == [
+        "positive",
+        "negative",
+        "positive",
+    ]
+    assert [(zone["sign"], zone["start_strike"], zone["end_strike"]) for zone in result["gamma_zones"]] == [
+        ("positive", 90.0, 90.0),
+        ("negative", 100.0, 100.0),
+        ("positive", 110.0, 110.0),
+    ]
+    assert [item["level"] for item in result["gamma_flip_levels"]] == [95.0, 105.0]
+
+
 def test_expected_move_uses_atm_call_and_put_midpoints() -> None:
     contracts = [
         contract("CALL", 95, open_interest=1, delta=0.7, gamma=0.01),
@@ -130,6 +152,7 @@ def test_options_workflow_uses_the_dedicated_snapshot_adapter() -> None:
 def test_option_universe_merges_core_etfs_with_watchlist() -> None:
     settings = Settings(
         options_target_symbols="SPY,QQQ,SMH,IGV",
+        options_watchlist_symbols="INTC,NVDA",
         enabled_symbols="QQQ,INTC,NVDA",
     )
 

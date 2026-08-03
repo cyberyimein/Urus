@@ -170,6 +170,31 @@ function showStrikeLabel(index: number, row: ExposureStrikeRow): boolean {
   const interval = Math.max(1, Math.ceil(strikeRows.value.length / 22))
   return focusReasons(row).length > 0 || index % interval === 0
 }
+
+function gammaRegimeLabel(regime: ExposureStrikeRow['gamma_regime']): string {
+  if (regime === 'positive') return '正 Gamma'
+  if (regime === 'negative') return '负 Gamma'
+  return '中性'
+}
+
+function gammaFlipAtRow(index: number): number | null {
+  if (index <= 0 || !currentExpiry.value) return null
+  const previousStrike = strikeRows.value[index - 1].strike
+  const strike = strikeRows.value[index].strike
+  return currentExpiry.value.exposure.gamma_flip_levels.find(
+    (item) => item.level > previousStrike && item.level <= strike,
+  )?.level ?? null
+}
+
+function gammaZoneSummary(sign: 'positive' | 'negative'): string {
+  const zones = currentExpiry.value?.exposure.gamma_zones.filter((item) => item.sign === sign) ?? []
+  if (!zones.length) return '无显著区间'
+  return zones
+    .map((zone) => zone.start_strike === zone.end_strike
+      ? formatNumber(zone.start_strike)
+      : `${formatNumber(zone.start_strike)}–${formatNumber(zone.end_strike)}`)
+    .join('、')
+}
 </script>
 
 <template>
@@ -257,7 +282,12 @@ function showStrikeLabel(index: number, row: ExposureStrikeRow): boolean {
 
         <section class="data-section">
           <div class="section-label-row"><div><span class="section-kicker">EXPOSURE MAP</span><h3>行权价结构图</h3></div><span class="source-label">现价居中 · 左低右高 · 零轴上下表示正负</span></div>
-          <div class="horizontal-chart-key"><span><i class="dex-key"></i>Net DEX</span><span><i class="gex-key"></i>Modeled Net GEX</span><span><i class="positive-key"></i>正敞口</span><span><i class="negative-key"></i>负敞口</span></div>
+          <div class="gamma-zone-summary">
+            <div class="positive-zone"><span>正 Gamma 区间</span><strong>{{ gammaZoneSummary('positive') }}</strong></div>
+            <div class="negative-zone"><span>负 Gamma 区间</span><strong>{{ gammaZoneSummary('negative') }}</strong></div>
+            <div><span>建模 Gamma Flip</span><strong>{{ currentExpiry.exposure.gamma_flip_levels.length ? currentExpiry.exposure.gamma_flip_levels.map((item) => formatNumber(item.level)).join('、') : '未出现' }}</strong></div>
+          </div>
+          <div class="horizontal-chart-key"><span><i class="dex-key"></i>Net DEX</span><span><i class="gex-key"></i>Modeled Net GEX</span><span><i class="positive-zone-key"></i>正 Gamma 区间</span><span><i class="negative-zone-key"></i>负 Gamma 区间</span><span><i class="flip-key"></i>建模 Flip</span></div>
           <div ref="exposureScroller" class="horizontal-exposure-scroll">
             <div class="horizontal-exposure-chart">
               <span class="horizontal-zero-axis"></span>
@@ -265,10 +295,11 @@ function showStrikeLabel(index: number, row: ExposureStrikeRow): boolean {
                 v-for="(row, index) in strikeRows"
                 :key="row.strike"
                 class="strike-column"
-                :class="focusRowClass(row)"
+                :class="[focusRowClass(row), `gamma-${row.gamma_regime}`]"
                 :data-spot="sameStrike(nearestSpotStrike, row.strike)"
                 :title="`${formatNumber(row.strike)} · DEX ${signedCompact(row.net_dex)} · GEX ${signedCompact(row.modeled_net_gex)}${focusReasons(row).length ? ` · ${focusReasons(row).join(' / ')}` : ''}`"
               >
+                <span v-if="gammaFlipAtRow(index) !== null" class="gamma-flip-marker"><small>Γ FLIP</small></span>
                 <div class="vertical-exposure-bars">
                   <span class="vertical-bar dex-vertical" :class="row.net_dex >= 0 ? 'positive-bar' : 'negative-bar'" :style="{ height: barHeight(row.net_dex, maxDex), bottom: row.net_dex >= 0 ? '50%' : 'auto', top: row.net_dex < 0 ? '50%' : 'auto' }"></span>
                   <span class="vertical-bar gex-vertical" :class="row.modeled_net_gex >= 0 ? 'positive-bar' : 'negative-bar'" :style="{ height: barHeight(row.modeled_net_gex, maxGex), bottom: row.modeled_net_gex >= 0 ? '50%' : 'auto', top: row.modeled_net_gex < 0 ? '50%' : 'auto' }"></span>
@@ -284,8 +315,8 @@ function showStrikeLabel(index: number, row: ExposureStrikeRow): boolean {
           <div class="section-label-row"><div><span class="section-kicker">RAW AGGREGATION</span><h3>按行权价聚合</h3></div><span class="source-label">{{ currentExpiry.exposure.usable_delta_contracts }} Delta · {{ currentExpiry.exposure.usable_gamma_contracts }} Gamma</span></div>
           <div class="table-wrap">
             <table class="data-table options-table">
-              <thead><tr><th>Strike</th><th>关注</th><th>Call DEX</th><th>Put DEX</th><th>Net DEX</th><th>Abs DEX</th><th>Call GEX</th><th>Put GEX</th><th>Modeled Net GEX</th><th>Abs GEX</th></tr></thead>
-              <tbody><tr v-for="row in strikeRows" :key="row.strike" :class="focusRowClass(row)"><td><strong>{{ formatNumber(row.strike) }}</strong></td><td><span class="focus-badges"><small v-for="reason in focusReasons(row)" :key="reason" class="focus-tag">{{ reason }}</small><small v-if="!focusReasons(row).length" class="focus-empty">—</small></span></td><td>{{ signedCompact(row.call_dex) }}</td><td>{{ signedCompact(row.put_dex) }}</td><td>{{ signedCompact(row.net_dex) }}</td><td>{{ compactNumber(row.absolute_dex) }}</td><td>{{ compactNumber(row.call_gex) }}</td><td>{{ compactNumber(row.put_gex) }}</td><td>{{ signedCompact(row.modeled_net_gex) }}</td><td>{{ compactNumber(row.absolute_gex) }}</td></tr></tbody>
+              <thead><tr><th>Strike</th><th>关注</th><th>Gamma 区间</th><th>Call DEX</th><th>Put DEX</th><th>Net DEX</th><th>Abs DEX</th><th>Call GEX</th><th>Put GEX</th><th>Modeled Net GEX</th><th>Abs GEX</th></tr></thead>
+              <tbody><tr v-for="row in strikeRows" :key="row.strike" :class="[focusRowClass(row), `gamma-${row.gamma_regime}`]"><td><strong>{{ formatNumber(row.strike) }}</strong></td><td><span class="focus-badges"><small v-for="reason in focusReasons(row)" :key="reason" class="focus-tag">{{ reason }}</small><small v-if="!focusReasons(row).length" class="focus-empty">—</small></span></td><td><small class="gamma-regime-tag" :class="`gamma-${row.gamma_regime}`">{{ gammaRegimeLabel(row.gamma_regime) }}</small></td><td>{{ signedCompact(row.call_dex) }}</td><td>{{ signedCompact(row.put_dex) }}</td><td>{{ signedCompact(row.net_dex) }}</td><td>{{ compactNumber(row.absolute_dex) }}</td><td>{{ compactNumber(row.call_gex) }}</td><td>{{ compactNumber(row.put_gex) }}</td><td>{{ signedCompact(row.modeled_net_gex) }}</td><td>{{ compactNumber(row.absolute_gex) }}</td></tr></tbody>
             </table>
           </div>
         </section>

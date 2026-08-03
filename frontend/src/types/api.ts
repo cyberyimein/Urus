@@ -18,6 +18,8 @@ export interface VersionResponse {
 
 export interface WatchlistResponse {
   symbols: string[]
+  option_symbols: string[]
+  option_excluded_symbols: string[]
   is_development_allowlist: boolean
   is_mock: boolean
 }
@@ -287,6 +289,24 @@ export interface ExposureTotals {
 
 export interface ExposureStrikeRow extends ExposureTotals {
   strike: number
+  gamma_regime: 'positive' | 'negative' | 'neutral'
+}
+
+export interface GammaZone {
+  sign: 'positive' | 'negative'
+  start_strike: number
+  end_strike: number
+  strike_count: number
+  total_modeled_net_gex: number
+  peak_strike: number
+  peak_exposure: number
+}
+
+export interface GammaFlipLevel {
+  level: number
+  from_sign: 'positive' | 'negative'
+  to_sign: 'positive' | 'negative'
+  between_strikes: [number, number]
 }
 
 export interface OptionExpirationAnalysis {
@@ -303,6 +323,9 @@ export interface OptionExpirationAnalysis {
     totals: ExposureTotals
     walls: Record<string, ExposureWall | null>
     by_strike: ExposureStrikeRow[]
+    gamma_zones: GammaZone[]
+    gamma_flip_levels: GammaFlipLevel[]
+    gamma_noise_threshold: number
     usable_delta_contracts: number
     usable_gamma_contracts: number
   }

@@ -62,6 +62,19 @@ const options: OptionsData = {
               put_gamma: { strike: 680, exposure: 10 },
               absolute_gamma: { strike: 690, exposure: 30 },
             },
+            gamma_zones: [
+              {
+                sign: 'positive',
+                start_strike: 690,
+                end_strike: 690,
+                strike_count: 1,
+                total_modeled_net_gex: 10,
+                peak_strike: 690,
+                peak_exposure: 10,
+              },
+            ],
+            gamma_flip_levels: [],
+            gamma_noise_threshold: 0.2,
             by_strike: [
               {
                 strike: 690,
@@ -73,6 +86,7 @@ const options: OptionsData = {
                 put_gex: 10,
                 modeled_net_gex: 10,
                 absolute_gex: 30,
+                gamma_regime: 'positive',
               },
             ],
             usable_delta_contracts: 2,
@@ -97,6 +111,8 @@ describe('OptionsPanel', () => {
     expect(wrapper.findAll('.focus-row').length).toBeGreaterThan(0)
     expect(wrapper.text()).toContain('现价附近')
     expect(wrapper.text()).toContain('Call DEX Wall')
+    expect(wrapper.text()).toContain('正 Gamma 区间')
+    expect(wrapper.find('.strike-column.gamma-positive').exists()).toBe(true)
   })
 
   it('renders the disabled state without pretending data is live', () => {

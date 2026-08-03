@@ -320,6 +320,8 @@ class RunService:
             max_dte=self.settings.options_max_dte,
             strike_range_percent=self.settings.options_strike_range_percent,
             batch_size=self.settings.options_snapshot_batch_size,
+            snapshot_interval_seconds=self.settings.options_snapshot_interval_seconds,
+            option_chain_interval_seconds=self.settings.options_chain_interval_seconds,
         )
 
     def _validate_symbols(self, requested: list[str] | None) -> list[str]:

@@ -33,10 +33,16 @@ class Settings(BaseSettings):
     moomoo_host: str = "127.0.0.1"
     moomoo_port: int = 11111
     options_target_symbols: str = "SPY,QQQ,SMH,IGV"
+    options_watchlist_symbols: str = (
+        "LITE,COHR,MRVL,NOK,AMD,INTC,NVDA,NBIS,ORCL,MSFT,NOW,RKLB,AMZN,AAPL,GOOG"
+    )
+    options_watchlist_excluded_symbols: str = "SPCX"
     options_target_dtes: str = "0,7,30,60,90"
     options_max_dte: int = 90
     options_strike_range_percent: float = 20.0
     options_snapshot_batch_size: int = 400
+    options_snapshot_interval_seconds: float = 0.75
+    options_chain_interval_seconds: float = 3.5
     moomoo_history_days: int = 260
     moomoo_sdk_home: str = "data/moomoo_home"
     moomoo_market_symbols: str = (
@@ -78,9 +84,31 @@ class Settings(BaseSettings):
         ]
 
     @property
+    def options_watchlist_symbol_list(self) -> list[str]:
+        return [
+            item.strip().upper()
+            for item in self.options_watchlist_symbols.split(",")
+            if item.strip()
+        ]
+
+    @property
+    def options_watchlist_excluded_symbol_list(self) -> list[str]:
+        return [
+            item.strip().upper()
+            for item in self.options_watchlist_excluded_symbols.split(",")
+            if item.strip()
+        ]
+
+    @property
     def options_collection_symbol_list(self) -> list[str]:
-        """Core option ETFs plus every configured watchlist instrument."""
-        return list(dict.fromkeys(self.options_target_symbol_list + self.enabled_symbol_list))
+        """Core option ETFs plus every public instrument in the option watchlist."""
+        return list(
+            dict.fromkeys(
+                self.options_target_symbol_list
+                + self.options_watchlist_symbol_list
+                + self.enabled_symbol_list
+            )
+        )
 
     @property
     def options_target_dte_list(self) -> list[int]:

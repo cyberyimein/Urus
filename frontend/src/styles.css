@@ -223,7 +223,7 @@ h3 { margin-top: 6px; font-size: 19px; font-weight: 500; }
 .wall-grid span, .wall-grid strong { display: block; font-family: "SFMono-Regular", Consolas, monospace; }
 .wall-grid span { color: var(--muted); font-size: 10px; }
 .wall-grid strong { margin-top: 11px; color: var(--accent); font-size: 12px; overflow-wrap: anywhere; }
-.options-table { min-width: 1260px; }
+.options-table { min-width: 1360px; }
 .focus-row { box-shadow: inset 3px 0 0 rgba(198, 213, 142, .65); }
 .options-table tr.focus-spot td { background: rgba(105, 139, 165, .09); }
 .options-table tr.focus-wall td { background: rgba(121, 156, 99, .11); }
@@ -238,10 +238,23 @@ h3 { margin-top: 6px; font-size: 19px; font-weight: 500; }
 .horizontal-chart-key .gex-key { opacity: .55; }
 .horizontal-chart-key .positive-key { width: 6px; height: 6px; border-radius: 50%; background: var(--success); }
 .horizontal-chart-key .negative-key { width: 6px; height: 6px; border-radius: 50%; background: var(--danger); }
+.horizontal-chart-key .positive-zone-key { background: rgba(80, 150, 105, .4); }
+.horizontal-chart-key .negative-zone-key { background: rgba(188, 85, 79, .4); }
+.horizontal-chart-key .flip-key { width: 2px; height: 10px; border-radius: 0; background: var(--accent); }
+.gamma-zone-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
+.gamma-zone-summary > div { padding: 9px 11px; border: 1px solid var(--line-soft); border-radius: 6px; background: var(--surface); }
+.gamma-zone-summary span, .gamma-zone-summary strong { display: block; font-family: "SFMono-Regular", Consolas, monospace; }
+.gamma-zone-summary span { color: var(--muted); font-size: 9px; }
+.gamma-zone-summary strong { margin-top: 5px; color: var(--ink); font-size: 10px; overflow-wrap: anywhere; }
+.gamma-zone-summary .positive-zone { border-top-color: rgba(80, 150, 105, .7); }
+.gamma-zone-summary .negative-zone { border-top-color: rgba(188, 85, 79, .7); }
 .horizontal-exposure-scroll { overflow-x: auto; overflow-y: hidden; border: 1px solid var(--line-soft); border-radius: 7px; background: var(--surface); scrollbar-color: var(--line) transparent; }
 .horizontal-exposure-chart { position: relative; display: grid; grid-auto-flow: column; grid-auto-columns: 34px; width: max-content; min-width: 100%; height: 245px; padding: 8px 10px 0; }
 .horizontal-zero-axis { position: absolute; z-index: 2; top: 100px; right: 10px; left: 10px; height: 1px; background: var(--line); pointer-events: none; }
 .strike-column { position: relative; min-width: 0; border-right: 1px solid rgba(53, 59, 52, .28); }
+.strike-column.gamma-positive { background-color: rgba(80, 150, 105, .075); }
+.strike-column.gamma-negative { background-color: rgba(188, 85, 79, .075); }
+.strike-column.gamma-neutral { background-color: rgba(126, 128, 120, .025); }
 .strike-column.focus-row { box-shadow: inset 0 -3px 0 rgba(198, 213, 142, .65); }
 .strike-column.focus-spot { background: rgba(105, 139, 165, .11); }
 .strike-column.focus-wall { background: rgba(121, 156, 99, .12); }
@@ -256,6 +269,12 @@ h3 { margin-top: 6px; font-size: 19px; font-weight: 500; }
 .horizontal-strike-label.spot-nearby { color: var(--accent); font-weight: 600; }
 .horizontal-focus-badges { position: absolute; right: 1px; bottom: 2px; left: 1px; display: flex; justify-content: center; gap: 1px; }
 .horizontal-focus-badges small { padding: 1px 2px; border-radius: 2px; color: var(--accent); background: var(--surface-raised); font: 7px "SFMono-Regular", Consolas, monospace; }
+.gamma-flip-marker { position: absolute; z-index: 3; top: 4px; bottom: 42px; left: -1px; border-left: 1px dashed var(--accent); pointer-events: none; }
+.gamma-flip-marker small { position: absolute; top: 0; left: 2px; color: var(--accent); font: 7px "SFMono-Regular", Consolas, monospace; white-space: nowrap; }
+.gamma-regime-tag { display: inline-block; padding: 2px 5px; border-radius: 3px; font: 8px "SFMono-Regular", Consolas, monospace; white-space: nowrap; }
+.gamma-regime-tag.gamma-positive { color: var(--success); background: rgba(80, 150, 105, .1); }
+.gamma-regime-tag.gamma-negative { color: var(--danger); background: rgba(188, 85, 79, .1); }
+.gamma-regime-tag.gamma-neutral { color: var(--muted); background: rgba(126, 128, 120, .08); }
 .assumptions-list { margin-top: 12px; }
 .options-empty { margin-top: 28px; }
 

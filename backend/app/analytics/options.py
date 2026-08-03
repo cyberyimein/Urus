@@ -119,6 +119,58 @@ def calculate_exposure(contracts: list[OptionContract]) -> dict[str, object]:
         for strike, values in sorted(strike_rows.items())
     ]
 
+    max_net_gex = max((abs(float(row["modeled_net_gex"])) for row in rows), default=0.0)
+    gamma_noise_threshold = max_net_gex * 0.02
+    for row in rows:
+        value = float(row["modeled_net_gex"])
+        if max_net_gex == 0 or abs(value) <= gamma_noise_threshold:
+            row["gamma_regime"] = "neutral"
+        else:
+            row["gamma_regime"] = "positive" if value > 0 else "negative"
+
+    gamma_zones: list[dict[str, object]] = []
+    active_zone: dict[str, object] | None = None
+    for row in rows:
+        regime = str(row["gamma_regime"])
+        if regime == "neutral":
+            active_zone = None
+            continue
+        strike = float(row["strike"])
+        exposure = float(row["modeled_net_gex"])
+        if active_zone is not None and active_zone["sign"] == regime:
+            zone = active_zone
+            zone["end_strike"] = strike
+            zone["strike_count"] = int(zone["strike_count"]) + 1
+            zone["total_modeled_net_gex"] = float(zone["total_modeled_net_gex"]) + exposure
+            if abs(exposure) > abs(float(zone["peak_exposure"])):
+                zone["peak_strike"] = strike
+                zone["peak_exposure"] = exposure
+        else:
+            active_zone = {
+                "sign": regime,
+                "start_strike": strike,
+                "end_strike": strike,
+                "strike_count": 1,
+                "total_modeled_net_gex": exposure,
+                "peak_strike": strike,
+                "peak_exposure": exposure,
+            }
+            gamma_zones.append(active_zone)
+
+    gamma_flip_levels = [
+        {
+            "level": _rounded(
+                (float(previous["end_strike"]) + float(current["start_strike"])) / 2,
+                4,
+            ),
+            "from_sign": previous["sign"],
+            "to_sign": current["sign"],
+            "between_strikes": [previous["end_strike"], current["start_strike"]],
+        }
+        for previous, current in zip(gamma_zones, gamma_zones[1:])
+        if previous["sign"] != current["sign"]
+    ]
+
     def wall(metric: str, *, absolute: bool = False) -> dict[str, float] | None:
         if not rows:
             return None
@@ -152,6 +204,9 @@ def calculate_exposure(contracts: list[OptionContract]) -> dict[str, object]:
             "modeled_net_gamma": wall("modeled_net_gex", absolute=True),
         },
         "by_strike": rows,
+        "gamma_zones": gamma_zones,
+        "gamma_flip_levels": gamma_flip_levels,
+        "gamma_noise_threshold": _rounded(gamma_noise_threshold, 2),
         "usable_delta_contracts": usable_delta,
         "usable_gamma_contracts": usable_gamma,
     }

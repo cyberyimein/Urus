@@ -252,5 +252,7 @@ class VersionResponse(BaseModel):
 
 class WatchlistResponse(BaseModel):
     symbols: list[str]
+    option_symbols: list[str] = Field(default_factory=list)
+    option_excluded_symbols: list[str] = Field(default_factory=list)
     is_development_allowlist: bool = True
     is_mock: bool = True
