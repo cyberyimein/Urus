@@ -183,6 +183,19 @@ h3 { margin-top: 6px; font-size: 19px; font-weight: 500; }
 .data-table td { padding: 10px 11px; border-top: 1px solid var(--line-soft); color: var(--soft-ink); white-space: nowrap; }
 .data-table td strong { display: block; color: var(--accent); font-weight: 500; }
 .data-table td small { display: block; max-width: 180px; margin-top: 4px; overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; }
+.instrument-detail-list { display: grid; gap: 8px; }
+.instrument-detail { border: 1px solid var(--line-soft); border-radius: 7px; background: rgba(41, 45, 38, .42); }
+.instrument-detail summary { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 13px; color: var(--soft-ink); cursor: pointer; font: 10px "SFMono-Regular", Consolas, monospace; list-style: none; }
+.instrument-detail summary::-webkit-details-marker { display: none; }
+.instrument-detail summary::after { content: '−'; color: var(--muted); font-size: 14px; }
+.instrument-detail:not([open]) summary::after { content: '+'; }
+.instrument-detail summary > span { min-width: 0; }
+.instrument-detail summary > span:last-of-type { color: var(--muted); text-align: right; }
+.instrument-detail summary strong, .instrument-detail summary small { display: block; }
+.instrument-detail summary strong { color: var(--accent); font-size: 13px; font-weight: 500; }
+.instrument-detail summary small { margin-top: 4px; color: var(--muted); font-size: 9px; }
+.instrument-detail-body { padding: 0 12px 12px; border-top: 1px solid var(--line-soft); }
+.instrument-detail-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 12px; }
 .notice-box { display: flex; flex-wrap: wrap; gap: 7px 12px; margin-top: 12px; padding: 11px 13px; border: 1px solid var(--line-soft); border-radius: 7px; color: var(--soft-ink); background: rgba(41, 45, 38, .5); font-size: 12px; line-height: 1.45; }
 .notice-box strong { color: var(--ink); font-family: "SFMono-Regular", Consolas, monospace; font-size: 10px; }
 .warning-box { border-color: #6f6846; }
@@ -301,6 +314,7 @@ h3 { margin-top: 6px; font-size: 19px; font-weight: 500; }
   .primary-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .macro-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .history-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .instrument-detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .validation-tabs { grid-template-columns: repeat(6, minmax(145px, 1fr)); }
   .options-overview-grid, .options-level-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .gamma-profile-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -340,6 +354,9 @@ h3 { margin-top: 6px; font-size: 19px; font-weight: 500; }
   .gamma-profile-summary { grid-template-columns: 1fr; }
   .horizontal-exposure-chart { grid-auto-columns: 31px; }
   .section-label-row, .tab-titlebar { align-items: start; flex-direction: column; }
+  .instrument-detail summary { align-items: start; flex-direction: column; }
+  .instrument-detail summary > span:last-of-type { text-align: left; }
+  .instrument-detail-grid { grid-template-columns: 1fr; }
   .source-label { text-align: left; }
   .status-list > div { grid-template-columns: 1fr; gap: 7px; }
 }

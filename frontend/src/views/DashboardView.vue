@@ -284,6 +284,39 @@ function instrumentTechnicalAsOf(card: InstrumentCard): string {
   return typeof indicators?.as_of === 'string' ? indicators.as_of : '不可用'
 }
 
+function instrumentHistoryField(card: InstrumentCard, section: string, key: string): unknown {
+  const history = card.history as Record<string, unknown> | undefined
+  return asRecord(history?.[section])?.[key] ?? null
+}
+
+function instrumentLatestBarField(card: InstrumentCard, key: string): unknown {
+  const latestBar = instrumentHistoryField(card, 'latest_completed_bar', key)
+  return latestBar
+}
+
+function instrumentTechnicalMetric(card: InstrumentCard, key: string): Record<string, unknown> | null {
+  const indicators = card.history?.technical_indicators as Record<string, unknown> | undefined
+  return asRecord(indicators?.[key])
+}
+
+function instrumentTechnicalMetricValue(card: InstrumentCard, key: string): number | null {
+  return toNumber(instrumentTechnicalMetric(card, key)?.value)
+}
+
+function instrumentTechnicalField(card: InstrumentCard, section: string, key: string): unknown {
+  return instrumentTechnicalMetric(card, section)?.[key] ?? null
+}
+
+function instrumentCloseLocation(card: InstrumentCard): string {
+  const ratio = toNumber(instrumentTechnicalField(card, 'volume_effort_result', 'close_location_ratio'))
+  return displayPercent(ratio === null ? null : ratio * 100, 1)
+}
+
+function instrumentRelativeField(card: InstrumentCard, section: string, key: string): unknown {
+  const relative = card.relative_strength as Record<string, unknown> | undefined
+  return asRecord(relative?.[section])?.[key] ?? null
+}
+
 function allInstrumentHistoryAvailable(): boolean {
   return instrumentCards.value.length > 0 && instrumentCards.value.every((card) => card.history?.available === true)
 }
@@ -496,6 +529,33 @@ onMounted(() => {
                   </tr>
                 </tbody>
               </table>
+            </div>
+          </section>
+          <section class="data-section">
+            <div class="section-label-row"><div><span class="section-kicker">FULL TECHNICAL READOUT</span><h3>3A 完整采集字段</h3></div><span class="source-label">默认展开 · 可重算日线技术指标</span></div>
+            <div class="instrument-detail-list">
+              <details v-for="card in instrumentCards" :key="`${card.symbol}-detail`" class="instrument-detail" open>
+                <summary><span><strong>{{ card.symbol }}</strong><small>{{ card.label }} · {{ card.data_mode || card.source || '不可用' }}</small></span><span>{{ signalLabel(instrumentSignalValue(card, 'macd_12_26_9', 'momentum')) }} · 日线 {{ instrumentTechnicalAsOf(card) }}</span></summary>
+                <div class="instrument-detail-body">
+                  <div class="metric-grid instrument-detail-grid">
+                    <div class="metric-cell"><span>最新完成 K 线</span><strong>{{ instrumentLatestBarField(card, 'date') }}</strong><small>O {{ formatNumber(toNumber(instrumentLatestBarField(card, 'open')), 2) }} · H {{ formatNumber(toNumber(instrumentLatestBarField(card, 'high')), 2) }} · L {{ formatNumber(toNumber(instrumentLatestBarField(card, 'low')), 2) }} · C {{ formatNumber(toNumber(instrumentLatestBarField(card, 'close')), 2) }}</small></div>
+                    <div class="metric-cell"><span>成交量 / 成交额</span><strong>{{ displayVolume(instrumentLatestBarField(card, 'volume')) }}</strong><small>成交额 {{ formatNumber(toNumber(instrumentLatestBarField(card, 'turnover')), 0) }} · 换手 {{ displayPercent(instrumentLatestBarField(card, 'turnover_rate'), 2) }}</small></div>
+                    <div class="metric-cell"><span>绝对收益 1D / 5D / 20D</span><strong>{{ displayPercent(instrumentHistoryValue(card, '1d'), 2) }} / {{ displayPercent(instrumentHistoryValue(card, '5d'), 2) }} / {{ displayPercent(instrumentHistoryValue(card, '20d'), 2) }}</strong><small>60D {{ displayPercent(instrumentHistoryValue(card, '60d'), 2) }} · 120D {{ displayPercent(instrumentHistoryValue(card, '120d'), 2) }} · 252D {{ displayPercent(instrumentHistoryValue(card, '252d'), 2) }}</small></div>
+                    <div class="metric-cell"><span>相对 QQQ 5D / 20D / 60D</span><strong>{{ displayPercent(instrumentRelativeField(card, 'excess_returns_percent', '5d'), 2) }} / {{ displayPercent(instrumentRelativeField(card, 'excess_returns_percent', '20d'), 2) }} / {{ displayPercent(instrumentRelativeField(card, 'excess_returns_percent', '60d'), 2) }}</strong><small>Beta20/60 {{ formatNumber(toNumber(instrumentRelativeField(card, 'beta', '20d')), 2) }} / {{ formatNumber(toNumber(instrumentRelativeField(card, 'beta', '60d')), 2) }} · 相关性 {{ formatNumber(toNumber(instrumentRelativeField(card, 'correlation', '20d')), 2) }} / {{ formatNumber(toNumber(instrumentRelativeField(card, 'correlation', '60d')), 2) }}</small></div>
+                    <div class="metric-cell"><span>MA10 / MA20 / MA50</span><strong>{{ formatNumber(toNumber(instrumentHistoryField(card, 'moving_average', '10d')), 2) }} / {{ formatNumber(toNumber(instrumentHistoryField(card, 'moving_average', '20d')), 2) }} / {{ formatNumber(toNumber(instrumentHistoryField(card, 'moving_average', '50d')), 2) }}</strong><small>MA100 {{ formatNumber(toNumber(instrumentHistoryField(card, 'moving_average', '100d')), 2) }} · MA200 {{ formatNumber(toNumber(instrumentHistoryField(card, 'moving_average', '200d')), 2) }}</small></div>
+                    <div class="metric-cell"><span>实现波动率 10D / 20D / 60D</span><strong>{{ displayPercent(instrumentTechnicalMetricValue(card, 'realized_volatility_10d'), 2) }} / {{ displayPercent(instrumentTechnicalMetricValue(card, 'realized_volatility_20d'), 2) }} / {{ displayPercent(instrumentTechnicalMetricValue(card, 'realized_volatility_60d'), 2) }}</strong><small>ATR14 {{ formatNumber(instrumentTechnicalMetricValue(card, 'atr14'), 4) }} · ATR14% {{ displayPercent(instrumentTechnicalMetricValue(card, 'atr14_percent'), 2) }}</small></div>
+                    <div class="metric-cell"><span>布林 20/1σ 上 / 中 / 下</span><strong>{{ formatNumber(toNumber(instrumentTechnicalField(card, 'bollinger_20_1', 'upper')), 2) }} / {{ formatNumber(toNumber(instrumentTechnicalField(card, 'bollinger_20_1', 'middle')), 2) }} / {{ formatNumber(toNumber(instrumentTechnicalField(card, 'bollinger_20_1', 'lower')), 2) }}</strong><small>%B {{ displayPercent(instrumentTechnicalField(card, 'bollinger_20_1', 'position_percent'), 2) }}</small></div>
+                    <div class="metric-cell"><span>布林 20/2σ 上 / 中 / 下</span><strong>{{ formatNumber(toNumber(instrumentTechnicalField(card, 'bollinger_20_2', 'upper')), 2) }} / {{ formatNumber(toNumber(instrumentTechnicalField(card, 'bollinger_20_2', 'middle')), 2) }} / {{ formatNumber(toNumber(instrumentTechnicalField(card, 'bollinger_20_2', 'lower')), 2) }}</strong><small>%B {{ displayPercent(instrumentTechnicalField(card, 'bollinger_20_2', 'position_percent'), 2) }} · 带宽 {{ displayPercent(instrumentTechnicalMetricValue(card, 'bollinger_bandwidth_20'), 2) }}</small></div>
+                    <div class="metric-cell"><span>布林 20/3σ 上 / 中 / 下</span><strong>{{ formatNumber(toNumber(instrumentTechnicalField(card, 'bollinger_20_3', 'upper')), 2) }} / {{ formatNumber(toNumber(instrumentTechnicalField(card, 'bollinger_20_3', 'middle')), 2) }} / {{ formatNumber(toNumber(instrumentTechnicalField(card, 'bollinger_20_3', 'lower')), 2) }}</strong><small>%B {{ displayPercent(instrumentTechnicalField(card, 'bollinger_20_3', 'position_percent'), 2) }}</small></div>
+                    <div class="metric-cell"><span>MACD DIF / DEA / 柱体</span><strong>{{ formatNumber(toNumber(instrumentTechnicalField(card, 'macd_12_26_9', 'dif')), 4) }} / {{ formatNumber(toNumber(instrumentTechnicalField(card, 'macd_12_26_9', 'dea')), 4) }} / {{ formatNumber(toNumber(instrumentTechnicalField(card, 'macd_12_26_9', 'histogram')), 4) }}</strong><small>{{ signalLabel(instrumentTechnicalField(card, 'macd_12_26_9', 'crossover')) }} · {{ signalLabel(instrumentTechnicalField(card, 'macd_12_26_9', 'zero_axis')) }}</small></div>
+                    <div class="metric-cell"><span>MACD 动量</span><strong :class="signalClass(instrumentSignalValue(card, 'macd_12_26_9', 'momentum'))">{{ signalLabel(instrumentSignalValue(card, 'macd_12_26_9', 'momentum')) }}</strong><small>前一柱 {{ formatNumber(toNumber(instrumentTechnicalField(card, 'macd_12_26_9', 'previous_histogram')), 4) }} · 参数 12 / 26 / 9</small></div>
+                    <div class="metric-cell"><span>Effort vs Result</span><strong :class="signalClass(instrumentSignalValue(card, 'volume_effort_result', 'signal'))">{{ signalLabel(instrumentSignalValue(card, 'volume_effort_result', 'signal')) }}</strong><small>{{ signalLabel(instrumentSignalValue(card, 'volume_effort_result', 'effort')) }} · {{ signalLabel(instrumentSignalValue(card, 'volume_effort_result', 'result_direction')) }} · {{ instrumentTechnicalField(card, 'volume_effort_result', 'signal_strength') || '不可用' }}</small></div>
+                    <div class="metric-cell"><span>量比 / 20D 均量</span><strong>{{ formatNumber(toNumber(instrumentTechnicalField(card, 'volume_effort_result', 'volume_ratio_20d')), 2) }}x</strong><small>{{ displayVolume(instrumentTechnicalField(card, 'volume_effort_result', 'latest_volume')) }} / {{ displayVolume(instrumentTechnicalField(card, 'volume_effort_result', 'volume_sma_20')) }}</small></div>
+                    <div class="metric-cell"><span>单日结果 / 波幅</span><strong>{{ displayPercent(instrumentTechnicalField(card, 'volume_effort_result', 'return_1d_percent'), 2) }}</strong><small>TR {{ formatNumber(toNumber(instrumentTechnicalField(card, 'volume_effort_result', 'true_range')), 2) }} · TR/ATR {{ formatNumber(toNumber(instrumentTechnicalField(card, 'volume_effort_result', 'range_atr_ratio')), 2) }}</small></div>
+                    <div class="metric-cell"><span>收盘位置</span><strong>{{ instrumentCloseLocation(card) }}</strong><small>信号阈值由 Effort vs Result payload 记录</small></div>
+                  </div>
+                </div>
+              </details>
             </div>
           </section>
           <section class="data-section"><div class="section-label-row"><div><span class="section-kicker">FIELD STATUS</span><h3>技术验证状态</h3></div></div><div class="status-list"><div><span>行情快照</span><StatusBadge :status="store.latestReadModel.instrument?.data_state ?? 'unavailable'" /><small>{{ store.latestReadModel.instrument?.source || '不可用' }} · {{ store.latestReadModel.instrument?.quality_status || '不可用' }}</small></div><div><span>历史日线</span><StatusBadge :status="allInstrumentHistoryAvailable() ? 'succeeded' : 'partial'" /><small>来源：Moomoo OpenD；指标可从保存的原始 K 线重算</small></div><div><span>相对强弱</span><StatusBadge :status="hasInstrumentRelativeStrength() ? 'succeeded' : 'unavailable'" /><small>INTC / SMH 相对 QQQ；财务与事件属于后续阶段</small></div><div><span>额度审计</span><StatusBadge :status="store.latestReadModel.instrument?.quota_audit?.subscription_unchanged === true ? 'succeeded' : 'partial'" /><small>{{ instrumentQuotaText() }}</small></div></div></section>
