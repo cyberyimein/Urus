@@ -12,6 +12,7 @@ dependencies = [
   "futu-api>=10.8.6808,<11.0",
   "pytest>=8.0,<9.0",
   "pytest-cov>=5.0,<7.0",
+  "pyyaml>=6.0,<7.0",
   "sqlalchemy>=2.0,<3.0",
   "uvicorn[standard]>=0.34,<1.0",
 ]

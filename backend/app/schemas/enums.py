@@ -4,12 +4,14 @@ from enum import StrEnum
 class RunTypeValue(StrEnum):
     PRE_MARKET = "pre_market"
     PRE_CLOSE = "pre_close"
+    POST_CLOSE_REVIEW = "post_close_review"
 
 
 class RunStatusValue(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
+    MIXED = "mixed"
     PARTIAL = "partial"
     FAILED = "failed"
 
@@ -18,6 +20,8 @@ class StepStatusValue(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
+    PLACEHOLDER = "placeholder"
+    UNAVAILABLE = "unavailable"
     SKIPPED = "skipped"
     FAILED = "failed"
 

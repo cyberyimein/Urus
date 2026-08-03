@@ -2,15 +2,14 @@ from __future__ import annotations
 
 from app.core.time import utc_now
 from app.models import StepStatus
-from app.schemas.enums import RunStatusValue
-from app.workflows.base import StepResult
+from app.workflows.base import StepResult, data_state_for
 from app.workflows.context import RunContext
 
 
 STEP_LABELS = {
     "1a": "1A · 大盘采集",
     "1b": "1B · 宏观事件摘要",
-    "2": "2 · 期权占位",
+    "2": "2 · 期权结构",
     "3a": "3A · 个股采集",
     "3b": "3B · 个股事件摘要",
     "4": "4 · 决策占位",
@@ -30,15 +29,19 @@ def _event_payload(result: StepResult | None, category: str) -> dict[str, object
     payload.setdefault("is_mock", True)
     payload.setdefault("category", category)
     payload.setdefault("status", result.status.value)
+    payload.setdefault("data_state", data_state_for(result))
     if result.error_message:
         payload["reason"] = result.error_message
     return payload
 
 
 def _data_payload(result: StepResult | None) -> dict[str, object] | None:
-    if result is None or result.status in {StepStatus.FAILED, StepStatus.SKIPPED}:
+    if result is None or result.status in {StepStatus.FAILED, StepStatus.SKIPPED} or not result.payload:
         return None
-    return dict(result.payload)
+    payload = dict(result.payload)
+    payload.setdefault("is_mock", True)
+    payload.setdefault("data_state", data_state_for(result))
+    return payload
 
 
 class OutputStep:
@@ -59,31 +62,42 @@ class OutputStep:
                 error_message="snapshot_id was not allocated before output step",
             )
 
-        steps: list[dict[str, object]] = []
-        warnings: list[str] = []
+        result_steps = []
         errors: list[str] = []
+        warnings: list[str] = []
         for code, result in context.results.items():
-            steps.append(
+            result_steps.append(
                 {
                     "code": code,
                     "label": STEP_LABELS.get(code, code),
                     "status": result.status.value,
+                    "data_state": data_state_for(result),
                     "summary": result.summary,
                     "error_message": result.error_message,
                 }
             )
-            if result.status == StepStatus.SKIPPED:
+            if result.status in {
+                StepStatus.SKIPPED,
+                StepStatus.PLACEHOLDER,
+                StepStatus.UNAVAILABLE,
+            }:
                 warnings.append(result.summary)
             if result.status == StepStatus.FAILED and result.error_message:
                 errors.append(f"{code}: {result.error_message}")
 
         market = _data_payload(context.results.get("1a"))
         instrument = _data_payload(context.results.get("3a"))
+        instrument_cards = [
+            item
+            for item in (instrument or {}).get("instruments", [])
+            if isinstance(item, dict)
+        ]
         options = _data_payload(context.results.get("2")) or {
             "is_mock": True,
             "status": "unavailable",
             "available": False,
-            "note": "期权占位结果不可用。",
+            "data_state": "unavailable",
+            "note": "期权结构结果不可用。",
         }
         decision = _data_payload(context.results.get("4")) or {
             "is_mock": True,
@@ -93,40 +107,144 @@ class OutputStep:
             "summary": "决策占位结果不可用。",
             "note": "框架阶段不执行真实决策 AI。",
         }
+        if market:
+            market_warnings = market.get("quality_warnings", [])
+            if isinstance(market_warnings, list):
+                warnings.extend(str(item) for item in market_warnings)
+            market_snapshot = market.get("market_snapshot", {})
+            if isinstance(market_snapshot, dict):
+                snapshot_errors = market_snapshot.get("quality_errors", [])
+                if isinstance(snapshot_errors, list):
+                    errors.extend(f"market_snapshot: {item}" for item in snapshot_errors)
+            macro_context = market.get("macro_context", {})
+            if isinstance(macro_context, dict):
+                macro_warnings = macro_context.get("quality_warnings", [])
+                if isinstance(macro_warnings, list):
+                    warnings.extend(str(item) for item in macro_warnings)
+                macro_errors = macro_context.get("quality_errors", [])
+                if isinstance(macro_errors, list):
+                    errors.extend(f"macro: {item}" for item in macro_errors)
+        if instrument:
+            instrument_warnings = instrument.get("quality_warnings", [])
+            if isinstance(instrument_warnings, list):
+                warnings.extend(f"3a: {item}" for item in instrument_warnings)
+        has_live_market = bool(market and market.get("is_mock") is False)
+        has_live_instrument = bool(instrument and instrument.get("is_mock") is False)
+        has_live_options = bool(options.get("is_mock") is False and options.get("available"))
+        market_quality_status = str(market.get("quality_status", "mock")) if market else "unavailable"
+        macro_quality_status = "unavailable"
+        if market and isinstance(market.get("macro_context"), dict):
+            macro_quality_status = str(market["macro_context"].get("quality_status", "unavailable"))
+        contains_mock = any(
+            not isinstance(section, dict) or bool(section.get("is_mock", True))
+            for section in (market, instrument, options, decision)
+        )
+        if errors or (
+            has_live_market
+            and (market_quality_status not in {"ok"} or macro_quality_status not in {"ok"})
+        ):
+            data_quality_status = "degraded"
+        elif (has_live_market or has_live_instrument or has_live_options) and contains_mock:
+            data_quality_status = "mixed"
+        elif has_live_market or has_live_instrument or has_live_options:
+            data_quality_status = "live"
+        else:
+            data_quality_status = "mock"
+        if has_live_market and has_live_instrument and has_live_options:
+            data_quality_message = (
+                "大盘、3A 个股/ETF 与期权来自 Moomoo OpenD/LV1 快照；"
+                "宏观数据按 Stage 1A 来源策略采集，事件或决策中仍可能包含 mock/placeholder。"
+            )
+        elif has_live_market and has_live_instrument:
+            data_quality_message = (
+                "大盘与 3A 个股/ETF 来自 Moomoo OpenD；宏观、期权、事件和决策中仍可能包含 mock/placeholder。"
+            )
+        elif has_live_market and has_live_options:
+            data_quality_message = (
+                "大盘与期权来自 Moomoo OpenD 快照；宏观数据按 Stage 1A 来源策略采集，"
+                "个股、事件或决策中仍可能包含 mock/placeholder。"
+            )
+        elif has_live_market:
+            data_quality_message = (
+                "大盘代理批量快照来自 Moomoo OpenD；Yahoo/FRED 提供宏观上下文，"
+                "期权及其余未接入流程仍为 mock/placeholder。"
+            )
+        elif has_live_options:
+            data_quality_message = (
+                "期权字段来自 Moomoo LV1 快照；市场、事件和决策仍含 mock/placeholder。"
+            )
+        else:
+            data_quality_message = "所有市场、事件、期权和决策字段均为框架 mock/read-model 占位。"
+        data_mode = (
+            "mixed"
+            if sum([has_live_market, has_live_instrument, has_live_options]) > 1
+            else str(market.get("data_mode", "mock"))
+            if has_live_market and market
+            else "opend"
+            if has_live_instrument
+            else str(options.get("source_mode", "mock"))
+            if has_live_options
+            else "mock"
+        )
+        data_state = (
+            "mixed"
+            if (has_live_market or has_live_instrument or has_live_options) and contains_mock
+            else "live"
+            if has_live_market or has_live_instrument or has_live_options
+            else "mock"
+            if contains_mock
+            else "unavailable"
+        )
+        if has_live_market and has_live_instrument and has_live_options:
+            output_summary = "已组合 Stage 1A 大盘、3A 个股/ETF 与 Stage 2 期权快照，生成统一前端 read model。"
+        elif has_live_market and has_live_options:
+            output_summary = "已组合 Stage 1A 大盘与 Stage 2 期权快照，生成统一前端 read model。"
+        elif has_live_market and has_live_instrument:
+            output_summary = "已组合 Stage 1A 大盘与 3A 个股/ETF，生成统一前端 read model。"
+        elif has_live_market or has_live_instrument or has_live_options:
+            output_summary = "已组合真实采集结果与其余 mock/placeholder，生成前端 read model。"
+        else:
+            output_summary = "已组合 mock 步骤结果并生成前端 read model。"
         read_model = {
             "schema_version": "1.0",
+            "data_mode": data_mode,
             "run_id": context.run_id,
             "snapshot_id": context.snapshot_id,
             "run_type": context.run_type,
-            "run_status": RunStatusValue.SUCCEEDED.value,
+            "run_status": data_state if data_state == "mixed" else "succeeded",
             "cutoff_time": context.cutoff_time.isoformat(),
             "generated_at": utc_now().isoformat(),
-            "is_mock": True,
+            "data_state": data_state,
+            "is_mock": contains_mock,
             "market": market,
             "instrument": instrument,
+            "instrument_cards": instrument_cards,
             "macro_event": _event_payload(context.results.get("1b"), "macro"),
             "options": options,
             "instrument_event": _event_payload(context.results.get("3b"), "instrument"),
             "decision": decision,
-            "steps": steps + [
+            "steps": result_steps + [
                 {
                     "code": "5",
                     "label": STEP_LABELS["5"],
                     "status": StepStatus.SUCCEEDED.value,
-                    "summary": "已组合 mock 步骤结果并生成前端 read model。",
+                    "data_state": data_state,
+                    "summary": output_summary,
                     "error_message": None,
                 }
             ],
             "data_quality": {
-                "is_mock": True,
-                "status": "mock" if not errors else "error",
-                "message": "所有市场、事件、期权和决策字段均为框架 mock/read-model 占位。",
+                "is_mock": contains_mock,
+                "data_state": data_state,
+                "status": data_quality_status,
+                "message": data_quality_message,
                 "warnings": warnings,
                 "errors": errors,
             },
         }
         return StepResult(
             status=StepStatus.SUCCEEDED,
-            summary="已组合 mock 步骤结果并生成前端 read model。",
+            summary=output_summary,
             payload=read_model,
+            data_state=data_state,
         )
