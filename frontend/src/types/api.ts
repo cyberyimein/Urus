@@ -163,6 +163,7 @@ export interface VolumeEffortResult {
   close_location_ratio: number | null
   effort: string
   result_direction: string
+  combination: string
   signal: string
   signal_strength: string
   thresholds: Record<string, number>
@@ -297,6 +298,9 @@ export interface InstrumentCard {
   provider?: string
   source_mode?: string
   captured_at?: string | null
+  asset_type?: string
+  theme?: string
+  themes?: string[]
   requested_symbols?: string[]
   unavailable_symbols?: string[]
   quota_audit?: Record<string, unknown>

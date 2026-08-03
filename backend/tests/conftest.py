@@ -17,6 +17,9 @@ def app(tmp_path: Path):
         database_url=f"sqlite:///{tmp_path / 'test.db'}",
         cors_origins="http://testserver",
         enabled_symbols="QQQ,INTC",
+        # Keep workflow API tests focused on the disabled/mock adapter. The
+        # production default is the full Stage 3A universe.
+        instrument_validation_symbols="INTC,SMH",
         moomoo_enabled=False,
         fred_enabled=False,
     )

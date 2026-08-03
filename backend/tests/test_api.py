@@ -86,7 +86,7 @@ def test_pre_close_can_simulate_both_conditional_events(client: TestClient) -> N
 def test_unsupported_symbol_is_rejected(client: TestClient) -> None:
     response = client.post(
         "/api/runs",
-        json={"run_type": "pre_market", "symbols": ["QQQ", "AAPL", "INTC"]},
+        json={"run_type": "pre_market", "symbols": ["QQQ", "TSLA", "INTC"]},
     )
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "unsupported_symbol"

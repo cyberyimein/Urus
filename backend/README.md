@@ -1,6 +1,6 @@
 # Urus backend
 
-FastAPI + SQLAlchemy backend for the Urus framework. Stage 1A uses one batched Moomoo/OpenD snapshot for configured ETFs, QQQ daily history summary plus shared volatility/ATR/Bollinger indicators, and Yahoo/FRED daily macro context. Stage 3A reuses that adapter for a QQQ benchmark plus `INSTRUMENT_VALIDATION_SYMBOLS` (default `INTC,SMH`), persists daily bars and technical/relative-strength inputs, and exposes them in the frontend read model. Yahoo VIX/10Y/30Y values are requested and preferred on every run, while FRED supplies the official 2Y field and cross-checks. The remaining workflow steps are explicitly marked skipped, placeholder, or unavailable until their own stages.
+FastAPI + SQLAlchemy backend for the Urus framework. Stage 1A uses one batched Moomoo/OpenD snapshot for configured ETFs, QQQ daily history summary plus shared volatility/ATR/Bollinger indicators, and Yahoo/FRED daily macro context. Stage 3A reuses that adapter for a QQQ benchmark plus the full `INSTRUMENT_VALIDATION_SYMBOLS` universe (core ETFs and the public watchlist), persists daily bars and technical/relative-strength inputs, and exposes them in the frontend read model. Yahoo VIX/10Y/30Y values are requested and preferred on every run, while FRED supplies the official 2Y field and cross-checks. The remaining workflow steps are explicitly marked skipped, placeholder, or unavailable until their own stages.
 
 ## Commands
 

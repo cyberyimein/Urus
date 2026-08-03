@@ -29,7 +29,12 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./urus.db"
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     enabled_symbols: str = "QQQ,INTC"
-    instrument_validation_symbols: str = "INTC,SMH"
+    # Stage 3A full technical universe: QQQ is added by the collector as the
+    # relative-strength benchmark; these are the sector ETFs and public
+    # watchlist names that receive the same snapshot + daily-history fields.
+    instrument_validation_symbols: str = (
+        "SPY,SMH,IGV,LITE,COHR,MRVL,NOK,AMD,INTC,NVDA,NBIS,ORCL,MSFT,NOW,RKLB,AMZN,AAPL,GOOG"
+    )
     moomoo_enabled: bool = False
     moomoo_host: str = "127.0.0.1"
     moomoo_port: int = 11111

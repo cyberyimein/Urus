@@ -40,6 +40,21 @@ class InstrumentCollectorStep:
                     "note": "3A 个股/ETF 数据已采集。",
                 }
             cards = [item for item in collected.get("instruments", []) if isinstance(item, dict)]
+            provider = str(collected.get("provider") or "unknown")
+            source_mode = str(collected.get("source_mode") or "snapshot")
+            captured_at = collected.get("captured_at")
+            # Keep collection metadata on every card. The collector payload is
+            # the source of truth; otherwise InstrumentCard's mock-oriented
+            # schema defaults can make live data look like a mock card.
+            cards = [
+                {
+                    **item,
+                    "provider": item.get("provider") or provider,
+                    "source_mode": item.get("source_mode") or source_mode,
+                    "captured_at": item.get("captured_at") or captured_at,
+                }
+                for item in cards
+            ]
             primary = next((item for item in cards if item.get("symbol") == "INTC"), None)
             primary = primary or (cards[0] if cards else {
                 "is_mock": False,
@@ -49,7 +64,7 @@ class InstrumentCollectorStep:
                 "change_percent": None,
                 "trend": None,
                 "technical_note": "本轮没有返回 3A 数据。",
-                "note": "本轮没有返回 INTC 或 SMH 数据。",
+                "note": "本轮没有返回配置的 3A 标的数据。",
             })
             is_live = any(item.get("is_mock") is False for item in cards)
             payload = {
@@ -60,6 +75,9 @@ class InstrumentCollectorStep:
                 "data_state": "live" if is_live else "unavailable",
                 "requested_symbols": collected.get("requested_symbols", context.instrument_symbols),
                 "unavailable_symbols": collected.get("unavailable_symbols", []),
+                "provider": provider,
+                "source_mode": source_mode,
+                "captured_at": captured_at,
                 "instruments": cards,
                 "quota_audit": collected.get("quota_audit", {}),
                 "quality_status": collected.get("quality_status", "unavailable"),
@@ -72,7 +90,7 @@ class InstrumentCollectorStep:
             if not cards:
                 return StepResult(
                     status=StepStatus.UNAVAILABLE,
-                    summary="3A 未返回 INTC 或 SMH 的行情/日线数据。",
+                    summary="3A 未返回配置的行情/日线数据。",
                     payload=payload,
                     data_state="unavailable",
                 )

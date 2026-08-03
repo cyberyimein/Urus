@@ -1,3 +1,5 @@
+import pytest
+
 from app.analytics.technical import calculate_relative_strength, calculate_technical_indicators
 
 
@@ -53,7 +55,43 @@ def test_daily_technical_indicators_include_multiband_macd_and_effort_result() -
     assert result["macd_12_26_9"]["histogram"] is not None
     assert result["volume_effort_result"]["available"] is True
     assert result["volume_effort_result"]["volume_ratio_20d"] == 3.0
+    assert result["volume_effort_result"]["combination"] == "high_down"
     assert result["volume_effort_result"]["signal"] == "volume_down_distribution"
+
+
+@pytest.mark.parametrize(
+    ("volume", "move", "expected_combination"),
+    [
+        (2000.0, 0.01, "high_up"),
+        (2000.0, -0.01, "high_down"),
+        (2000.0, 0.001, "high_flat"),
+        (1000.0, 0.01, "normal_up"),
+        (1000.0, -0.01, "normal_down"),
+        (1000.0, 0.001, "normal_flat"),
+        (700.0, 0.01, "low_up"),
+        (700.0, -0.01, "low_down"),
+        (700.0, 0.001, "low_flat"),
+    ],
+)
+def test_effort_result_preserves_every_volume_price_combination(
+    volume: float,
+    move: float,
+    expected_combination: str,
+) -> None:
+    bars = [{**bar, "volume": 1000.0} for bar in _bars(60)]
+    previous_close = float(bars[-2]["close"])
+    close = previous_close * (1 + move)
+    bars[-1] = {
+        **bars[-1],
+        "high": max(previous_close, close) * 1.01,
+        "low": min(previous_close, close) * 0.99,
+        "close": close,
+        "volume": volume,
+    }
+
+    result = calculate_technical_indicators(bars, source="test_history")
+
+    assert result["volume_effort_result"]["combination"] == expected_combination
 
 
 def test_daily_technical_indicators_report_insufficient_samples() -> None:

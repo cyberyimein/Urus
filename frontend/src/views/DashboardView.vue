@@ -39,6 +39,73 @@ const readModel = computed(() => store.latestReadModel)
 const market = computed<MarketCard | null>(() => readModel.value?.market ?? null)
 const instrumentCards = computed<InstrumentCard[]>(() => readModel.value?.instrument_cards ?? [])
 const liveInstrumentCount = computed(() => instrumentCards.value.filter((card) => card.is_mock === false).length)
+const activeInstrumentTheme = ref('')
+
+const instrumentThemesBySymbol: Record<string, string[]> = {
+  QQQ: ['ETF'],
+  SPY: ['ETF'],
+  SMH: ['ETF', '半导体'],
+  IGV: ['ETF'],
+  INTC: ['半导体'],
+  AMD: ['半导体'],
+  NVDA: ['半导体'],
+  LITE: ['光概念'],
+  COHR: ['光概念'],
+  MRVL: ['光概念'],
+  NOK: ['光概念'],
+  MSFT: ['大科技'],
+  NOW: ['SaaS'],
+  ORCL: ['SaaS'],
+  AAPL: ['大科技'],
+  AMZN: ['大科技'],
+  GOOG: ['大科技'],
+  RKLB: ['航天与新兴'],
+  NBIS: ['航天与新兴'],
+}
+
+const instrumentThemeOrder = ['ETF', '半导体', '光概念', 'SaaS', '大科技', '航天与新兴', '其他关注']
+
+function instrumentThemes(card: InstrumentCard): string[] {
+  const payloadThemes = card.themes?.filter((theme) => theme.trim().length > 0)
+  if (payloadThemes?.length) return payloadThemes
+  if (instrumentThemesBySymbol[card.symbol]) return instrumentThemesBySymbol[card.symbol]
+  return [card.theme || (card.asset_type === 'etf' ? 'ETF' : '其他关注')]
+}
+
+const instrumentGroups = computed(() => {
+  const groups = new Map<string, InstrumentCard[]>()
+  for (const card of instrumentCards.value) {
+    for (const theme of instrumentThemes(card)) {
+      const cards = groups.get(theme) ?? []
+      cards.push(card)
+      groups.set(theme, cards)
+    }
+  }
+  return [...groups.entries()]
+    .sort(([left], [right]) => {
+      const leftIndex = instrumentThemeOrder.indexOf(left)
+      const rightIndex = instrumentThemeOrder.indexOf(right)
+      return (leftIndex < 0 ? instrumentThemeOrder.length : leftIndex)
+        - (rightIndex < 0 ? instrumentThemeOrder.length : rightIndex)
+    })
+    .map(([key, cards]) => ({
+      key,
+      cards,
+      liveCount: cards.filter((card) => card.is_mock === false).length,
+    }))
+})
+
+const selectedInstrumentGroupKey = computed(() => {
+  const groups = instrumentGroups.value
+  return groups.some((group) => group.key === activeInstrumentTheme.value)
+    ? activeInstrumentTheme.value
+    : groups[0]?.key ?? ''
+})
+
+const selectedInstrumentGroup = computed(() => (
+  instrumentGroups.value.find((group) => group.key === selectedInstrumentGroupKey.value)
+  ?? { key: '', cards: [] as InstrumentCard[], liveCount: 0 }
+))
 
 const macroCards = [
   { key: 'vix', label: 'VIX', unit: '点' },
@@ -68,6 +135,8 @@ const tabs = computed<DashboardTab[]>(() => {
   const snapshot = current?.market?.market_snapshot
   const returnedSnapshotCount = snapshot?.returned_symbols?.length
   const requestedSnapshotCount = snapshot?.requested_symbols?.length
+  const instrumentCount = current?.instrument_cards?.length ?? 0
+  const liveInstrumentCount = current?.instrument_cards?.filter((card) => card.is_mock === false).length ?? 0
   const eventStatuses = [current?.macro_event.status, current?.instrument_event.status]
   const eventStatus = eventStatuses.includes('failed')
     ? 'failed'
@@ -90,7 +159,7 @@ const tabs = computed<DashboardTab[]>(() => {
     {
       id: 'instrument',
       label: '个股 / 3A',
-      meta: current?.instrument?.symbol ?? '未采集',
+      meta: instrumentCount > 0 ? `${liveInstrumentCount}/${instrumentCount} live` : '未采集',
       status: current?.instrument?.data_state ?? 'unavailable',
     },
     { id: 'events', label: '事件 / 1B + 3B', meta: '宏观 + 个股', status: eventStatus },
@@ -226,6 +295,37 @@ function signalLabel(value: unknown): string {
   return labels[value] ?? value
 }
 
+function effortResultLabel(effort: unknown, resultDirection: unknown): string {
+  const effortLabels: Record<string, string> = {
+    high: '放量',
+    normal: '正常量',
+    low: '缩量',
+  }
+  const resultLabels: Record<string, string> = {
+    up: '上涨',
+    down: '下跌',
+    flat: '横盘',
+  }
+  if (typeof effort !== 'string' || typeof resultDirection !== 'string') return '不可用'
+  const effortLabel = effortLabels[effort]
+  const resultLabel = resultLabels[resultDirection]
+  return effortLabel && resultLabel ? `${effortLabel} / ${resultLabel}` : '不可用'
+}
+
+function technicalEffortResultLabel(): string {
+  return effortResultLabel(
+    technicalSignalValue('volume_effort_result', 'effort'),
+    technicalSignalValue('volume_effort_result', 'result_direction'),
+  )
+}
+
+function instrumentEffortResultLabel(card: InstrumentCard): string {
+  return effortResultLabel(
+    instrumentSignalValue(card, 'volume_effort_result', 'effort'),
+    instrumentSignalValue(card, 'volume_effort_result', 'result_direction'),
+  )
+}
+
 function signalClass(value: unknown): string {
   if (typeof value !== 'string') return ''
   if (value.startsWith('bullish') || value === 'volume_up_demand' || value === 'volume_up_absorption') return 'positive-text'
@@ -334,6 +434,10 @@ function instrumentQuotaText(): string {
     ? `历史 K 线额度 ${historyDelta >= 0 ? '+' : ''}${historyDelta}`
     : '历史 K 线额度未返回'
   return `${subscriptionText} · ${historyText}`
+}
+
+function instrumentCardType(card: InstrumentCard): string {
+  return card.asset_type === 'etf' || ['QQQ', 'SPY', 'SMH', 'IGV'].includes(card.symbol) ? 'ETF' : '个股'
 }
 
 function eventText(event: EventSummary): string {
@@ -491,7 +595,7 @@ onMounted(() => {
               <div class="metric-cell"><span>MACD DIF / DEA</span><strong>{{ formatNumber(toNumber(technicalSignalValue('macd_12_26_9', 'dif')), 4) }} / {{ formatNumber(toNumber(technicalSignalValue('macd_12_26_9', 'dea')), 4) }}</strong><small>{{ technicalMeta('macd_12_26_9') }}</small></div>
               <div class="metric-cell"><span>MACD 柱体</span><strong>{{ formatNumber(toNumber(technicalSignalValue('macd_12_26_9', 'histogram')), 4) }}</strong><small :class="signalClass(technicalSignalValue('macd_12_26_9', 'momentum'))">{{ signalLabel(technicalSignalValue('macd_12_26_9', 'momentum')) }} · {{ signalLabel(technicalSignalValue('macd_12_26_9', 'zero_axis')) }}</small></div>
               <div class="metric-cell"><span>MACD 交叉</span><strong :class="signalClass(technicalSignalValue('macd_12_26_9', 'crossover'))">{{ signalLabel(technicalSignalValue('macd_12_26_9', 'crossover')) }}</strong><small>参数 12 / 26 / 9 · {{ technicalMeta('macd_12_26_9') }}</small></div>
-              <div class="metric-cell"><span>Effort vs Result</span><strong :class="signalClass(technicalSignalValue('volume_effort_result', 'signal'))">{{ signalLabel(technicalSignalValue('volume_effort_result', 'signal')) }}</strong><small>{{ signalLabel(technicalSignalValue('volume_effort_result', 'effort')) }} · {{ displayPercent(technicalSignalValue('volume_effort_result', 'volume_ratio_20d'), 2) }} 量比</small></div>
+              <div class="metric-cell"><span>Effort vs Result</span><strong :class="signalClass(technicalSignalValue('volume_effort_result', 'signal'))">{{ signalLabel(technicalSignalValue('volume_effort_result', 'signal')) }}</strong><small>{{ technicalEffortResultLabel() }} · {{ displayPercent(technicalSignalValue('volume_effort_result', 'volume_ratio_20d'), 2) }} 量比</small></div>
             </div>
           </section>
 
@@ -506,24 +610,34 @@ onMounted(() => {
       <section v-else-if="activeTab === 'instrument'" class="tab-panel" role="tabpanel">
         <div class="tab-titlebar"><div><p class="eyebrow">COLLECTED / 3A</p><h2>个股与行业 ETF</h2></div><StatusBadge :status="store.latestReadModel.instrument?.data_state ?? 'unavailable'" /></div>
         <template v-if="instrumentCards.length">
+          <nav class="instrument-theme-tabs" aria-label="3A 主题分组">
+            <button
+              v-for="group in instrumentGroups"
+              :key="group.key"
+              type="button"
+              :class="{ active: selectedInstrumentGroupKey === group.key }"
+              @click="activeInstrumentTheme = group.key"
+            >
+              <strong>{{ group.key }}</strong>
+              <small>{{ group.liveCount }}/{{ group.cards.length }} live</small>
+            </button>
+          </nav>
           <section class="data-section">
-            <div class="section-label-row"><div><span class="section-kicker">CURRENT UNIVERSE</span><h3>QQQ 基准 · INTC 个股 · SMH 行业 ETF</h3></div><span class="source-label">{{ liveInstrumentCount }}/{{ instrumentCards.length }} live · 本轮 {{ formatDate(store.latestReadModel.generated_at) }}</span></div>
+            <div class="section-label-row"><div><span class="section-kicker">CURRENT UNIVERSE · {{ selectedInstrumentGroup.key }}</span><h3>{{ selectedInstrumentGroup.cards.length }} 个标的摘要</h3></div><span class="source-label">{{ liveInstrumentCount }}/{{ instrumentCards.length }} live · 本轮 {{ formatDate(store.latestReadModel.generated_at) }}</span></div>
             <div class="table-wrap">
-              <table class="data-table">
-                <thead><tr><th>标的</th><th>类型</th><th>常规价</th><th>盘前 / 盘后</th><th>日变化</th><th>5D / 20D / 60D</th><th>相对 QQQ</th><th>ATR14%</th><th>布林上 / 下</th><th>布林 %B</th><th>MACD / 量价信号</th><th>日线截至</th><th>状态</th></tr></thead>
+              <table class="data-table instrument-summary-table">
+                <thead><tr><th>标的</th><th>类型</th><th>常规价</th><th>盘前 / 盘后</th><th>日变化</th><th>5D / 20D</th><th>相对 QQQ 20D</th><th>布林 %B</th><th>MACD / 量价</th><th>日线截至</th><th>状态</th></tr></thead>
                 <tbody>
-                  <tr v-for="card in instrumentCards" :key="card.symbol">
+                  <tr v-for="card in selectedInstrumentGroup.cards" :key="card.symbol">
                     <td><strong>{{ card.symbol }}</strong><small>{{ card.label }}</small></td>
-                    <td>{{ card.symbol === 'SMH' || card.symbol === 'QQQ' ? 'ETF' : '个股' }}</td>
+                    <td>{{ instrumentCardType(card) }}</td>
                     <td>{{ formatNumber(card.regular_price ?? card.last_price) }}</td>
                     <td>{{ formatNumber(card.premarket_price) }} / {{ formatNumber(card.afterhours_price) }}</td>
                     <td :class="quoteChangeClass(card.change_percent)">{{ displayPercent(card.change_percent, 4) }}</td>
-                    <td>{{ displayPercent(instrumentHistoryValue(card, '5d'), 2) }} / {{ displayPercent(instrumentHistoryValue(card, '20d'), 2) }} / {{ displayPercent(instrumentHistoryValue(card, '60d'), 2) }}</td>
+                    <td>{{ displayPercent(instrumentHistoryValue(card, '5d'), 2) }} / {{ displayPercent(instrumentHistoryValue(card, '20d'), 2) }}</td>
                     <td>{{ displayPercent(instrumentRelativeValue(card, '20d'), 2) }}</td>
-                    <td>{{ displayPercent(instrumentTechnicalValue(card, 'atr14_percent'), 2) }}</td>
-                    <td>{{ formatNumber(toNumber(instrumentBollingerValue(card, 'upper'))) }} / {{ formatNumber(toNumber(instrumentBollingerValue(card, 'lower'))) }}</td>
                     <td>{{ displayPercent(instrumentBollingerValue(card, 'position_percent'), 2) }}</td>
-                    <td><strong :class="signalClass(instrumentSignalValue(card, 'macd_12_26_9', 'momentum'))">{{ signalLabel(instrumentSignalValue(card, 'macd_12_26_9', 'momentum')) }}</strong><small>{{ signalLabel(instrumentSignalValue(card, 'volume_effort_result', 'signal')) }}</small></td>
+                    <td><strong :class="signalClass(instrumentSignalValue(card, 'macd_12_26_9', 'momentum'))">{{ signalLabel(instrumentSignalValue(card, 'macd_12_26_9', 'momentum')) }}</strong><small>{{ signalLabel(instrumentSignalValue(card, 'volume_effort_result', 'signal')) }} · {{ instrumentEffortResultLabel(card) }}</small></td>
                     <td>{{ instrumentTechnicalAsOf(card) }}</td>
                     <td><StatusBadge :status="card.data_state ?? 'unavailable'" /></td>
                   </tr>
@@ -532,10 +646,10 @@ onMounted(() => {
             </div>
           </section>
           <section class="data-section">
-            <div class="section-label-row"><div><span class="section-kicker">FULL TECHNICAL READOUT</span><h3>3A 完整采集字段</h3></div><span class="source-label">默认展开 · 可重算日线技术指标</span></div>
+            <div class="section-label-row"><div><span class="section-kicker">FULL TECHNICAL READOUT · {{ selectedInstrumentGroup.key }}</span><h3>完整字段详情</h3></div><span class="source-label">点击标的展开 · 可重算日线技术指标</span></div>
             <div class="instrument-detail-list">
-              <details v-for="card in instrumentCards" :key="`${card.symbol}-detail`" class="instrument-detail" open>
-                <summary><span><strong>{{ card.symbol }}</strong><small>{{ card.label }} · {{ card.data_mode || card.source || '不可用' }}</small></span><span>{{ signalLabel(instrumentSignalValue(card, 'macd_12_26_9', 'momentum')) }} · 日线 {{ instrumentTechnicalAsOf(card) }}</span></summary>
+              <details v-for="card in selectedInstrumentGroup.cards" :key="`${card.symbol}-detail`" class="instrument-detail">
+                <summary><span><strong>{{ card.symbol }}</strong><small>{{ instrumentThemes(card).join(' · ') }} · {{ instrumentCardType(card) }} · {{ card.provider || card.source || '不可用' }}</small></span><span>{{ signalLabel(instrumentSignalValue(card, 'macd_12_26_9', 'momentum')) }} · 日线 {{ instrumentTechnicalAsOf(card) }}</span></summary>
                 <div class="instrument-detail-body">
                   <div class="metric-grid instrument-detail-grid">
                     <div class="metric-cell"><span>最新完成 K 线</span><strong>{{ instrumentLatestBarField(card, 'date') }}</strong><small>O {{ formatNumber(toNumber(instrumentLatestBarField(card, 'open')), 2) }} · H {{ formatNumber(toNumber(instrumentLatestBarField(card, 'high')), 2) }} · L {{ formatNumber(toNumber(instrumentLatestBarField(card, 'low')), 2) }} · C {{ formatNumber(toNumber(instrumentLatestBarField(card, 'close')), 2) }}</small></div>
@@ -549,7 +663,7 @@ onMounted(() => {
                     <div class="metric-cell"><span>布林 20/3σ 上 / 中 / 下</span><strong>{{ formatNumber(toNumber(instrumentTechnicalField(card, 'bollinger_20_3', 'upper')), 2) }} / {{ formatNumber(toNumber(instrumentTechnicalField(card, 'bollinger_20_3', 'middle')), 2) }} / {{ formatNumber(toNumber(instrumentTechnicalField(card, 'bollinger_20_3', 'lower')), 2) }}</strong><small>%B {{ displayPercent(instrumentTechnicalField(card, 'bollinger_20_3', 'position_percent'), 2) }}</small></div>
                     <div class="metric-cell"><span>MACD DIF / DEA / 柱体</span><strong>{{ formatNumber(toNumber(instrumentTechnicalField(card, 'macd_12_26_9', 'dif')), 4) }} / {{ formatNumber(toNumber(instrumentTechnicalField(card, 'macd_12_26_9', 'dea')), 4) }} / {{ formatNumber(toNumber(instrumentTechnicalField(card, 'macd_12_26_9', 'histogram')), 4) }}</strong><small>{{ signalLabel(instrumentTechnicalField(card, 'macd_12_26_9', 'crossover')) }} · {{ signalLabel(instrumentTechnicalField(card, 'macd_12_26_9', 'zero_axis')) }}</small></div>
                     <div class="metric-cell"><span>MACD 动量</span><strong :class="signalClass(instrumentSignalValue(card, 'macd_12_26_9', 'momentum'))">{{ signalLabel(instrumentSignalValue(card, 'macd_12_26_9', 'momentum')) }}</strong><small>前一柱 {{ formatNumber(toNumber(instrumentTechnicalField(card, 'macd_12_26_9', 'previous_histogram')), 4) }} · 参数 12 / 26 / 9</small></div>
-                    <div class="metric-cell"><span>Effort vs Result</span><strong :class="signalClass(instrumentSignalValue(card, 'volume_effort_result', 'signal'))">{{ signalLabel(instrumentSignalValue(card, 'volume_effort_result', 'signal')) }}</strong><small>{{ signalLabel(instrumentSignalValue(card, 'volume_effort_result', 'effort')) }} · {{ signalLabel(instrumentSignalValue(card, 'volume_effort_result', 'result_direction')) }} · {{ instrumentTechnicalField(card, 'volume_effort_result', 'signal_strength') || '不可用' }}</small></div>
+                    <div class="metric-cell"><span>Effort vs Result</span><strong :class="signalClass(instrumentSignalValue(card, 'volume_effort_result', 'signal'))">{{ signalLabel(instrumentSignalValue(card, 'volume_effort_result', 'signal')) }}</strong><small>{{ instrumentEffortResultLabel(card) }} · {{ instrumentTechnicalField(card, 'volume_effort_result', 'signal_strength') || '不可用' }}</small></div>
                     <div class="metric-cell"><span>量比 / 20D 均量</span><strong>{{ formatNumber(toNumber(instrumentTechnicalField(card, 'volume_effort_result', 'volume_ratio_20d')), 2) }}x</strong><small>{{ displayVolume(instrumentTechnicalField(card, 'volume_effort_result', 'latest_volume')) }} / {{ displayVolume(instrumentTechnicalField(card, 'volume_effort_result', 'volume_sma_20')) }}</small></div>
                     <div class="metric-cell"><span>单日结果 / 波幅</span><strong>{{ displayPercent(instrumentTechnicalField(card, 'volume_effort_result', 'return_1d_percent'), 2) }}</strong><small>TR {{ formatNumber(toNumber(instrumentTechnicalField(card, 'volume_effort_result', 'true_range')), 2) }} · TR/ATR {{ formatNumber(toNumber(instrumentTechnicalField(card, 'volume_effort_result', 'range_atr_ratio')), 2) }}</small></div>
                     <div class="metric-cell"><span>收盘位置</span><strong>{{ instrumentCloseLocation(card) }}</strong><small>信号阈值由 Effort vs Result payload 记录</small></div>
@@ -558,7 +672,7 @@ onMounted(() => {
               </details>
             </div>
           </section>
-          <section class="data-section"><div class="section-label-row"><div><span class="section-kicker">FIELD STATUS</span><h3>技术验证状态</h3></div></div><div class="status-list"><div><span>行情快照</span><StatusBadge :status="store.latestReadModel.instrument?.data_state ?? 'unavailable'" /><small>{{ store.latestReadModel.instrument?.source || '不可用' }} · {{ store.latestReadModel.instrument?.quality_status || '不可用' }}</small></div><div><span>历史日线</span><StatusBadge :status="allInstrumentHistoryAvailable() ? 'succeeded' : 'partial'" /><small>来源：Moomoo OpenD；指标可从保存的原始 K 线重算</small></div><div><span>相对强弱</span><StatusBadge :status="hasInstrumentRelativeStrength() ? 'succeeded' : 'unavailable'" /><small>INTC / SMH 相对 QQQ；财务与事件属于后续阶段</small></div><div><span>额度审计</span><StatusBadge :status="store.latestReadModel.instrument?.quota_audit?.subscription_unchanged === true ? 'succeeded' : 'partial'" /><small>{{ instrumentQuotaText() }}</small></div></div></section>
+          <section class="data-section"><div class="section-label-row"><div><span class="section-kicker">FIELD STATUS</span><h3>技术验证状态</h3></div></div><div class="status-list"><div><span>行情快照</span><StatusBadge :status="store.latestReadModel.instrument?.data_state ?? 'unavailable'" /><small>{{ store.latestReadModel.instrument?.provider || store.latestReadModel.instrument?.source || '不可用' }} · {{ store.latestReadModel.instrument?.source_mode || '不可用' }} · {{ formatDate(store.latestReadModel.instrument?.captured_at || null) }}</small></div><div><span>历史日线</span><StatusBadge :status="allInstrumentHistoryAvailable() ? 'succeeded' : 'partial'" /><small>来源：Moomoo OpenD；{{ instrumentCards.length }} 个标的均按当前主题分组展示，指标可从保存的原始 K 线重算</small></div><div><span>相对强弱</span><StatusBadge :status="hasInstrumentRelativeStrength() ? 'succeeded' : 'unavailable'" /><small>全部非 QQQ 标的相对 QQQ；财务与事件属于后续阶段</small></div><div><span>额度审计</span><StatusBadge :status="store.latestReadModel.instrument?.quota_audit?.subscription_unchanged === true ? 'succeeded' : 'partial'" /><small>{{ instrumentQuotaText() }}</small></div></div></section>
         </template>
         <div v-else class="empty-panel"><h3>个股数据不可用</h3><p>3A 步骤没有返回个股数据。</p></div>
       </section>

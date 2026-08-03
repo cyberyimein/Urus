@@ -54,6 +54,9 @@ class InstrumentCard(MockBase):
     provider: str = "mock_adapter"
     source_mode: str = "mock"
     captured_at: str | None = None
+    asset_type: str = "equity"
+    theme: str = "其他关注"
+    themes: list[str] = Field(default_factory=list)
     requested_symbols: list[str] = Field(default_factory=list)
     unavailable_symbols: list[str] = Field(default_factory=list)
     quota_audit: dict[str, Any] = Field(default_factory=dict)

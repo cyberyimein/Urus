@@ -350,6 +350,7 @@ def _calculate_volume_effort_result(
         "close_location_ratio": None,
         "effort": "unavailable",
         "result_direction": "unavailable",
+        "combination": "unavailable",
         "signal": "unavailable",
         "signal_strength": "unavailable",
         "thresholds": {
@@ -400,6 +401,11 @@ def _calculate_volume_effort_result(
         result_direction = "up"
     else:
         result_direction = "flat"
+    combination = (
+        f"{effort}_{result_direction}"
+        if effort != "unavailable" and result_direction != "unavailable"
+        else "unavailable"
+    )
     range_atr_ratio = true_range / atr14 if atr14 else None
     wide_range = range_atr_ratio is not None and range_atr_ratio >= WIDE_RANGE_ATR_RATIO
     close_low = close_location is not None and close_location <= 0.3
@@ -432,6 +438,7 @@ def _calculate_volume_effort_result(
             "close_location_ratio": round(close_location, 4) if close_location is not None else None,
             "effort": effort,
             "result_direction": result_direction,
+            "combination": combination,
             "signal": signal,
             "signal_strength": signal_strength,
         }

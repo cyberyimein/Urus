@@ -35,6 +35,28 @@ DEFAULT_MARKET_SNAPSHOT_SYMBOLS = (
 )
 MAX_SNAPSHOT_CODES_PER_REQUEST = 400
 
+INSTRUMENT_THEMES_BY_SYMBOL = {
+    "QQQ": ["ETF"],
+    "SPY": ["ETF"],
+    "SMH": ["ETF", "半导体"],
+    "IGV": ["ETF"],
+    "INTC": ["半导体"],
+    "AMD": ["半导体"],
+    "NVDA": ["半导体"],
+    "LITE": ["光概念"],
+    "COHR": ["光概念"],
+    "MRVL": ["光概念"],
+    "NOK": ["光概念"],
+    "MSFT": ["大科技"],
+    "NOW": ["SaaS"],
+    "ORCL": ["SaaS"],
+    "AAPL": ["大科技"],
+    "AMZN": ["大科技"],
+    "GOOG": ["大科技"],
+    "RKLB": ["航天与新兴"],
+    "NBIS": ["航天与新兴"],
+}
+
 
 class MarketCollectorAdapter(Protocol):
     def market_card(self, symbol: str) -> dict[str, object]: ...
@@ -112,9 +134,18 @@ class MockMoomooAdapter:
                 technical_note="技术指标尚未实现；当前仅展示占位字段。",
             ),
         }
-        if symbol not in quotes:
-            raise ValueError(f"mock instrument adapter only supports INTC and SMH, got {symbol}")
-        return quotes[symbol].as_dict()
+        if symbol in quotes:
+            return quotes[symbol].as_dict()
+        # The offline adapter must accept the same full universe as the live
+        # configuration, while remaining explicitly mock/unavailable.
+        return MockQuote(
+            symbol=symbol,
+            label=f"{symbol} · mock instrument",
+            last_price=100.0,
+            change_percent=0.0,
+            trend="mock trend unavailable",
+            technical_note="技术指标尚未实现；当前仅展示占位字段。",
+        ).as_dict()
 
     def instrument_cards(self, symbols: list[str]) -> dict[str, object]:
         cards = [self.instrument_card(symbol) for symbol in symbols]
@@ -328,7 +359,7 @@ class OpenDMarketAdapter:
         return card
 
     def instrument_cards(self, symbols: list[str]) -> dict[str, object]:
-        """Collect a small 3A universe in one quote snapshot and daily histories."""
+        """Collect the configured 3A universe in one quote snapshot and daily histories."""
         if not symbols:
             raise ValueError("3A 至少需要一个个股或 ETF 标的")
         quote_codes = _unique_quote_codes(["QQQ", *symbols])
@@ -391,7 +422,13 @@ class OpenDMarketAdapter:
                 "is_mock": False,
                 "data_mode": "opend",
                 "data_state": "live",
+                "provider": "moomoo_openapi",
+                "source_mode": "snapshot",
+                "captured_at": captured_at,
                 "source": "moomoo_opend_snapshot",
+                "asset_type": "etf" if display_symbol in DEFAULT_MARKET_SNAPSHOT_SYMBOLS else "equity",
+                "theme": _instrument_theme(display_symbol),
+                "themes": _instrument_themes(display_symbol),
                 "label": f"{display_symbol} · Moomoo OpenD",
                 "trend": _trend_from_history(history_public),
                 "technical_note": "日线技术指标由 SQLite 可重算的 Moomoo 历史 K 线生成。",
@@ -677,6 +714,14 @@ def _unique_quote_codes(symbols: list[str] | tuple[str, ...]) -> list[str]:
 
 def _display_symbol(quote_code: str) -> str:
     return quote_code.split(".")[-1].upper()
+
+
+def _instrument_theme(symbol: str) -> str:
+    return _instrument_themes(symbol)[0]
+
+
+def _instrument_themes(symbol: str) -> list[str]:
+    return list(INSTRUMENT_THEMES_BY_SYMBOL.get(symbol.upper(), ["其他关注"]))
 
 
 def _optional_number(row: dict[str, Any], keys: list[str]) -> float | None:

@@ -17,8 +17,8 @@
 - 所有 API 时间统一按带 `+00:00` offset 的 UTC 输出；前端固定显示 `JST`，不会把数据库中 SQLite 取回的 naive UTC 当作浏览器本地时间。
 - 阶段 1A 已增加懒加载的 Moomoo/OpenD adapter：一次批量读取配置的 ETF 代理快照、交易时段、盘前/盘后字段，并读取 QQQ 的最多 260 根日线摘要指标。美国指数不通过 Moomoo 请求，直接 VIX 的策略跳过状态保留在 read model。
 - QQQ 日线摘要通过共享技术指标模块计算收益窗口、移动平均、实现波动率、ATR14、ATR14%、布林带 20/1、20/2、20/3 与带宽；同时计算 MACD(12,26,9) 的 DIF/DEA/柱体、交叉和动量，以及成交量 Effort vs Result 信号。每项保留 `as_of`、`sample_count`、`source`；本轮新结果的技术特征版本为 `technical_v2`。
-- 阶段 3A 复用同一 Moomoo/OpenD adapter，以 QQQ 作为基准批量采集 `INSTRUMENT_VALIDATION_SYMBOLS`（默认 `INTC,SMH`）。每个标的返回快照、复权日线、1/5/20/60/120/252 日收益、MA10/20/50/100/200、波动/ATR/多轨布林、MACD、量价信号以及相对 QQQ 收益、Beta、相关性；采集前后记录股票订阅和历史 K 线额度。
-- 3A 前端同时展示摘要表和默认展开的完整技术详情；详情包含最新完成 K 线 OHLCV、全部收益/均线/波动窗口、多轨布林、MACD、Effort vs Result 与相对 QQQ 指标。原始逐日 K 线仍以 SQLite 归档为主，不在主表逐行铺开。
+- 阶段 3A 复用同一 Moomoo/OpenD adapter，以 QQQ 作为基准批量采集全量 `INSTRUMENT_VALIDATION_SYMBOLS`（默认包含 SPY、SMH、IGV 与 15 个公开关注股）。每个标的返回快照、复权日线、1/5/20/60/120/252 日收益、MA10/20/50/100/200、波动/ATR/多轨布林、MACD、量价信号以及相对 QQQ 收益、Beta、相关性；采集前后记录股票订阅和历史 K 线额度。
+- 3A 前端按“ETF、半导体、光概念、SaaS、大科技、航天与新兴”主题 Tab 展示摘要表；SMH 同时出现在“ETF”和“半导体”两个分区，NOK 归入“光概念”，NOW/ORCL 归入“SaaS”，不再单列通信。完整字段按标的折叠展开。详情包含最新完成 K 线 OHLCV、全部收益/均线/波动窗口、多轨布林、MACD、Effort vs Result 与相对 QQQ 指标。原始逐日 K 线仍以 SQLite 归档为主，不在主表逐行铺开。
 - 行情模型同时保留正规交易 `regular_price`、盘前价和盘后价；前端不再把“常规价”和“扩展时段价”混成一个数。布林带各偏差轨道的上轨、中轨、下轨和 `%B`、20/2 带宽均保存在技术指标结果中。
 - 阶段 3A 的 SQLite migration `0003_instrument_technical_persistence` 新增分析批次、标的快照和逐日 K 线表，原始日线与 frontend snapshot 在同一事务保存，read model 仅暴露公开字段，不泄露内部持久化 payload。
 - OpenD 真实数据和未实现的 placeholder/unavailable 步骤在 read model 中分开标记；OpenD 连接失败会保留为失败步骤和错误 snapshot。
@@ -33,9 +33,9 @@
 
 ## 已知限制
 
-- 目前阶段 1A 的 QQQ/代理 ETF 快照、QQQ 日线指标和 FRED/Yahoo 宏观链路已接入；阶段 2 的期权快照与结构计算在启用 Moomoo 时为 live，未启用时为 placeholder；阶段 3A 已通过真实 OpenD 验证 QQQ/INTC/SMH。1B/3B 仍按条件跳过，4 是 placeholder；没有事件日历、个股财务与事件、账户风险、AI prompt 或自动调度。
+- 目前阶段 1A 的 QQQ/代理 ETF 快照、QQQ 日线指标和 FRED/Yahoo 宏观链路已接入；阶段 2 的期权快照与结构计算在启用 Moomoo 时为 live，未启用时为 placeholder；阶段 3A 已从 QQQ/INTC/SMH 技术验证扩展到配置的全量核心 ETF 与公开关注股。1B/3B 仍按条件跳过，4 是 placeholder；没有事件日历、个股财务与事件、账户风险、AI prompt 或自动调度。
 - 动态利率/股息率、VEX/Vanna、做市商真实持仓方向、开平仓识别、组合腿识别和逐笔期权历史不属于本阶段。期权范围包含 SPY、QQQ、SMH、IGV 与配置的 15 个上市个股关注标的；SPCX 是私募标的，明确不发起期权链请求。正负 Gamma 与 Spot Gamma Profile 都基于 Call 正、Put 负的持仓方向假设，不代表已知做市商净仓位。
-- MACD 与 Effort vs Result 是收盘日线完成后的描述性信号：放量/缩量阈值、宽幅阈值和单日涨跌阈值均记录在指标 payload 中，不构成交易建议；成交量缺失时单独标记为 `unavailable`，不伪造信号。
+- MACD 与 Effort vs Result 是收盘日线完成后的描述性信号：放量/缩量阈值、宽幅阈值和单日涨跌阈值均记录在指标 payload 中；`volume_effort_result.combination` 保留放量/正常量/缩量 × 上涨/下跌/横盘的完整组合，前端不再把中性组合隐去。不构成交易建议；成交量缺失时单独标记为 `unavailable`，不伪造信号。
 - FRED 日频宏观源需要 `FRED_ENABLED=true` 才会请求；Yahoo 每次运行请求需要 `YAHOO_ENABLED=true`。市场广度、5 分钟历史、5 年日线归档、行业热力图和实时订阅、逐笔、盘口、期货属于延期项；交易日历和提前收盘在启用自动调度前必须补齐。
 - 本地启动时会 `create_all` 以降低首次运行摩擦；部署和版本演进仍应执行 Alembic migration。
 - 没有登录、权限、多租户、Sentry、Prometheus、容器编排或移动端完整适配。
@@ -57,7 +57,7 @@
 - 真实 OpenD 验证时间：2026-08-03；端点为配置的 `MOOMOO_HOST:MOOMOO_PORT`。
 - 请求集合为 `QQQ + INTC + SMH`，三只标的均返回快照和 357 根复权日线，技术指标质量为 `ok`；相对 QQQ 的 5/20/60 日收益、20/60 日 Beta 和相关性均按共同交易日对齐计算。
 - 采集前后股票实时订阅额度保持不变；历史 K 线额度只按 OpenD 实际新增的历史请求变化，结果写入 `quota_audit`，不会为了 3A 建立实时订阅。
-- 前端 Dashboard 的“个股与行业 ETF”页显示 `3/3 live`；整次工作流仍可能显示 `mixed`，原因是 1B/3B/4 尚未实现，不是 3A 数据不可用。
+- 前端 Dashboard 的“个股与行业 ETF”页按主题 Tab 显示各组 live 数量；整次工作流仍可能显示 `mixed`，原因是 1B/3B/4 尚未实现，不是 3A 数据不可用。
 
 ## 下一阶段接入点
 

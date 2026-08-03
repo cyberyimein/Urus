@@ -361,7 +361,7 @@ class RunService:
         )
         if not {"QQQ", "INTC"}.issubset(allowed):
             raise AppError(
-                "当前框架白名单必须包含 QQQ 和 INTC；3A 可额外配置 SMH 等标的",
+                "当前框架白名单必须包含 QQQ 和 INTC；3A 使用配置的核心 ETF 与公开关注列表",
                 code="invalid_development_allowlist",
                 status_code=500,
             )
@@ -369,13 +369,13 @@ class RunService:
         unsupported = sorted(set(symbols) - allowed)
         if unsupported:
             raise AppError(
-                f"标的不在开发白名单中：{', '.join(unsupported)}；当前允许配置的标的是 QQQ、INTC、SMH 等",
+                f"标的不在开发白名单中：{', '.join(unsupported)}；当前允许配置的标的是 QQQ、INTC、核心 ETF 与公开关注列表",
                 code="unsupported_symbol",
                 status_code=422,
             )
         if not {"QQQ", "INTC"}.issubset(set(symbols)):
             raise AppError(
-                "框架运行必须同时包含 QQQ 和 INTC；3A 另行验证 SMH",
+                "框架运行必须同时包含 QQQ 和 INTC；3A 会按配置采集完整关注列表",
                 code="incomplete_development_allowlist",
                 status_code=422,
             )

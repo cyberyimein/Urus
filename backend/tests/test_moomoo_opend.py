@@ -130,6 +130,14 @@ def test_opend_adapter_collects_intc_smh_and_qqq_relative_strength() -> None:
     assert payload["instruments"][2]["relative_strength"]["benchmark"] == "QQQ"
     assert payload["instruments"][1]["regular_price"] == 101.25
     assert payload["instruments"][1]["afterhours_price"] == 100.75
+    assert payload["provider"] == "moomoo_openapi"
+    assert payload["source_mode"] == "snapshot"
+    assert payload["captured_at"]
+    assert payload["instruments"][1]["provider"] == payload["provider"]
+    assert payload["instruments"][1]["source_mode"] == payload["source_mode"]
+    assert payload["instruments"][1]["captured_at"] == payload["captured_at"]
+    assert payload["instruments"][1]["theme"] == "半导体"
+    assert payload["instruments"][1]["themes"] == ["半导体"]
     assert payload["instruments"][1]["history"]["technical_indicators"]["bollinger_20_2"]["upper"] > 0
     assert payload["quota_audit"]["subscription_unchanged"] is True
     assert quote_context.snapshot_calls[-1] == ["US.QQQ", "US.INTC", "US.SMH"]
@@ -150,6 +158,24 @@ def test_opend_single_instrument_card_does_not_return_qqq_benchmark() -> None:
 
     assert card["symbol"] == "INTC"
     assert card["quote_code"] == "US.INTC"
+
+
+def test_opend_adapter_separates_saas_from_big_tech() -> None:
+    adapter = OpenDMarketAdapter(
+        "test",
+        11111,
+        history_days=20,
+        sdk=FakeSdk(),
+        quote_context=FakeQuoteContext(),
+    )
+
+    payload = adapter.instrument_cards(["NOW", "ORCL", "MSFT"])
+    adapter.close()
+
+    themes = {item["symbol"]: item["themes"] for item in payload["instruments"]}
+    assert themes["NOW"] == ["SaaS"]
+    assert themes["ORCL"] == ["SaaS"]
+    assert themes["MSFT"] == ["大科技"]
 
 
 def test_market_step_preserves_live_marker() -> None:
