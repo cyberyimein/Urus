@@ -8,8 +8,8 @@
 - 当前自动批量集合：`QQQ, SPY, IWM, DIA, RSP, SMH, SOXX, IGV, HYG, LQD, TLT, IEF, UUP, GLD, USO`。
 - VIX 直接指数不通过 Moomoo 请求；每次运行都请求 Yahoo `^VIX`，Yahoo 值优先，FRED VIX 保留作交叉校验。
 - 宏观日频数据优先使用 Yahoo 可用的 `^VIX/^TNX/^TYX`；FRED 提供官方 2Y 常期限收益率，并保留 10Y/30Y/VIX 交叉值，2s10s 使用选定的 10Y 与 FRED 2Y 计算。
-- QQQ 已返回的 OHLC 日线直接计算 20 日年化实现波动率、ATR14、ATR14%、布林带 20/2；不增加 Moomoo 请求。
-- 3A 默认使用 `INSTRUMENT_VALIDATION_SYMBOLS=INTC,SMH`，自动加入 QQQ 作为相对强弱基准。一次 `get_market_snapshot` 批量读取三只标的，再按标的请求复权日线；不建立实时订阅。日线直接计算 1/5/20/60/120/252 日收益、MA10/20/50/100/200、实现波动率、ATR14、布林带和相对 QQQ 收益、Beta、相关性。
+- QQQ 已返回的 OHLCV 日线直接计算 20 日年化实现波动率、ATR14、ATR14%、布林带 20/1、20/2、20/3、带宽、MACD(12,26,9) 和 Effort vs Result；不增加 Moomoo 实时订阅请求。
+- 3A 默认使用 `INSTRUMENT_VALIDATION_SYMBOLS=INTC,SMH`，自动加入 QQQ 作为相对强弱基准。一次 `get_market_snapshot` 批量读取三只标的，再按标的请求复权日线；不建立实时订阅。日线直接计算 1/5/20/60/120/252 日收益、MA10/20/50/100/200、实现波动率、ATR14、多轨布林、MACD、量价信号和相对 QQQ 收益、Beta、相关性。
 - 3A 在采集前后读取 Moomoo 订阅状态和历史 K 线额度，记录 `subscription_unchanged`、`history_used_delta` 和告警；额度检查本身不发起订阅。
 - 快照同时保存正规交易价与 `pre_price`/`after_price`；前端分别展示常规价、盘前价和盘后价。夜间休市时不会把盘后价伪装成正规收盘价。
 - 期货、实时订阅、逐笔、完整盘口不在本轮范围；5 分钟历史和 5 年日线历史不由快照提供，只有策略指标明确需要时再单独接入。
@@ -37,6 +37,8 @@
 - `market.macro_context.cross_checks`：另一来源的交叉值，例如 `vix_fred`、`us_10y_yield_fred`。
 - `market.macro_context.yahoo`：Yahoo 是否实际请求、优先指标是否返回和来源质量。
 - `market.history.technical_indicators`：QQQ 技术指标及各项 `as_of`、`sample_count`、`source`。
+- `market.history.technical_indicators.macd_12_26_9`：收盘日线 MACD 的 DIF、DEA、柱体、交叉和动量状态。
+- `market.history.technical_indicators.volume_effort_result`：成交量相对 20 日均量、真实波幅、收盘位置和放量/缩量信号；缺成交量时为 `unavailable`。
 - `instrument_cards`：3A QQQ 基准、INTC 个股、SMH 行业 ETF 的快照、日线收益、技术指标和相对 QQQ 强弱。
 - `instrument.quota_audit`：3A 采集前后订阅/历史额度快照及变化量。
 - 所有宏观观测保留 `as_of`；Yahoo 数据不会伪装成实时行情。
@@ -46,7 +48,7 @@
 1. Moomoo OpenD 当前不能通过 `get_market_snapshot` 返回直接 VIX 指数；按策略不再请求该指数。Yahoo `^VIX` 已设置为每次运行必取并优先使用，FRED VIX 作为交叉校验，Yahoo 不能替代官方 2Y 数据。
 2. 5 年日线原始归档、5 分钟 OHLCV 和复播仍未实现。
 3. 市场全体涨跌家数、完整市场宽度和成分热力图不是少量 ETF 快照，仍需单独的市场广度来源。
-4. 5 年日线原始归档、分钟级 OHLCV 和更丰富的行业基准仍延期；3A 当前只保存本轮请求返回的日线窗口。
+4. 5 年日线原始归档、分钟级 OHLCV 和更丰富的行业基准仍延期；3A 当前只保存本轮请求返回的日线窗口。MACD、布林和量价信号复用这批已保存日线，不额外占用实时订阅额度。
 5. 交易日历与提前收盘不阻塞本次手动验收，但在启用每天两次自动调度前必须实现。
 6. 期货、订阅、逐笔、盘口和事件/新闻层按当前两次执行策略暂不实现。
 

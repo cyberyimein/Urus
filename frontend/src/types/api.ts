@@ -127,6 +127,48 @@ export interface BollingerMetric {
   standard_deviations: number
 }
 
+export interface MacdIndicator {
+  available: boolean
+  quality_status: string
+  source: string
+  as_of: string | null
+  sample_count: number
+  fast_window: number
+  slow_window: number
+  signal_window: number
+  dif: number | null
+  dea: number | null
+  histogram: number | null
+  previous_dif: number | null
+  previous_dea: number | null
+  previous_histogram: number | null
+  crossover: string
+  zero_axis: string
+  momentum: string
+  warnings: string[]
+}
+
+export interface VolumeEffortResult {
+  available: boolean
+  quality_status: string
+  source: string
+  as_of: string | null
+  sample_count: number
+  latest_volume: number | null
+  volume_sma_20: number | null
+  volume_ratio_20d: number | null
+  return_1d_percent: number | null
+  true_range: number | null
+  range_atr_ratio: number | null
+  close_location_ratio: number | null
+  effort: string
+  result_direction: string
+  signal: string
+  signal_strength: string
+  thresholds: Record<string, number>
+  warnings: string[]
+}
+
 export interface TechnicalIndicators {
   is_mock: boolean
   available: boolean
@@ -138,7 +180,12 @@ export interface TechnicalIndicators {
   realized_volatility_20d?: TechnicalMetric
   atr14?: TechnicalMetric
   atr14_percent?: TechnicalMetric
+  bollinger_20_1?: BollingerMetric
   bollinger_20_2?: BollingerMetric
+  bollinger_20_3?: BollingerMetric
+  bollinger_bandwidth_20?: TechnicalMetric
+  macd_12_26_9?: MacdIndicator
+  volume_effort_result?: VolumeEffortResult
 }
 
 export interface HistorySummary {

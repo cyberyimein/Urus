@@ -10,6 +10,15 @@ ANNUALIZATION_FACTOR = 252
 RETURN_WINDOWS = (1, 5, 20, 60, 120, 252)
 MOVING_AVERAGE_WINDOWS = (10, 20, 50, 100, 200)
 REALIZED_VOLATILITY_WINDOWS = (10, 20, 60)
+BOLLINGER_DEVIATIONS = (1, 2, 3)
+MACD_FAST_WINDOW = 12
+MACD_SLOW_WINDOW = 26
+MACD_SIGNAL_WINDOW = 9
+VOLUME_WINDOW = 20
+VOLUME_SURGE_RATIO = 1.5
+VOLUME_DRY_RATIO = 0.8
+WIDE_RANGE_ATR_RATIO = 1.0
+MOVE_THRESHOLD_PERCENT = 0.5
 
 
 def calculate_technical_indicators(
@@ -23,8 +32,10 @@ def calculate_technical_indicators(
     reused for QQQ in 1A and INTC/other instruments in 3A. Realized volatility
     uses 10/20/60 log-return observations and population standard deviation,
     annualized by ``sqrt(252)``. ATR14 uses the simple average of the last 14
-    true ranges. Bollinger 20/2 uses the population standard deviation of the
-    last 20 closes.
+    true ranges. Bollinger 20/1, 20/2 and 20/3 use the population standard
+    deviation of the last 20 closes. MACD is the conventional 12/26/9 EMA
+    configuration. Volume effort/result compares the latest volume with its
+    20-day average and the price result with the latest true range.
     """
     clean_bars = _clean_bars(bars)
     as_of = str(clean_bars[-1]["date"]) if clean_bars else None
@@ -82,6 +93,7 @@ def calculate_technical_indicators(
         if key not in result:
             warnings.append(f"{window} 日年化实现波动率需要至少 {window + 1} 个有效收盘价。")
 
+    atr14_value: float | None = None
     if len(clean_bars) >= 15:
         true_ranges: list[float] = []
         for index in range(1, len(clean_bars)):
@@ -93,6 +105,7 @@ def calculate_technical_indicators(
         true_ranges = true_ranges[-14:]
         if len(true_ranges) == 14:
             atr14 = fmean(true_ranges)
+            atr14_value = atr14
             latest_close = closes[-1]
             result["atr14"] = _metric(
                 value=atr14,
@@ -114,36 +127,315 @@ def calculate_technical_indicators(
         warnings.append("ATR14 需要至少 15 个 OHLC 日线。")
 
     if len(closes) >= 20:
-        window = closes[-20:]
-        middle = fmean(window)
-        deviation = pstdev(window)
-        upper = middle + 2 * deviation
-        lower = middle - 2 * deviation
-        current = closes[-1]
-        width = upper - lower
-        position_ratio = (current - lower) / width if width else None
-        result["bollinger_20_2"] = {
-            "upper": round(upper, 4),
-            "middle": round(middle, 4),
-            "lower": round(lower, 4),
-            "current_price": round(current, 4),
-            "position_ratio": round(position_ratio, 4) if position_ratio is not None else None,
-            "position_percent": round(position_ratio * 100, 4) if position_ratio is not None else None,
-            "unit": "price",
-            "as_of": as_of,
-            "sample_count": 20,
-            "source": source,
-            "window": 20,
-            "standard_deviations": 2,
-        }
+        for deviations in BOLLINGER_DEVIATIONS:
+            result[f"bollinger_20_{deviations}"] = _bollinger_metric(
+                closes,
+                deviations=deviations,
+                as_of=as_of,
+                source=source,
+            )
+        bollinger = result["bollinger_20_2"]
+        if isinstance(bollinger, dict):
+            width = float(bollinger["upper"]) - float(bollinger["lower"])
+            middle = float(bollinger["middle"])
+            result["bollinger_bandwidth_20"] = _metric(
+                value=(width / middle * 100) if middle else None,
+                unit="percent",
+                as_of=as_of,
+                sample_count=20,
+                source=source,
+                window=20,
+                standard_deviations=2,
+            )
     else:
-        warnings.append("布林带 20/2 需要至少 20 个收盘价。")
+        warnings.append("布林带 20/1、20/2、20/3 需要至少 20 个收盘价。")
 
-    available_keys = {"realized_volatility_20d", "atr14", "atr14_percent", "bollinger_20_2"}
+    macd = _calculate_macd(
+        closes,
+        as_of=as_of,
+        source=source,
+    )
+    result["macd_12_26_9"] = macd
+    warnings.extend(str(item) for item in macd.get("warnings", []))
+    volume_effort_result = _calculate_volume_effort_result(
+        clean_bars,
+        atr14=atr14_value,
+        as_of=as_of,
+        source=source,
+    )
+    result["volume_effort_result"] = volume_effort_result
+    warnings.extend(str(item) for item in volume_effort_result.get("warnings", []))
+
+    available_keys = {
+        "realized_volatility_20d",
+        "atr14",
+        "atr14_percent",
+        "bollinger_20_1",
+        "bollinger_20_2",
+        "bollinger_20_3",
+    }
     result["sample_count"] = len(clean_bars)
     result["available"] = available_keys.issubset(result)
     result["quality_status"] = "ok" if result["available"] else "partial"
     result["warnings"] = warnings
+    return result
+
+
+def _bollinger_metric(
+    closes: list[float],
+    *,
+    deviations: int,
+    as_of: str | None,
+    source: str,
+) -> dict[str, object]:
+    window = closes[-20:]
+    middle = fmean(window)
+    standard_deviation = pstdev(window)
+    upper = middle + deviations * standard_deviation
+    lower = middle - deviations * standard_deviation
+    current = closes[-1]
+    width = upper - lower
+    position_ratio = (current - lower) / width if width else None
+    return {
+        "upper": round(upper, 4),
+        "middle": round(middle, 4),
+        "lower": round(lower, 4),
+        "current_price": round(current, 4),
+        "position_ratio": round(position_ratio, 4) if position_ratio is not None else None,
+        "position_percent": round(position_ratio * 100, 4) if position_ratio is not None else None,
+        "unit": "price",
+        "as_of": as_of,
+        "sample_count": 20,
+        "source": source,
+        "window": 20,
+        "standard_deviations": deviations,
+    }
+
+
+def _ema_series(values: list[float], window: int) -> list[float | None]:
+    """Return an EMA aligned to the input, seeded with the initial SMA."""
+    series: list[float | None] = [None] * len(values)
+    if len(values) < window:
+        return series
+    current = fmean(values[:window])
+    series[window - 1] = current
+    alpha = 2 / (window + 1)
+    for index in range(window, len(values)):
+        current = (values[index] - current) * alpha + current
+        series[index] = current
+    return series
+
+
+def _calculate_macd(
+    closes: list[float],
+    *,
+    as_of: str | None,
+    source: str,
+) -> dict[str, object]:
+    fast = _ema_series(closes, MACD_FAST_WINDOW)
+    slow = _ema_series(closes, MACD_SLOW_WINDOW)
+    dif_series: list[float | None] = [
+        (fast[index] - slow[index])
+        if fast[index] is not None and slow[index] is not None
+        else None
+        for index in range(len(closes))
+    ]
+    dif_start = next((index for index, value in enumerate(dif_series) if value is not None), None)
+    dea_series: list[float | None] = [None] * len(closes)
+    if dif_start is not None:
+        valid_dif = [value for value in dif_series[dif_start:] if value is not None]
+        if len(valid_dif) >= MACD_SIGNAL_WINDOW:
+            alpha = 2 / (MACD_SIGNAL_WINDOW + 1)
+            dea = fmean(valid_dif[:MACD_SIGNAL_WINDOW])
+            dea_index = dif_start + MACD_SIGNAL_WINDOW - 1
+            dea_series[dea_index] = dea
+            for offset, dif in enumerate(valid_dif[MACD_SIGNAL_WINDOW:], start=MACD_SIGNAL_WINDOW):
+                dea = (dif - dea) * alpha + dea
+                dea_series[dif_start + offset] = dea
+
+    histogram_series: list[float | None] = [
+        (dif_series[index] - dea_series[index])
+        if dif_series[index] is not None and dea_series[index] is not None
+        else None
+        for index in range(len(closes))
+    ]
+    current_index = len(closes) - 1
+    previous_index = current_index - 1
+    dif = dif_series[current_index]
+    dea = dea_series[current_index]
+    histogram = histogram_series[current_index]
+    previous_dif = dif_series[previous_index] if previous_index >= 0 else None
+    previous_dea = dea_series[previous_index] if previous_index >= 0 else None
+    previous_histogram = histogram_series[previous_index] if previous_index >= 0 else None
+
+    crossover = "none"
+    if previous_dif is not None and previous_dea is not None and dif is not None and dea is not None:
+        if previous_dif <= previous_dea and dif > dea:
+            crossover = "bullish_cross"
+        elif previous_dif >= previous_dea and dif < dea:
+            crossover = "bearish_cross"
+
+    if dif is None:
+        zero_axis = "unavailable"
+    elif dif > 0:
+        zero_axis = "above_zero"
+    elif dif < 0:
+        zero_axis = "below_zero"
+    else:
+        zero_axis = "on_zero"
+
+    if histogram is None or previous_histogram is None:
+        momentum = "unavailable"
+    elif histogram > 0 and histogram > previous_histogram:
+        momentum = "bullish_accelerating"
+    elif histogram > 0:
+        momentum = "bullish_fading"
+    elif histogram < 0 and histogram < previous_histogram:
+        momentum = "bearish_accelerating"
+    elif histogram < 0:
+        momentum = "bearish_fading"
+    else:
+        momentum = "flat"
+
+    warnings: list[str] = []
+    if len(closes) < MACD_SLOW_WINDOW:
+        warnings.append(f"MACD 需要至少 {MACD_SLOW_WINDOW} 个收盘价。")
+    elif len(closes) < MACD_SLOW_WINDOW + MACD_SIGNAL_WINDOW - 1:
+        warnings.append(
+            f"MACD DEA 需要至少 {MACD_SLOW_WINDOW + MACD_SIGNAL_WINDOW - 1} 个收盘价。"
+        )
+    available = dif is not None and dea is not None and histogram is not None
+    return {
+        "available": available,
+        "quality_status": "ok" if available else "partial" if dif is not None else "unavailable",
+        "source": source,
+        "as_of": as_of,
+        "sample_count": len(closes),
+        "fast_window": MACD_FAST_WINDOW,
+        "slow_window": MACD_SLOW_WINDOW,
+        "signal_window": MACD_SIGNAL_WINDOW,
+        "dif": round(dif, 6) if dif is not None else None,
+        "dea": round(dea, 6) if dea is not None else None,
+        "histogram": round(histogram, 6) if histogram is not None else None,
+        "previous_dif": round(previous_dif, 6) if previous_dif is not None else None,
+        "previous_dea": round(previous_dea, 6) if previous_dea is not None else None,
+        "previous_histogram": round(previous_histogram, 6) if previous_histogram is not None else None,
+        "crossover": crossover,
+        "zero_axis": zero_axis,
+        "momentum": momentum,
+        "warnings": warnings,
+    }
+
+
+def _calculate_volume_effort_result(
+    bars: list[dict[str, object]],
+    *,
+    atr14: float | None,
+    as_of: str | None,
+    source: str,
+) -> dict[str, object]:
+    warnings: list[str] = []
+    result: dict[str, object] = {
+        "available": False,
+        "quality_status": "unavailable",
+        "source": source,
+        "as_of": as_of,
+        "sample_count": 0,
+        "latest_volume": None,
+        "volume_sma_20": None,
+        "volume_ratio_20d": None,
+        "return_1d_percent": None,
+        "true_range": None,
+        "range_atr_ratio": None,
+        "close_location_ratio": None,
+        "effort": "unavailable",
+        "result_direction": "unavailable",
+        "signal": "unavailable",
+        "signal_strength": "unavailable",
+        "thresholds": {
+            "volume_surge_ratio": VOLUME_SURGE_RATIO,
+            "volume_dry_ratio": VOLUME_DRY_RATIO,
+            "wide_range_atr_ratio": WIDE_RANGE_ATR_RATIO,
+            "move_threshold_percent": MOVE_THRESHOLD_PERCENT,
+        },
+        "warnings": warnings,
+    }
+    if len(bars) < VOLUME_WINDOW + 1:
+        warnings.append(f"成交量 Effort vs Result 需要至少 {VOLUME_WINDOW + 1} 根日线。")
+        return result
+
+    volumes = [bar.get("volume") for bar in bars[-VOLUME_WINDOW - 1 :]]
+    if any(not isinstance(value, (int, float)) or float(value) < 0 for value in volumes):
+        warnings.append("历史日线缺少有效成交量，无法计算 Effort vs Result。")
+        return result
+
+    numeric_volumes = [float(value) for value in volumes]
+    baseline = numeric_volumes[:-1]
+    latest_volume = numeric_volumes[-1]
+    volume_sma = fmean(baseline)
+    volume_ratio = latest_volume / volume_sma if volume_sma else None
+    latest = bars[-1]
+    previous = bars[-2]
+    close = float(latest["close"])
+    previous_close = float(previous["close"])
+    high = float(latest["high"])
+    low = float(latest["low"])
+    true_range = max(high - low, abs(high - previous_close), abs(low - previous_close))
+    close_location = (close - low) / (high - low) if high != low else None
+    return_percent = ((close - previous_close) / previous_close * 100) if previous_close else None
+
+    effort = "unavailable"
+    if volume_ratio is not None:
+        if volume_ratio >= VOLUME_SURGE_RATIO:
+            effort = "high"
+        elif volume_ratio <= VOLUME_DRY_RATIO:
+            effort = "low"
+        else:
+            effort = "normal"
+    if return_percent is None:
+        result_direction = "unavailable"
+    elif return_percent <= -MOVE_THRESHOLD_PERCENT:
+        result_direction = "down"
+    elif return_percent >= MOVE_THRESHOLD_PERCENT:
+        result_direction = "up"
+    else:
+        result_direction = "flat"
+    range_atr_ratio = true_range / atr14 if atr14 else None
+    wide_range = range_atr_ratio is not None and range_atr_ratio >= WIDE_RANGE_ATR_RATIO
+    close_low = close_location is not None and close_location <= 0.3
+    close_high = close_location is not None and close_location >= 0.7
+
+    signal = "neutral"
+    signal_strength = "neutral"
+    if effort == "high" and result_direction == "down" and wide_range and close_low:
+        signal, signal_strength = "volume_down_distribution", "strong"
+    elif effort == "high" and result_direction == "down":
+        signal, signal_strength = "volume_down_absorption", "moderate"
+    elif effort == "high" and result_direction == "up" and wide_range and close_high:
+        signal, signal_strength = "volume_up_demand", "strong"
+    elif effort == "high" and result_direction == "up":
+        signal, signal_strength = "volume_up_absorption", "moderate"
+    elif effort == "low" and result_direction in {"up", "down"}:
+        signal, signal_strength = "low_volume_move", "weak"
+
+    result.update(
+        {
+            "available": True,
+            "quality_status": "ok",
+            "sample_count": VOLUME_WINDOW,
+            "latest_volume": round(latest_volume, 4),
+            "volume_sma_20": round(volume_sma, 4),
+            "volume_ratio_20d": round(volume_ratio, 4) if volume_ratio is not None else None,
+            "return_1d_percent": round(return_percent, 4) if return_percent is not None else None,
+            "true_range": round(true_range, 4),
+            "range_atr_ratio": round(range_atr_ratio, 4) if range_atr_ratio is not None else None,
+            "close_location_ratio": round(close_location, 4) if close_location is not None else None,
+            "effort": effort,
+            "result_direction": result_direction,
+            "signal": signal,
+            "signal_strength": signal_strength,
+        }
+    )
     return result
 
 
@@ -295,15 +587,19 @@ def _clean_bars(bars: Sequence[Mapping[str, Any]]) -> list[dict[str, object]]:
     clean: list[dict[str, object]] = []
     for bar in bars:
         try:
-            clean.append(
-                {
-                    "date": str(bar["date"]),
-                    "open": float(bar["open"]),
-                    "high": float(bar["high"]),
-                    "low": float(bar["low"]),
-                    "close": float(bar["close"]),
-                }
-            )
+            cleaned: dict[str, object] = {
+                "date": str(bar["date"]),
+                "open": float(bar["open"]),
+                "high": float(bar["high"]),
+                "low": float(bar["low"]),
+                "close": float(bar["close"]),
+            }
+            raw_volume = bar.get("volume")
+            if raw_volume is not None and str(raw_volume).strip() not in {"", "N/A", "--", "nan"}:
+                cleaned["volume"] = float(raw_volume)
+            else:
+                cleaned["volume"] = None
+            clean.append(cleaned)
         except (KeyError, TypeError, ValueError):
             continue
     return sorted(clean, key=lambda item: str(item["date"]))

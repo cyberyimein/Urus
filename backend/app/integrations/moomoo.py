@@ -828,7 +828,7 @@ def _normalise_bars(rows: list[dict[str, Any]]) -> list[dict[str, object]]:
                 "high": _number(row, ["high"]),
                 "low": _number(row, ["low"]),
                 "close": _number(row, ["close"]),
-                "volume": _integer(row, ["volume"], default=0),
+                "volume": _optional_integer(row, ["volume"]),
                 "turnover": _optional_number(row, ["turnover"]),
                 "turnover_rate": _optional_number(row, ["turnover_rate"]),
             }

@@ -168,6 +168,10 @@ function technicalMetric(key: string): Record<string, unknown> | null {
   return asRecord(technicalIndicators()?.[key])
 }
 
+function technicalObject(key: string): Record<string, unknown> | null {
+  return technicalMetric(key)
+}
+
 function technicalValue(key: string): number | null {
   return toNumber(technicalMetric(key)?.value)
 }
@@ -180,6 +184,53 @@ function technicalMeta(key: string): string {
   const metric = technicalMetric(key) ?? technicalIndicators()
   if (!metric) return '不可用'
   return `${metric.source || '不可用'} · ${metric.as_of || '不可用'} · n=${metric.sample_count ?? 0}`
+}
+
+function technicalSignalValue(section: string, key: string): unknown {
+  return technicalObject(section)?.[key] ?? null
+}
+
+function instrumentSignalValue(card: InstrumentCard, section: string, key: string): unknown {
+  const indicators = card.history?.technical_indicators as Record<string, unknown> | undefined
+  const metric = indicators?.[section]
+  return asRecord(metric)?.[key] ?? null
+}
+
+function signalLabel(value: unknown): string {
+  const labels: Record<string, string> = {
+    bullish_cross: 'MACD 金叉',
+    bearish_cross: 'MACD 死叉',
+    none: '无交叉',
+    above_zero: '零轴上方',
+    below_zero: '零轴下方',
+    on_zero: '零轴附近',
+    bullish_accelerating: '多头动量增强',
+    bullish_fading: '多头动量减弱',
+    bearish_accelerating: '空头动量增强',
+    bearish_fading: '空头动量减弱',
+    flat: '动量平坦',
+    volume_down_distribution: '放量下跌 / 派发',
+    volume_down_absorption: '放量下跌 / 吸收',
+    volume_up_demand: '放量上涨 / 需求',
+    volume_up_absorption: '放量上涨 / 吸收',
+    low_volume_move: '缩量移动',
+    neutral: '中性',
+    high: '放量',
+    low: '缩量',
+    normal: '正常量',
+    up: '上涨',
+    down: '下跌',
+    unavailable: '不可用',
+  }
+  if (typeof value !== 'string' || value.length === 0) return '不可用'
+  return labels[value] ?? value
+}
+
+function signalClass(value: unknown): string {
+  if (typeof value !== 'string') return ''
+  if (value.startsWith('bullish') || value === 'volume_up_demand' || value === 'volume_up_absorption') return 'positive-text'
+  if (value.startsWith('bearish') || value === 'volume_down_distribution' || value === 'volume_down_absorption') return 'negative-text'
+  return ''
 }
 
 function displayPercent(value: unknown, digits = 2): string {
@@ -392,10 +443,17 @@ onMounted(() => {
               <div class="metric-cell"><span>20D 年化实现波动率</span><strong>{{ displayPercent(technicalValue('realized_volatility_20d'), 2) }}</strong><small>{{ technicalMeta('realized_volatility_20d') }}</small></div>
               <div class="metric-cell"><span>ATR14</span><strong>{{ formatNumber(technicalValue('atr14'), 4) }}</strong><small>{{ technicalMeta('atr14') }} · 绝对值</small></div>
               <div class="metric-cell"><span>ATR14%</span><strong>{{ displayPercent(technicalValue('atr14_percent'), 2) }}</strong><small>{{ technicalMeta('atr14_percent') }}</small></div>
+              <div class="metric-cell"><span>布林上 / 下轨 20/1σ</span><strong>{{ formatNumber(toNumber(technicalMetric('bollinger_20_1')?.upper), 4) }} / {{ formatNumber(toNumber(technicalMetric('bollinger_20_1')?.lower), 4) }}</strong><small>{{ technicalMeta('bollinger_20_1') }}</small></div>
               <div class="metric-cell"><span>布林上轨 20/2</span><strong>{{ formatNumber(bollingerValue('upper'), 4) }}</strong><small>{{ technicalMeta('bollinger_20_2') }}</small></div>
               <div class="metric-cell"><span>布林中轨 20/2</span><strong>{{ formatNumber(bollingerValue('middle'), 4) }}</strong><small>{{ technicalMeta('bollinger_20_2') }}</small></div>
               <div class="metric-cell"><span>布林下轨 20/2</span><strong>{{ formatNumber(bollingerValue('lower'), 4) }}</strong><small>{{ technicalMeta('bollinger_20_2') }}</small></div>
+              <div class="metric-cell"><span>布林上 / 下轨 20/3σ</span><strong>{{ formatNumber(toNumber(technicalMetric('bollinger_20_3')?.upper), 4) }} / {{ formatNumber(toNumber(technicalMetric('bollinger_20_3')?.lower), 4) }}</strong><small>{{ technicalMeta('bollinger_20_3') }}</small></div>
+              <div class="metric-cell"><span>布林带宽 20/2σ</span><strong>{{ displayPercent(technicalValue('bollinger_bandwidth_20'), 2) }}</strong><small>{{ technicalMeta('bollinger_bandwidth_20') }}</small></div>
               <div class="metric-cell"><span>布林当前位置</span><strong>{{ displayPercent(bollingerValue('position_percent'), 2) }}</strong><small>当前价 {{ formatNumber(bollingerValue('current_price'), 4) }} · {{ technicalMeta('bollinger_20_2') }}</small></div>
+              <div class="metric-cell"><span>MACD DIF / DEA</span><strong>{{ formatNumber(toNumber(technicalSignalValue('macd_12_26_9', 'dif')), 4) }} / {{ formatNumber(toNumber(technicalSignalValue('macd_12_26_9', 'dea')), 4) }}</strong><small>{{ technicalMeta('macd_12_26_9') }}</small></div>
+              <div class="metric-cell"><span>MACD 柱体</span><strong>{{ formatNumber(toNumber(technicalSignalValue('macd_12_26_9', 'histogram')), 4) }}</strong><small :class="signalClass(technicalSignalValue('macd_12_26_9', 'momentum'))">{{ signalLabel(technicalSignalValue('macd_12_26_9', 'momentum')) }} · {{ signalLabel(technicalSignalValue('macd_12_26_9', 'zero_axis')) }}</small></div>
+              <div class="metric-cell"><span>MACD 交叉</span><strong :class="signalClass(technicalSignalValue('macd_12_26_9', 'crossover'))">{{ signalLabel(technicalSignalValue('macd_12_26_9', 'crossover')) }}</strong><small>参数 12 / 26 / 9 · {{ technicalMeta('macd_12_26_9') }}</small></div>
+              <div class="metric-cell"><span>Effort vs Result</span><strong :class="signalClass(technicalSignalValue('volume_effort_result', 'signal'))">{{ signalLabel(technicalSignalValue('volume_effort_result', 'signal')) }}</strong><small>{{ signalLabel(technicalSignalValue('volume_effort_result', 'effort')) }} · {{ displayPercent(technicalSignalValue('volume_effort_result', 'volume_ratio_20d'), 2) }} 量比</small></div>
             </div>
           </section>
 
@@ -414,7 +472,7 @@ onMounted(() => {
             <div class="section-label-row"><div><span class="section-kicker">CURRENT UNIVERSE</span><h3>QQQ 基准 · INTC 个股 · SMH 行业 ETF</h3></div><span class="source-label">{{ liveInstrumentCount }}/{{ instrumentCards.length }} live</span></div>
             <div class="table-wrap">
               <table class="data-table">
-                <thead><tr><th>标的</th><th>类型</th><th>常规价</th><th>盘前 / 盘后</th><th>日变化</th><th>5D / 20D / 60D</th><th>相对 QQQ</th><th>ATR14%</th><th>布林上 / 下</th><th>布林 %B</th><th>状态</th></tr></thead>
+                <thead><tr><th>标的</th><th>类型</th><th>常规价</th><th>盘前 / 盘后</th><th>日变化</th><th>5D / 20D / 60D</th><th>相对 QQQ</th><th>ATR14%</th><th>布林上 / 下</th><th>布林 %B</th><th>MACD / 量价信号</th><th>状态</th></tr></thead>
                 <tbody>
                   <tr v-for="card in instrumentCards" :key="card.symbol">
                     <td><strong>{{ card.symbol }}</strong><small>{{ card.label }}</small></td>
@@ -427,6 +485,7 @@ onMounted(() => {
                     <td>{{ displayPercent(instrumentTechnicalValue(card, 'atr14_percent'), 2) }}</td>
                     <td>{{ formatNumber(toNumber(instrumentBollingerValue(card, 'upper'))) }} / {{ formatNumber(toNumber(instrumentBollingerValue(card, 'lower'))) }}</td>
                     <td>{{ displayPercent(instrumentBollingerValue(card, 'position_percent'), 2) }}</td>
+                    <td><strong :class="signalClass(instrumentSignalValue(card, 'macd_12_26_9', 'momentum'))">{{ signalLabel(instrumentSignalValue(card, 'macd_12_26_9', 'momentum')) }}</strong><small>{{ signalLabel(instrumentSignalValue(card, 'volume_effort_result', 'signal')) }}</small></td>
                     <td><StatusBadge :status="card.data_state ?? 'unavailable'" /></td>
                   </tr>
                 </tbody>

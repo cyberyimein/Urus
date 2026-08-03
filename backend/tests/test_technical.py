@@ -31,6 +31,31 @@ def test_daily_technical_indicators_include_required_metadata() -> None:
     assert result["bollinger_20_2"]["current_price"] == 129.0
 
 
+def test_daily_technical_indicators_include_multiband_macd_and_effort_result() -> None:
+    bars = [{**bar, "volume": 1000.0} for bar in _bars(60)]
+    previous_close = float(bars[-2]["close"])
+    bars[-1] = {
+        **bars[-1],
+        "high": previous_close * 1.01,
+        "low": previous_close * 0.93,
+        "close": previous_close * 0.94,
+        "volume": 3000.0,
+    }
+
+    result = calculate_technical_indicators(bars, source="test_history")
+
+    assert result["available"] is True
+    assert result["bollinger_20_1"]["standard_deviations"] == 1
+    assert result["bollinger_20_2"]["standard_deviations"] == 2
+    assert result["bollinger_20_3"]["standard_deviations"] == 3
+    assert result["bollinger_bandwidth_20"]["value"] > 0
+    assert result["macd_12_26_9"]["available"] is True
+    assert result["macd_12_26_9"]["histogram"] is not None
+    assert result["volume_effort_result"]["available"] is True
+    assert result["volume_effort_result"]["volume_ratio_20d"] == 3.0
+    assert result["volume_effort_result"]["signal"] == "volume_down_distribution"
+
+
 def test_daily_technical_indicators_report_insufficient_samples() -> None:
     result = calculate_technical_indicators(_bars(10), source="test_history")
 

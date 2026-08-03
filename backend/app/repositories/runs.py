@@ -187,7 +187,7 @@ class RunRepository:
             source_mode=str(instrument_payload.get("source_mode") or "snapshot"),
             captured_at=captured_at,
             persisted_at=persisted_at,
-            feature_version="technical_v1",
+            feature_version="technical_v2",
             requested_symbols=[
                 str(item)
                 for item in instrument_payload.get("requested_symbols", raw_symbols.keys())
