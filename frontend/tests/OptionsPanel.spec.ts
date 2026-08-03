@@ -43,6 +43,24 @@ const options: OptionsData = {
           contract_count: 2,
           max_pain: 680,
           expected_move: { amount: 8, percent: 1.16, atm_strike: 688 },
+          spot_gamma_profile: {
+            available: true,
+            points: [
+              { spot: 650, call_gex: 5, put_gex: -15, net_gex: -10 },
+              { spot: 680, call_gex: 12, put_gex: -12, net_gex: 0 },
+              { spot: 688, call_gex: 20, put_gex: -10, net_gex: 10 },
+              { spot: 720, call_gex: 15, put_gex: -5, net_gex: 10 },
+            ],
+            gamma_flip_levels: [680],
+            primary_gamma_flip: 680,
+            current_spot: 688,
+            current_spot_net_gex: 10,
+            usable_iv_contracts: 2,
+            range_percent: 30,
+            point_count: 121,
+            risk_free_rate_percent: 4,
+            dividend_yield_percent: 0,
+          },
           exposure: {
             totals: {
               call_dex: 100,
@@ -113,6 +131,10 @@ describe('OptionsPanel', () => {
     expect(wrapper.text()).toContain('Call DEX Wall')
     expect(wrapper.text()).toContain('正 Gamma 区间')
     expect(wrapper.find('.strike-column.gamma-positive').exists()).toBe(true)
+    expect(wrapper.text()).toContain('现价 Gamma 曲线与 Flip')
+    expect(wrapper.text()).toContain('主 Gamma Flip')
+    expect(wrapper.find('.spot-gamma-chart').exists()).toBe(true)
+    expect(wrapper.findAll('.spot-gamma-flip')).toHaveLength(1)
   })
 
   it('renders the disabled state without pretending data is live', () => {

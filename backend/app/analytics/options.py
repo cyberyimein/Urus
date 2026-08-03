@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from math import isfinite
+from math import exp, isfinite, log, pi, sqrt
 
 
 @dataclass(frozen=True)
@@ -156,6 +156,114 @@ def trim_exposure_display(
     exposure["gamma_noise_threshold"] = _rounded(noise_threshold, 2)
 
 
+def calculate_spot_gamma_profile(
+    contracts: list[OptionContract],
+    *,
+    days_to_expiry: int,
+    range_percent: float = 30.0,
+    point_count: int = 121,
+    risk_free_rate_percent: float = 4.0,
+    dividend_yield_percent: float = 0.0,
+) -> dict[str, object]:
+    """Reprice contract gamma across hypothetical spots and find zero-GEX crossings."""
+    if not contracts or contracts[0].spot <= 0:
+        return {"available": False, "points": [], "gamma_flip_levels": []}
+    if range_percent <= 0 or point_count < 3:
+        raise ValueError("spot gamma profile requires a positive range and at least 3 points")
+
+    usable: list[tuple[OptionContract, float]] = []
+    for item in contracts:
+        iv = item.implied_volatility
+        if item.open_interest <= 0 or iv is None or not isfinite(iv) or iv <= 0:
+            continue
+        sigma = iv / 100.0
+        if 0 < sigma <= 5:
+            usable.append((item, sigma))
+    if not usable:
+        return {"available": False, "points": [], "gamma_flip_levels": []}
+
+    current_spot = contracts[0].spot
+    point_count = point_count if point_count % 2 == 1 else point_count + 1
+    lower = current_spot * (1 - range_percent / 100)
+    upper = current_spot * (1 + range_percent / 100)
+    step = (upper - lower) / (point_count - 1)
+    time_years = max(days_to_expiry / 365.0, 1.0 / (365.0 * 24.0))
+    risk_free_rate = risk_free_rate_percent / 100.0
+    dividend_yield = dividend_yield_percent / 100.0
+    sqrt_time = sqrt(time_years)
+    normalizer = sqrt(2 * pi)
+
+    points: list[dict[str, float]] = []
+    for index in range(point_count):
+        hypothetical_spot = current_spot if index == point_count // 2 else lower + step * index
+        call_gex = 0.0
+        put_gex = 0.0
+        for item, sigma in usable:
+            d1 = (
+                log(hypothetical_spot / item.strike)
+                + (risk_free_rate - dividend_yield + sigma**2 / 2) * time_years
+            ) / (sigma * sqrt_time)
+            density = exp(-(d1**2) / 2) / normalizer
+            gamma = exp(-dividend_yield * time_years) * density / (
+                hypothetical_spot * sigma * sqrt_time
+            )
+            gex = (
+                gamma
+                * item.open_interest
+                * item.multiplier
+                * hypothetical_spot**2
+                * 0.01
+            )
+            if item.option_type == "CALL":
+                call_gex += gex
+            else:
+                put_gex -= gex
+        points.append(
+            {
+                "spot": float(_rounded(hypothetical_spot, 4) or hypothetical_spot),
+                "call_gex": float(_rounded(call_gex, 2) or 0.0),
+                "put_gex": float(_rounded(put_gex, 2) or 0.0),
+                "net_gex": float(_rounded(call_gex + put_gex, 2) or 0.0),
+            }
+        )
+
+    flip_levels: list[float] = []
+    for left, right in zip(points, points[1:]):
+        left_value = left["net_gex"]
+        right_value = right["net_gex"]
+        if left_value == 0:
+            level = left["spot"]
+        elif left_value * right_value < 0:
+            level = left["spot"] + (right["spot"] - left["spot"]) * (
+                -left_value / (right_value - left_value)
+            )
+        else:
+            continue
+        rounded_level = float(_rounded(level, 4) or level)
+        if not flip_levels or abs(flip_levels[-1] - rounded_level) > 0.0001:
+            flip_levels.append(rounded_level)
+
+    primary_flip = (
+        min(flip_levels, key=lambda level: abs(level - current_spot)) if flip_levels else None
+    )
+    current_point = points[point_count // 2]
+    return {
+        "available": True,
+        "points": points,
+        "gamma_flip_levels": flip_levels,
+        "primary_gamma_flip": primary_flip,
+        "current_spot": current_spot,
+        "current_spot_net_gex": current_point["net_gex"],
+        "usable_iv_contracts": len(usable),
+        "range_percent": range_percent,
+        "point_count": point_count,
+        "time_years": _rounded(time_years, 8),
+        "risk_free_rate_percent": risk_free_rate_percent,
+        "dividend_yield_percent": dividend_yield_percent,
+        "model": "Black-Scholes gamma; calls positive and puts negative by assumption.",
+    }
+
+
 def calculate_exposure(contracts: list[OptionContract]) -> dict[str, object]:
     strike_rows: dict[float, dict[str, float]] = defaultdict(
         lambda: {
@@ -240,7 +348,14 @@ def calculate_exposure(contracts: list[OptionContract]) -> dict[str, object]:
 
 
 def summarize_expiration(
-    contracts: list[OptionContract], *, expiration: str, days_to_expiry: int
+    contracts: list[OptionContract],
+    *,
+    expiration: str,
+    days_to_expiry: int,
+    gamma_profile_range_percent: float = 30.0,
+    gamma_profile_points: int = 121,
+    risk_free_rate_percent: float = 4.0,
+    dividend_yield_percent: float = 0.0,
 ) -> dict[str, object]:
     exposure = calculate_exposure(contracts)
     return {
@@ -250,4 +365,12 @@ def summarize_expiration(
         "max_pain": calculate_max_pain(contracts),
         "expected_move": calculate_expected_move(contracts),
         "exposure": exposure,
+        "spot_gamma_profile": calculate_spot_gamma_profile(
+            contracts,
+            days_to_expiry=days_to_expiry,
+            range_percent=gamma_profile_range_percent,
+            point_count=gamma_profile_points,
+            risk_free_rate_percent=risk_free_rate_percent,
+            dividend_yield_percent=dividend_yield_percent,
+        ),
     }

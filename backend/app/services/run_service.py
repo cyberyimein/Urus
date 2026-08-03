@@ -322,6 +322,10 @@ class RunService:
             batch_size=self.settings.options_snapshot_batch_size,
             snapshot_interval_seconds=self.settings.options_snapshot_interval_seconds,
             option_chain_interval_seconds=self.settings.options_chain_interval_seconds,
+            gamma_profile_range_percent=self.settings.options_gamma_profile_range_percent,
+            gamma_profile_points=self.settings.options_gamma_profile_points,
+            risk_free_rate_percent=self.settings.options_risk_free_rate_percent,
+            dividend_yield_percent=self.settings.options_dividend_yield_percent,
         )
 
     def _validate_symbols(self, requested: list[str] | None) -> list[str]:

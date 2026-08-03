@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     options_snapshot_batch_size: int = 400
     options_snapshot_interval_seconds: float = 0.75
     options_chain_interval_seconds: float = 3.5
+    options_gamma_profile_range_percent: float = 30.0
+    options_gamma_profile_points: int = 121
+    options_risk_free_rate_percent: float = 4.0
+    options_dividend_yield_percent: float = 0.0
     moomoo_history_days: int = 260
     moomoo_sdk_home: str = "data/moomoo_home"
     moomoo_market_symbols: str = (

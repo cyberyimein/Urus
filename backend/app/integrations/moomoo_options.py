@@ -48,6 +48,10 @@ class MoomooOptionsAdapter:
         quote_context_factory: Callable[..., Any] | None = None,
         snapshot_interval_seconds: float = 0.51,
         option_chain_interval_seconds: float = 3.05,
+        gamma_profile_range_percent: float = 30.0,
+        gamma_profile_points: int = 121,
+        risk_free_rate_percent: float = 4.0,
+        dividend_yield_percent: float = 0.0,
         monotonic_clock: Callable[[], float] = monotonic,
         sleeper: Callable[[float], None] = sleep,
     ) -> None:
@@ -64,6 +68,10 @@ class MoomooOptionsAdapter:
         self.batch_size = batch_size
         self.snapshot_interval_seconds = max(0.0, snapshot_interval_seconds)
         self.option_chain_interval_seconds = max(0.0, option_chain_interval_seconds)
+        self.gamma_profile_range_percent = gamma_profile_range_percent
+        self.gamma_profile_points = gamma_profile_points
+        self.risk_free_rate_percent = risk_free_rate_percent
+        self.dividend_yield_percent = dividend_yield_percent
         self._quote_context_factory = quote_context_factory
         self._monotonic_clock = monotonic_clock
         self._sleeper = sleeper
@@ -304,6 +312,10 @@ class MoomooOptionsAdapter:
                         contracts,
                         expiration=expiration,
                         days_to_expiry=days_to_expiry,
+                        gamma_profile_range_percent=self.gamma_profile_range_percent,
+                        gamma_profile_points=self.gamma_profile_points,
+                        risk_free_rate_percent=self.risk_free_rate_percent,
+                        dividend_yield_percent=self.dividend_yield_percent,
                     )
                     trim_exposure_display(
                         analysis["exposure"],
@@ -370,6 +382,7 @@ class MoomooOptionsAdapter:
                 "Modeled net GEX assigns positive sign to calls and negative sign to puts.",
                 "Positive/negative Gamma zones group strikes by modeled net GEX sign; values within 2% of the largest strike exposure are treated as neutral noise.",
                 "Strike GEX sign-change markers interpolate between adjacent modeled strike zones; they are not a spot Gamma Profile or Gamma Flip.",
+                f"Spot Gamma Profile reprices Black-Scholes gamma across ±{self.gamma_profile_range_percent:g}% of spot using {self.risk_free_rate_percent:g}% risk-free rate and {self.dividend_yield_percent:g}% dividend yield.",
                 "Max pain is calculated independently for each expiration.",
             ],
             "warnings": warnings,

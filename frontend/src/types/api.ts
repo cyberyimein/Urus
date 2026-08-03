@@ -309,6 +309,29 @@ export interface GammaFlipLevel {
   between_strikes: [number, number]
 }
 
+export interface SpotGammaPoint {
+  spot: number
+  call_gex: number
+  put_gex: number
+  net_gex: number
+}
+
+export interface SpotGammaProfile {
+  available: boolean
+  points: SpotGammaPoint[]
+  gamma_flip_levels: number[]
+  primary_gamma_flip?: number | null
+  current_spot?: number
+  current_spot_net_gex?: number
+  usable_iv_contracts?: number
+  range_percent?: number
+  point_count?: number
+  time_years?: number
+  risk_free_rate_percent?: number
+  dividend_yield_percent?: number
+  model?: string
+}
+
 export interface OptionExpirationAnalysis {
   expiration: string
   days_to_expiry: number
@@ -319,6 +342,7 @@ export interface OptionExpirationAnalysis {
     percent: number | null
     atm_strike: number | null
   }
+  spot_gamma_profile?: SpotGammaProfile
   exposure: {
     totals: ExposureTotals
     walls: Record<string, ExposureWall | null>

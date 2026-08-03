@@ -10,6 +10,7 @@ from app.analytics.options import (
     calculate_expected_move,
     calculate_exposure,
     calculate_max_pain,
+    calculate_spot_gamma_profile,
     trim_exposure_display,
 )
 from app.core.config import Settings
@@ -119,6 +120,39 @@ def test_display_trim_keeps_full_chain_totals_and_walls() -> None:
     assert exposure["display_strike_count"] == 2
     assert [row["strike"] for row in exposure["by_strike"]] == [100, 110]
     assert "gamma_flip_levels" not in exposure
+
+
+def test_spot_gamma_profile_reprices_contracts_and_finds_nearest_zero_crossing() -> None:
+    contracts = [
+        contract("PUT", 90, open_interest=100, delta=-0.4, gamma=0.02),
+        contract("CALL", 110, open_interest=100, delta=0.4, gamma=0.02),
+    ]
+
+    profile = calculate_spot_gamma_profile(
+        contracts,
+        days_to_expiry=30,
+        range_percent=30,
+        point_count=121,
+        risk_free_rate_percent=4,
+        dividend_yield_percent=0,
+    )
+
+    assert profile["available"] is True
+    assert profile["point_count"] == 121
+    assert profile["usable_iv_contracts"] == 2
+    assert profile["points"][60]["spot"] == 100
+    assert 98 < profile["primary_gamma_flip"] < 100
+    assert profile["points"][0]["net_gex"] < 0
+    assert profile["points"][-1]["net_gex"] > 0
+
+
+def test_spot_gamma_profile_is_unavailable_without_usable_iv() -> None:
+    invalid = contract("CALL", 100, open_interest=10, delta=0.5, gamma=0.02)
+    invalid = OptionContract(**{**invalid.__dict__, "implied_volatility": None})
+
+    profile = calculate_spot_gamma_profile([invalid], days_to_expiry=30)
+
+    assert profile == {"available": False, "points": [], "gamma_flip_levels": []}
 
 
 def test_expected_move_uses_atm_call_and_put_midpoints() -> None:

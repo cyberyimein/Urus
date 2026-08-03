@@ -2,7 +2,7 @@
 
 Urus 是一个股票分析与决策辅助系统的前后端分离框架。当前 `stage2` 已合入阶段 1A：大盘模块通过 Moomoo/OpenD 批量采集 ETF 快照并叠加 FRED/Yahoo 宏观上下文；期权模块通过 Moomoo 美股期权 LV1 快照计算 DEX、GEX、Gamma Wall、Max Pain 和预期波动。未实现模块继续明确标记为 mock、placeholder 或 unavailable。
 
-阶段 1A 可按配置采集大盘和跨资产 ETF。阶段 2 固定覆盖 SPY、QQQ、SMH、IGV，并采集正式关注列表中的 15 个上市个股期权；私募标的 SPCX 保留为明确排除项。行权价结构图展示建模正负 Gamma 区间与符号切换位。
+阶段 1A 可按配置采集大盘和跨资产 ETF。阶段 2 固定覆盖 SPY、QQQ、SMH、IGV，并采集正式关注列表中的 15 个上市个股期权；私募标的 SPCX 保留为明确排除项。行权价结构图展示建模正负 Gamma 区间与符号切换位，并通过 Black–Scholes 现价网格生成 Spot Gamma Profile 与主 Gamma Flip。
 
 ## 目录
 

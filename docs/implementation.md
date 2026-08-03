@@ -8,6 +8,7 @@
 - `1B`、`3B` 的条件分支和 mock 事件开关；未命中条件时正常 `skipped`。
 - 第 2 步可使用 Moomoo LV1 快照采集期权链；不会调用订阅接口，并在采集前后核对订阅额度。
 - 按到期日使用完整期权链聚合 DEX、GEX、Gamma Wall、Max Pain、Expected Move，再将前端逐行权价明细限制在现价附近；保留建模正负 Gamma 行权价区间与符号切换位。
+- Spot Gamma Profile 使用每份合约的 IV、OI、Strike 与剩余时间在假设现价网格上重算 Black–Scholes Gamma，并插值所有零交叉；当前利率、股息率、范围和点数均为显式配置，主 Gamma Flip 取离现价最近的零点。
 - mock Anomalo 与决策 adapter 仍保持隔离。
 - API 错误统一为 `{ error: { code, message, details? } }`，运行、步骤和 snapshot 均可查询。
 - Dashboard、Runs、Run Detail 页面；期权作为 Dashboard 的 `期权 / 2` Tab，直接复用 Stage 1 页面骨架。
@@ -29,7 +30,7 @@
 ## 已知限制
 
 - 目前阶段 1A 的 QQQ/代理 ETF 快照、QQQ 日线指标和 FRED/Yahoo 宏观链路已接入；阶段 2 的期权快照与结构计算在启用 Moomoo 时为 live，未启用时为 placeholder。1B/3B 仍按条件跳过，4 是 placeholder，3A 是 unavailable；没有事件日历、INTC 个股模块真实采集、账户风险、AI prompt 或自动调度。
-- Spot Gamma Profile / Gamma Flip、VEX/Vanna、做市商真实持仓方向、开平仓识别、组合腿识别和逐笔期权历史不属于本阶段。期权范围包含 SPY、QQQ、SMH、IGV 与配置的 15 个上市个股关注标的；SPCX 是私募标的，明确不发起期权链请求。正负 Gamma 行权价区间基于 Call 正、Put 负的净 GEX 模型，不代表已知做市商净仓位，也不冒充基于假设现价重新定价的 Gamma Flip。
+- 动态利率/股息率、VEX/Vanna、做市商真实持仓方向、开平仓识别、组合腿识别和逐笔期权历史不属于本阶段。期权范围包含 SPY、QQQ、SMH、IGV 与配置的 15 个上市个股关注标的；SPCX 是私募标的，明确不发起期权链请求。正负 Gamma 与 Spot Gamma Profile 都基于 Call 正、Put 负的持仓方向假设，不代表已知做市商净仓位。
 - FRED 日频宏观源需要 `FRED_ENABLED=true` 才会请求；Yahoo 每次运行请求需要 `YAHOO_ENABLED=true`。市场广度、5 分钟历史、5 年日线归档、60/120/252 日收益、行业热力图和实时订阅、逐笔、盘口、期货属于延期项；交易日历和提前收盘在启用自动调度前必须补齐。
 - 本地启动时会 `create_all` 以降低首次运行摩擦；部署和版本演进仍应执行 Alembic migration。
 - 没有登录、权限、多租户、Sentry、Prometheus、容器编排或移动端完整适配。

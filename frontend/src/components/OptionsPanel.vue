@@ -9,6 +9,7 @@ import type {
   OptionExpirationAnalysis,
   OptionSymbolAnalysis,
   OptionsData,
+  SpotGammaPoint,
 } from '@/types/api'
 import { formatDate, formatNumber } from '@/utils/format'
 
@@ -57,6 +58,23 @@ const strikeGexSignChanges = computed(
     ?? currentExpiry.value?.exposure.gamma_flip_levels
     ?? [],
 )
+const spotGammaProfile = computed(() => currentExpiry.value?.spot_gamma_profile ?? null)
+const profilePoints = computed<SpotGammaPoint[]>(() => spotGammaProfile.value?.points ?? [])
+const profileMaxAbs = computed(() =>
+  Math.max(1, ...profilePoints.value.map((point) => Math.abs(point.net_gex))),
+)
+const profileCurrentPoint = computed<SpotGammaPoint | null>(() => {
+  const spot = spotGammaProfile.value?.current_spot
+  if (spot === undefined || !profilePoints.value.length) return null
+  return profilePoints.value.reduce((nearest, point) =>
+    Math.abs(point.spot - spot) < Math.abs(nearest.spot - spot) ? point : nearest,
+  profilePoints.value[0])
+})
+const profileSegments = computed(() => profilePoints.value.slice(1).map((point, index) => ({
+  left: profilePoints.value[index],
+  right: point,
+  sign: (profilePoints.value[index].net_gex + point.net_gex) / 2 >= 0 ? 'positive' : 'negative',
+})))
 
 const strikeRows = computed<ExposureStrikeRow[]>(() => currentExpiry.value?.exposure.by_strike ?? [])
 const maxDex = computed(() => Math.max(1, ...strikeRows.value.map((item) => Math.abs(item.net_dex))))
@@ -200,6 +218,17 @@ function gammaZoneSummary(sign: 'positive' | 'negative'): string {
       : `${formatNumber(zone.start_strike)}–${formatNumber(zone.end_strike)}`)
     .join('、')
 }
+
+function profileX(spot: number): number {
+  if (profilePoints.value.length < 2) return 500
+  const lower = profilePoints.value[0].spot
+  const upper = profilePoints.value[profilePoints.value.length - 1].spot
+  return 30 + (spot - lower) / (upper - lower) * 940
+}
+
+function profileY(netGex: number): number {
+  return 110 - netGex / profileMaxAbs.value * 86
+}
 </script>
 
 <template>
@@ -286,6 +315,50 @@ function gammaZoneSummary(sign: 'positive' | 'negative'): string {
         </section>
 
         <section class="data-section">
+          <div class="section-label-row"><div><span class="section-kicker">SPOT GAMMA PROFILE</span><h3>现价 Gamma 曲线与 Flip</h3></div><span class="source-label">Black–Scholes 逐合约重算 · Call + / Put − 模型</span></div>
+          <template v-if="spotGammaProfile?.available && profilePoints.length">
+            <div class="gamma-profile-summary">
+              <div class="metric-cell metric-cell-major"><span>主 Gamma Flip</span><strong>{{ formatNumber(spotGammaProfile.primary_gamma_flip) }}</strong><small>距离当前现价最近的零交叉</small></div>
+              <div class="metric-cell"><span>当前现价</span><strong>{{ formatNumber(spotGammaProfile.current_spot) }}</strong><small>{{ currentSymbol.symbol }}</small></div>
+              <div class="metric-cell"><span>重算 Net GEX</span><strong :class="(spotGammaProfile.current_spot_net_gex ?? 0) >= 0 ? 'positive-text' : 'negative-text'">{{ signedCompact(spotGammaProfile.current_spot_net_gex) }}</strong><small>假设现价处</small></div>
+              <div class="metric-cell"><span>全部零交叉</span><strong>{{ spotGammaProfile.gamma_flip_levels.length ? spotGammaProfile.gamma_flip_levels.map((level) => formatNumber(level)).join('、') : '未出现' }}</strong><small>{{ spotGammaProfile.usable_iv_contracts }} IV 合约</small></div>
+            </div>
+            <div class="spot-gamma-chart-wrap">
+              <svg class="spot-gamma-chart" viewBox="0 0 1000 220" role="img" aria-label="Spot Gamma Profile">
+                <line class="spot-gamma-zero" x1="30" y1="110" x2="970" y2="110" />
+                <line
+                  v-for="level in spotGammaProfile.gamma_flip_levels"
+                  :key="`flip-${level}`"
+                  class="spot-gamma-flip"
+                  :x1="profileX(level)"
+                  y1="18"
+                  :x2="profileX(level)"
+                  y2="196"
+                />
+                <line
+                  v-for="(segment, index) in profileSegments"
+                  :key="index"
+                  class="spot-gamma-segment"
+                  :class="segment.sign"
+                  :x1="profileX(segment.left.spot)"
+                  :y1="profileY(segment.left.net_gex)"
+                  :x2="profileX(segment.right.spot)"
+                  :y2="profileY(segment.right.net_gex)"
+                />
+                <line v-if="spotGammaProfile.current_spot !== undefined" class="spot-gamma-current" :x1="profileX(spotGammaProfile.current_spot)" y1="14" :x2="profileX(spotGammaProfile.current_spot)" y2="196" />
+                <circle v-if="profileCurrentPoint" class="spot-gamma-current-point" :cx="profileX(profileCurrentPoint.spot)" :cy="profileY(profileCurrentPoint.net_gex)" r="4" />
+                <text x="30" y="214">{{ formatNumber(profilePoints[0].spot) }}</text>
+                <text x="500" y="214" text-anchor="middle">现价 {{ formatNumber(spotGammaProfile.current_spot) }}</text>
+                <text x="970" y="214" text-anchor="end">{{ formatNumber(profilePoints[profilePoints.length - 1].spot) }}</text>
+              </svg>
+              <div class="spot-gamma-legend"><span><i class="profile-positive-key"></i>正 Gamma</span><span><i class="profile-negative-key"></i>负 Gamma</span><span><i class="profile-current-key"></i>现价</span><span><i class="profile-flip-key"></i>Gamma Flip</span></div>
+            </div>
+            <p class="model-caption">现价范围 ±{{ formatNumber(spotGammaProfile.range_percent) }}% · {{ spotGammaProfile.point_count }} 点 · 无风险利率 {{ formatNumber(spotGammaProfile.risk_free_rate_percent) }}% · 股息率 {{ formatNumber(spotGammaProfile.dividend_yield_percent) }}%。精度后续可接动态利率、股息率与 0DTE 小时级剩余时间。</p>
+          </template>
+          <div v-else class="notice-box"><strong>需要重新采集</strong><span>当前快照没有 Spot Gamma Profile；新运行会使用完整链生成。</span></div>
+        </section>
+
+        <section class="data-section">
           <div class="section-label-row"><div><span class="section-kicker">EXPOSURE MAP</span><h3>行权价结构图</h3></div><span class="source-label">现价居中 · 左低右高 · 零轴上下表示正负</span></div>
           <div class="gamma-zone-summary">
             <div class="positive-zone"><span>正 Gamma 区间</span><strong>{{ gammaZoneSummary('positive') }}</strong></div>
@@ -335,7 +408,7 @@ function gammaZoneSummary(sign: 'positive' | 'negative'): string {
 
       <section class="data-section unfinished-section">
         <div class="section-label-row"><div><span class="section-kicker">NOT COLLECTED</span><h3>明确不在本模块</h3></div></div>
-        <div class="unfinished-list"><span>Spot Gamma Profile / Gamma Flip</span><span>VEX / Vanna</span><span>做市商真实净仓位</span><span>开仓 / 平仓方向</span><span>多腿成交识别</span><span>逐笔期权历史</span><span>OptionCharts 依赖</span></div>
+        <div class="unfinished-list"><span>动态利率 / 股息率 Gamma Profile</span><span>VEX / Vanna</span><span>做市商真实净仓位</span><span>开仓 / 平仓方向</span><span>多腿成交识别</span><span>逐笔期权历史</span><span>OptionCharts 依赖</span></div>
       </section>
     </template>
 
