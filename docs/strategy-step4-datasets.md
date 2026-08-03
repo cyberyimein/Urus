@@ -46,6 +46,29 @@ cd backend
 该目录属于本机运行数据并被 Git 忽略，SQLite 重置不会删除它；如果需要防止整个工作区或磁盘
 损坏，还应把 JSON 复制到独立磁盘或对象存储。
 
+## 4B 盘前/收盘前配对数据
+
+4B 策略研究另外保留同一交易日的两次行情观察：盘前一小时的 `pre_market` 与收盘前一小时的
+`pre_close`。两次观察放在同一个独立 JSON 中，保留各自的 snapshot、步骤原始 payload、运行元数据，
+并附带捕获时的事件台账。当前 2026-08-03 配对为：
+
+- `pre_market`: `317cc925-90e7-425a-a8ed-69066a646823`（21:30 JST）
+- `pre_close`: `41b17624-df2a-4841-836f-4b0086b95b4c`（收盘前一小时）
+
+生成配对文件：
+
+```bash
+cd backend
+.venv/bin/python scripts/capture_strategy_pair.py \
+  --pre-market-run-id 317cc925-90e7-425a-a8ed-69066a646823 \
+  --pre-close-run-id 41b17624-df2a-4841-836f-4b0086b95b4c \
+  --dataset-key stage4b-premarket-preclose-2026-08-03 \
+  --label 'Stage4B strategy pair · 2026-08-03'
+```
+
+输出文件为 `backend/data/strategy_research/stage4b-premarket-preclose-2026-08-03.json`，
+与单次 Step 4 数据集分开保存。
+
 ## 后续使用约定
 
 - `pending_events`：可以研究市场、技术和期权结构，但策略 Agent 必须知道事件证据尚未完成。
