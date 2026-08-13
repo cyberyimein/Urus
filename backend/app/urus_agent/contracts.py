@@ -763,7 +763,14 @@ def validate_evidence_references(
         observation = str(reference.get("observation") or "").strip()
         if not path or not observation:
             raise BusinessValidationError("evidence reference requires path and observation")
-        if evidence.has_path(path):
+        canonical_path = getattr(evidence, "canonical_path", None)
+        resolved_path = canonical_path(path) if callable(canonical_path) else (
+            path if evidence.has_path(path) else None
+        )
+        if resolved_path:
+            # Persist the canonical packet path so report links, replay and
+            # subsequent validators do not retain the model's metadata alias.
+            reference["path"] = resolved_path
             continue
         if path in observed:
             continue

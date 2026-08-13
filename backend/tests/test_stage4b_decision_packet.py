@@ -228,3 +228,23 @@ def test_evidence_paths_can_select_option_expiration_by_date() -> None:
     assert store.has_path(
         "observations.pre_close.options.symbols[QQQ].expirations[2026-08-07].max_pain"
     )
+
+
+def test_evidence_path_canonicalizes_compact_market_technical_alias() -> None:
+    packet = build_online_decision_packet(
+        dataset_key="current-state-paths",
+        label="current-state paths",
+        captured_at=datetime(2026, 8, 3, 20, tzinfo=UTC),
+        pre_market_observation=_observation("pre_market", 690.0, 685.0),
+        pre_close_observation=_observation("pre_close", 700.0, 690.0),
+        events=[],
+    )
+    packet["observations"]["current_state"] = packet["observations"]["pre_close"]
+    store = EvidenceStore(packet)
+
+    assert store.canonical_path(
+        "observations.current_state.market.primary.technical"
+    ) == "observations.current_state.market.technical"
+    assert store.canonical_path(
+        "observations.current_state.market.primary.not_a_field"
+    ) is None

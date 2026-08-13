@@ -696,6 +696,29 @@ def test_evidence_reference_must_resolve_to_frozen_packet() -> None:
         )
 
 
+def test_evidence_reference_normalizes_current_state_metadata_alias() -> None:
+    packet = _packet()
+    packet["observations"]["current_state"] = json.loads(
+        json.dumps(packet["observations"]["pre_close"])
+    )
+    task = _task().model_copy(update={"decision_phase": "current_state"})
+    output = {
+        "market_regime": {
+            "evidence": [{
+                "path": "observations.current_state.market.primary.technical",
+                "observation": "当前市场技术状态",
+            }]
+        },
+        "rankings": [],
+    }
+
+    validate_evidence_references(task, output, EvidenceStore(packet))
+
+    assert output["market_regime"]["evidence"][0]["path"] == (
+        "observations.current_state.market.technical"
+    )
+
+
 def test_business_validation_gets_one_bounded_correction_turn() -> None:
     invalid = {
         "schema_version": "urus.equity_decision.v1",

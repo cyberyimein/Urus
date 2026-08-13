@@ -38,6 +38,18 @@ def _quote(value: dict[str, Any]) -> dict[str, Any]:
 
 _PATH_TOKEN = re.compile(r"([^\.\[\]]+)|\[([^\]]+)\]")
 
+# Models occasionally copy the compact ``current_state_evidence`` shape from
+# task metadata into an evidence reference.  That shape exposes the market
+# quote as ``primary`` alongside technical/cross-asset fields, while the
+# frozen packet uses the same sibling layout.  These aliases cover a model
+# accidentally nesting a sibling field under ``primary``; each candidate is
+# still checked against the packet before it can be used.
+_PATH_ALIASES = (
+    (".market.primary.technical", ".market.technical"),
+    (".market.primary.cross_asset_quotes", ".market.cross_asset_quotes"),
+    (".market.primary.vix", ".market.vix"),
+)
+
 
 def _path_tokens(path: str) -> list[tuple[str | None, str | None]]:
     return [(match.group(1), match.group(2)) for match in _PATH_TOKEN.finditer(path)]
@@ -75,11 +87,7 @@ class EvidenceStore:
         evaluate expressions or access arbitrary Python objects.
         """
 
-        normalized = str(path or "").strip()
-        if normalized.startswith("packet."):
-            normalized = normalized.removeprefix("packet.")
-        if normalized.startswith("$."):
-            normalized = normalized.removeprefix("$.")
+        normalized = self._normalize_path(path)
         if not normalized:
             return False
         current: Any = self.packet
@@ -119,6 +127,36 @@ class EvidenceStore:
                         return False
                     current = match
         return True
+
+    @staticmethod
+    def _normalize_path(path: str) -> str:
+        normalized = str(path or "").strip()
+        if normalized.startswith("packet."):
+            normalized = normalized.removeprefix("packet.")
+        if normalized.startswith("$."):
+            normalized = normalized.removeprefix("$.")
+        return normalized
+
+    def canonical_path(self, path: str) -> str | None:
+        """Return the packet path for an exact or safe structural alias.
+
+        The returned path is always the path that exists in the frozen packet;
+        aliases are never accepted merely because their text looks plausible.
+        This keeps report links and replay traces navigable when a model uses
+        the compact metadata shape instead of the packet shape.
+        """
+
+        normalized = self._normalize_path(path)
+        if not normalized:
+            return None
+        if self.has_path(normalized):
+            return normalized
+        for source, target in _PATH_ALIASES:
+            if source in normalized:
+                candidate = normalized.replace(source, target, 1)
+                if self.has_path(candidate):
+                    return candidate
+        return None
 
     @classmethod
     def from_workflow_results(
