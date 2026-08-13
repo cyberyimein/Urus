@@ -5,6 +5,7 @@ class RunTypeValue(StrEnum):
     PRE_MARKET = "pre_market"
     PRE_CLOSE = "pre_close"
     POST_CLOSE_REVIEW = "post_close_review"
+    MANUAL_ANALYSIS = "manual_analysis"
 
 
 class RunStatusValue(StrEnum):

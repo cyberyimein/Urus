@@ -29,6 +29,11 @@ const options: OptionsData = {
       spot_time: '2026-07-31 16:00:00',
       overview: {
         iv: 25,
+        hv_30d: 40,
+        iv_hv_spread: -15,
+        iv_hv_ratio: 0.625,
+        iv_hv_regime: 'deep_discount',
+        term_match_method: 'provider_composite_proxy',
         iv_rank: 49,
         iv_percentile: 68,
         call_volume: 100,
@@ -122,6 +127,8 @@ describe('OptionsPanel', () => {
 
     expect(wrapper.text()).toContain('QQQ 期权总览')
     expect(wrapper.text()).toContain('Max Pain')
+    expect(wrapper.text()).toContain('HV30')
+    expect(wrapper.text()).toContain('显著折价')
     expect(wrapper.text()).toContain('DEX 与 Gamma 墙')
     expect(wrapper.text()).toContain('VEX / Vanna')
     expect(wrapper.text()).toContain('订阅占用 0 / 剩余 20')

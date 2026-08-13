@@ -35,12 +35,16 @@ class RunRepository:
         run_id: str,
         run_type: str,
         cutoff_time: datetime,
+        universe_version_id: str | None = None,
+        universe_content_sha256: str | None = None,
     ) -> RunModel:
         run = RunModel(
             id=run_id,
             run_type=run_type,
             status="pending",
             cutoff_time=cutoff_time,
+            universe_version_id=universe_version_id,
+            universe_content_sha256=universe_content_sha256,
         )
         self.session.add(run)
         self.session.commit()
@@ -73,8 +77,62 @@ class RunRepository:
         statement = select(RunModel).order_by(RunModel.cutoff_time.desc()).limit(limit)
         return list(self.session.scalars(statement))
 
+    def recover_interrupted_runs(self, *, completed_at: datetime) -> int:
+        """Close workflow rows left unfinished by a process restart."""
+
+        statement = (
+            select(RunModel)
+            .options(selectinload(RunModel.steps))
+            .where(RunModel.status.in_(("pending", "running")))
+        )
+        runs = list(self.session.scalars(statement))
+        for run in runs:
+            run.status = "failed"
+            run.completed_at = completed_at
+            run.error_message = "服务重启中断了本次工作流；请重新发起采集。"
+            for step in run.steps:
+                if step.status == "running":
+                    step.status = "failed"
+                    step.completed_at = completed_at
+                    step.summary = step.summary or "服务重启时此步骤仍在运行。"
+                    step.error_message = step.error_message or "workflow_interrupted_by_restart"
+                elif step.status == "pending":
+                    step.status = "skipped"
+                    step.completed_at = completed_at
+                    step.summary = step.summary or "前序工作流被服务重启中断，未执行。"
+        if runs:
+            self.session.commit()
+        return len(runs)
+
     def get_snapshot(self, snapshot_id: str) -> SnapshotModel | None:
         return self.session.get(SnapshotModel, snapshot_id)
+
+    def latest_snapshot_run(
+        self,
+        *,
+        run_type: str,
+        cutoff_start: datetime,
+        cutoff_end: datetime,
+        before: datetime,
+    ) -> tuple[RunModel, SnapshotModel] | None:
+        """Return the newest persisted observation in a bounded trading day."""
+
+        statement = (
+            select(RunModel, SnapshotModel)
+            .join(SnapshotModel, SnapshotModel.run_id == RunModel.id)
+            .where(
+                RunModel.run_type == run_type,
+                RunModel.snapshot_id.is_not(None),
+                RunModel.cutoff_time >= cutoff_start,
+                RunModel.cutoff_time < cutoff_end,
+                RunModel.cutoff_time < before,
+                RunModel.status.in_(("succeeded", "mixed", "partial")),
+            )
+            .order_by(RunModel.cutoff_time.desc())
+            .limit(1)
+        )
+        row = self.session.execute(statement).first()
+        return (row[0], row[1]) if row else None
 
     def save_snapshot(
         self,

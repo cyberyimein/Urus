@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.analytics.options_volatility import enrich_option_overview
 from app.models import StepStatus
 from app.workflows.base import StepResult
 from app.workflows.context import RunContext
@@ -20,6 +21,12 @@ class OptionsCollectorStep:
             if context.options_adapter is None:
                 raise RuntimeError("options adapter is not configured")
             payload = context.options_adapter.options_snapshot()
+            for item in payload.get("symbols", []):
+                if not isinstance(item, dict):
+                    continue
+                overview = item.get("overview")
+                if isinstance(overview, dict):
+                    item["overview"] = enrich_option_overview(overview)
             is_mock = bool(payload.get("is_mock", True))
             payload["data_state"] = "placeholder" if is_mock else "live"
             if is_mock:

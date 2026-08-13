@@ -23,7 +23,7 @@ watch(runId, () => void load())
 <template>
   <AppShell />
   <main class="page-shell narrow-page">
-    <RouterLink class="back-link" to="/runs">← 返回运行列表</RouterLink>
+    <RouterLink class="back-link" to="/operations/runs">← 返回运行列表</RouterLink>
     <div v-if="store.error" class="error-banner" role="alert">{{ store.error }}</div>
     <template v-if="store.selectedRun">
       <section class="page-intro detail-intro">
@@ -38,6 +38,14 @@ watch(runId, () => void load())
         <div><span>截止时间（JST）</span><strong>{{ formatDate(store.selectedRun.cutoff_time) }}</strong></div>
         <div><span>完成时间（JST）</span><strong>{{ formatDate(store.selectedRun.completed_at) }}</strong></div>
         <div><span>snapshot</span><strong class="mono">{{ store.selectedRun.snapshot_id || '不可用' }}</strong></div>
+      </section>
+      <section class="report-entry-panel">
+        <div>
+          <p class="eyebrow">STAGE 4B / URUS AGENT</p>
+          <h2>研究决策报告</h2>
+          <p>打开技术整理、AI 决策与逐节点复盘三个视图。原始模型返回默认收起，需要时手动展开。</p>
+        </div>
+        <RouterLink class="primary-button report-entry-link" :to="`/runs/${store.selectedRun.id}/report`">打开研究报告 →</RouterLink>
       </section>
       <section class="section-block detail-section">
         <div class="section-heading compact-heading"><div><p class="eyebrow">WORKFLOW</p><h2>步骤状态</h2></div></div>

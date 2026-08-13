@@ -35,7 +35,7 @@ onMounted(() => {
     <section v-else class="empty-panel">
       <p class="eyebrow">EMPTY</p>
       <h2>还没有运行记录。</h2>
-      <p>回到 Dashboard 启动一次框架 mock 运行。</p>
+          <p>回到开发工具启动一次框架运行。</p>
     </section>
   </main>
 </template>

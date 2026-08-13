@@ -20,6 +20,8 @@ class RunModel(Base):
     cutoff_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     snapshot_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    universe_version_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    universe_content_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     steps: Mapped[list[StepRunModel]] = relationship(
         back_populates="run",
@@ -60,4 +62,3 @@ class SnapshotModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     quality_status: Mapped[str] = mapped_column(String(24), nullable=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
-

@@ -122,7 +122,36 @@ const focusWallLabels: Record<string, string> = {
 }
 
 function overview(key: string): number | null {
-  return currentSymbol.value?.overview[key] ?? null
+  const value = currentSymbol.value?.overview[key]
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  const iv = currentSymbol.value?.overview.iv
+  const hv = currentSymbol.value?.overview.hv_30d
+  if (typeof iv !== 'number' || typeof hv !== 'number') return null
+  if (key === 'iv_hv_spread') return iv - hv
+  if (key === 'iv_hv_ratio' && hv > 0) return iv / hv
+  return null
+}
+
+function overviewText(key: string): string | null {
+  const value = currentSymbol.value?.overview[key]
+  return typeof value === 'string' && value ? value : null
+}
+
+function ivHvRegimeLabel(): string {
+  const ratioValue = overview('iv_hv_ratio')
+  const fallbackRegime = ratioValue === null ? 'unknown'
+    : ratioValue < 0.7 ? 'deep_discount'
+      : ratioValue < 0.9 ? 'moderate_discount'
+        : ratioValue < 1.1 ? 'matched'
+          : ratioValue < 1.4 ? 'moderate_premium' : 'large_premium'
+  return {
+    deep_discount: '显著折价',
+    moderate_discount: '温和折价',
+    matched: '基本匹配',
+    moderate_premium: '温和溢价',
+    large_premium: '显著溢价',
+    unknown: '不可用',
+  }[overviewText('iv_hv_regime') ?? fallbackRegime] ?? '不可用'
 }
 
 function ratio(numerator: string, denominator: string): number | null {
@@ -267,6 +296,9 @@ function profileY(netGex: number): number {
         <div class="metric-grid options-overview-grid">
           <div class="metric-cell metric-cell-major"><span>标的现价</span><strong>{{ formatNumber(currentSymbol.spot) }}</strong><small>{{ currentSymbol.symbol }}</small></div>
           <div class="metric-cell"><span>综合 IV</span><strong>{{ formatNumber(overview('iv')) }}%</strong><small>最新快照</small></div>
+          <div class="metric-cell"><span>HV30</span><strong>{{ formatNumber(overview('hv_30d')) }}%</strong><small>30 日历史波动率</small></div>
+          <div class="metric-cell"><span>IV − HV30</span><strong :class="(overview('iv_hv_spread') ?? 0) < 0 ? 'positive-text' : 'negative-text'">{{ formatNumber(overview('iv_hv_spread')) }}</strong><small>百分点 · {{ ivHvRegimeLabel() }}</small></div>
+          <div class="metric-cell"><span>IV / HV30</span><strong>{{ formatNumber(overview('iv_hv_ratio')) }}</strong><small>{{ !overviewText('term_match_method') || overviewText('term_match_method') === 'provider_composite_proxy' ? '综合 IV 代理口径' : '期限匹配口径' }}</small></div>
           <div class="metric-cell"><span>IV Rank</span><strong>{{ formatNumber(overview('iv_rank')) }}%</strong><small>历史区间位置</small></div>
           <div class="metric-cell"><span>IV Percentile</span><strong>{{ formatNumber(overview('iv_percentile')) }}%</strong><small>历史百分位</small></div>
           <div class="metric-cell"><span>Volume P/C</span><strong>{{ formatNumber(ratio('put_volume', 'call_volume')) }}</strong><small>{{ compactNumber(overview('put_volume')) }} / {{ compactNumber(overview('call_volume')) }}</small></div>

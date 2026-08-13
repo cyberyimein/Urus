@@ -1,0 +1,100 @@
+version: urus.agent_task_prompts.v3
+task_prompts:
+  equity: |
+    Analyze only the symbols listed in task.symbols and return every symbol exactly once. Establish
+    the broad market regime before ranking the universe. Follow the active daily-cycle Agent profile;
+    task.metadata identifies the current observation and the observations that may be compared. Do
+    not treat an earlier observation as current. Use frozen evidence paths for every
+    material claim. Missing fundamentals remain unknown and reduce strict SEPA completeness.
+  market: |
+    This is the Market Agent Invocation. Analyze only the ETF symbols listed in task.symbols and
+    return every listed ETF exactly once. Establish the reusable market regime before assigning ETF
+    scores. Before returning JSON, call get_market_regime for every phase in
+    task.metadata.comparison_observations, call get_systematic_flows for every phase,
+    call get_data_quality, call get_events for macro events, and use each ETF's pre_close
+    get_instrument_snapshot, where pre_close means task.metadata.current_observation for this
+    phase-specific workflow. Never apply QQQ technical indicators to another ETF. Evaluate:
+    SPY/QQQ participation; SMH and IGV leadership or deterioration; paired price
+    changes; trend and moving-average alignment; MACD and Bollinger position; realized volatility,
+    ATR and VIX when available; volume effort/result; deterministic CTA proxy position and marginal
+    pressure; and scheduled macro-event risk. Never describe ETF proxy output as a real CTA holding
+    or real fund flow. Distinguish a
+    broad risk-on regime from narrow or selective leadership. A strong QQQ alone is not sufficient
+    evidence of broad risk-on conditions. Treat rankings as benchmark strength, not option or trade
+    proposals. Material regime claims and each non-insufficient ranking require resolvable frozen
+    evidence paths, preferring selectors such as cross_asset_quotes[QQQ] over numeric indexes. Never
+    cite overview.*; it is only a navigation summary. Preserve stale, missing,
+    mock or conflicting inputs in risks and confidence.
+  theme: |
+    This is a Theme Agent Invocation. The assigned theme, its members, benchmark symbols, and the
+    validated market result are in task.metadata. Return every task.symbol exactly once and do not
+    rank any other symbol. Before returning JSON, use the current-observation
+    get_instrument_snapshot for every task.symbol; call compare_instrument_observations only when
+    task.metadata.comparison_observations contains more than one observation; call get_events for assigned symbols when
+    event records are available. Use benchmark symbols only as context unless explicitly present
+    in task.symbols. For each member evaluate paired price confirmation, trend and moving-average
+    alignment, 20/60/120/252-day returns, relative strength versus QQQ, MACD momentum, Bollinger
+    location and bandwidth, ATR/realized volatility, volume effort/result, and nearby company events.
+    Score setup quality, relative leadership, confirmation and risk; do not equate one indicator with
+    a complete setup. Missing MA150 and fundamentals means strict_sepa_completeness cannot be complete.
+    Theme invocations must keep top-level forecast and review null. During pre_market and pre_close,
+    every ranking must still include its own instrument_forecast, if_cash and if_held decision; during
+    post_close_review and current_state those three fields must be null. Use benchmark symbols as evidence, never as
+    extra ranked members.
+    Preserve disagreement with the market result as a risk instead of silently rewriting either view.
+    Material claims require resolvable frozen evidence paths.
+  synthesis: |
+    This is the Equity Synthesis Agent Invocation. Use only the validated market and theme outputs
+    supplied in task.metadata; no data tools are available. task.metadata.equity_option_context is a
+    deterministic summary of the underlying symbols' DEX/GEX, Gamma Flip, walls, max pain and expected
+    move plus IV/HV relative-volatility pricing. Use it only as an equity entry-timing,
+    destination-zone and volatility-risk filter. It is not a standalone directional forecast:
+    IV/HV does not predict equity direction, max pain is descriptive, and missing option data must not by
+    itself penalize an equity. Do not propose option trades, spreads, butterflies, legs or premiums.
+    Return every task.symbol exactly once in
+    one continuous cross-theme ranking. Deduplicate symbols and keep original resolvable evidence
+    paths. task.metadata.systematic_flow_context is deterministic CTA proxy context. Preserve its
+    exact numbers, distinguish model position from marginal pressure, and use it as regime/risk
+    context rather than a replacement stock selector. Reconcile scores using market compatibility, theme leadership, setup quality, confirmation,
+    event risk and data quality. Explain disagreements in risks; never manufacture consensus, new facts
+    or replacement evidence. Add portfolio warnings for correlated semiconductor/optical exposure,
+    conflicting market and theme regimes, nearby binary events, weak breadth, or incomplete evidence.
+    setup_ready requires multiple aligned evidence dimensions; otherwise use watch, observe, avoid or
+    insufficient_data. During pre_market and pre_close, make every symbol falsifiable: provide an
+    expected direction, probability, return range and relative direction, plus one action under an
+    all-cash assumption and one action under an already-held technical-only assumption. A cash buy
+    requires an up forecast. Let fragile/negative-gamma structure tighten entry conditions or support
+    wait/avoid when the equity evidence is otherwise marginal; let stable positive-gamma structure
+    confirm timing only when the directional equity thesis is already supported. Express defensible
+    destination zones through the return range and entry/take-profit conditions. Select only genuine
+    buy candidates; wait, avoid or stay cash when there
+    is no edge. During post_close_review and current_state, leave those same-day decision fields null.
+    current_state is descriptive manual analysis: forecast and review must both be null. The synthesis is
+    research prioritization, not position sizing or execution.
+    When task.metadata.scope_kind=manual_current_state, this is the only model invocation in the
+    manual workflow. Use task.metadata.current_state_evidence as the complete frozen evidence bundle.
+    Describe current conditions and change thresholds, not a session forecast. Rankings are an
+    attention list in this mode: include only symbols with a material current signal and never fail
+    merely because quiet symbols are omitted; return at most 8 rankings. Be concise and follow the supplied compact response schema; it
+    intentionally omits forecast, review, instrument_forecast, if_cash and if_held. Never add those
+    fields and never infer that this report updates the official daily cycle.
+  options: |
+    This is a single-symbol Options Agent Invocation. Analyze only task.target_symbol. Market and
+    equity outputs in task.metadata are validated context. Before returning JSON, call option overview
+    for every phase in task.metadata.comparison_observations. For a decision with a selected
+    expiration, call its current-observation expiration structure and, when more than one observation
+    is present, the paired option comparison. Compare observations for the same
+    expiration; do not mix DEX, GEX, walls or gamma flips across expirations. Classify positive gamma,
+    negative gamma, near flip, mixed or unknown using current-spot net GEX, spot Gamma Flip distance,
+    gamma zones, call/put walls, expected move and max pain. Treat max pain as descriptive, never as a
+    forecast. Prefer no_trade when direction, volatility structure and event risk conflict. Structures
+    must be bounded risk: directional verticals, butterflies near a defensible destination, condors for
+    supported ranges, or calendars only when calendar inputs are complete. If bid/ask or premiums are
+    missing, set execution_ready=false, leave exact economics and breakevens empty, and describe the
+    result as a template. If at least one expiration has usable exposure rows, do not return an empty
+    insufficient_data response merely because premiums are absent; choose the supplied research
+    expiration, provide a non-empty thesis and uncertainties, and explain the missing execution fields.
+    When task.metadata.required_expiration is present, it is controller-selected and mandatory; do
+    not choose or request another expiration.
+    Material claims require resolvable frozen
+    evidence paths.

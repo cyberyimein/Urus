@@ -270,7 +270,8 @@ class OpenDMarketAdapter:
             afterhours_price=afterhours_price,
         )
 
-        history = self._history_summary(quote_code, previous_close)
+        history = self._history_summary(quote_code, previous_close, include_bars=True)
+        cta_bars = history.pop("bars", [])
         warnings = list(history.get("warnings", []))
         warnings.extend(str(item) for item in market_snapshot["quality_warnings"])
         quality_status = (
@@ -329,6 +330,16 @@ class OpenDMarketAdapter:
             "trend": "not_calculated",
             "session_note": f"{session_label}；报价来源为 OpenD，不调用旧 Anomalo 服务。",
             "history": history,
+            "_cta_input": {
+                "provider": "moomoo_openapi",
+                "source_mode": "daily_history",
+                "symbols": [
+                    {
+                        "symbol": display_symbol,
+                        "history": {"bars": cta_bars},
+                    }
+                ],
+            },
             "market_snapshot": market_snapshot_payload,
             "quality_status": quality_status,
             "quality_warnings": warnings,

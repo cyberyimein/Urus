@@ -14,6 +14,7 @@ BOLLINGER_DEVIATIONS = (1, 2, 3)
 MACD_FAST_WINDOW = 12
 MACD_SLOW_WINDOW = 26
 MACD_SIGNAL_WINDOW = 9
+RSI_WINDOW = 14
 VOLUME_WINDOW = 20
 VOLUME_SURGE_RATIO = 1.5
 VOLUME_DRY_RATIO = 0.8
@@ -34,8 +35,9 @@ def calculate_technical_indicators(
     annualized by ``sqrt(252)``. ATR14 uses the simple average of the last 14
     true ranges. Bollinger 20/1, 20/2 and 20/3 use the population standard
     deviation of the last 20 closes. MACD is the conventional 12/26/9 EMA
-    configuration. Volume effort/result compares the latest volume with its
-    20-day average and the price result with the latest true range.
+    configuration. RSI14 uses Wilder smoothing after the initial 14-period
+    average gain/loss. Volume effort/result compares the latest volume with
+    its 20-day average and the price result with the latest true range.
     """
     clean_bars = _clean_bars(bars)
     as_of = str(clean_bars[-1]["date"]) if clean_bars else None
@@ -157,6 +159,14 @@ def calculate_technical_indicators(
     )
     result["macd_12_26_9"] = macd
     warnings.extend(str(item) for item in macd.get("warnings", []))
+    rsi14 = _calculate_rsi(
+        closes,
+        window=RSI_WINDOW,
+        as_of=as_of,
+        source=source,
+    )
+    result["rsi14"] = rsi14
+    warnings.extend(str(item) for item in rsi14.get("warnings", []))
     volume_effort_result = _calculate_volume_effort_result(
         clean_bars,
         atr14=atr14_value,
@@ -173,12 +183,89 @@ def calculate_technical_indicators(
         "bollinger_20_1",
         "bollinger_20_2",
         "bollinger_20_3",
+        "rsi14",
     }
     result["sample_count"] = len(clean_bars)
     result["available"] = available_keys.issubset(result)
     result["quality_status"] = "ok" if result["available"] else "partial"
     result["warnings"] = warnings
     return result
+
+
+def _calculate_rsi(
+    closes: list[float],
+    *,
+    window: int,
+    as_of: str | None,
+    source: str,
+) -> dict[str, object]:
+    """Return Wilder RSI with the previous value and an interpretable state."""
+    warnings: list[str] = []
+    if len(closes) < window + 1:
+        warnings.append(f"RSI{window} 需要至少 {window + 1} 个收盘价。")
+        return {
+            "available": False,
+            "quality_status": "unavailable",
+            "value": None,
+            "previous_value": None,
+            "change": None,
+            "state": "unavailable",
+            "unit": "index",
+            "as_of": as_of,
+            "sample_count": len(closes),
+            "source": source,
+            "window": window,
+            "method": "wilder",
+            "thresholds": {"oversold": 30, "overbought": 70},
+            "warnings": warnings,
+        }
+
+    changes = [closes[index] - closes[index - 1] for index in range(1, len(closes))]
+    gains = [max(change, 0.0) for change in changes]
+    losses = [max(-change, 0.0) for change in changes]
+    average_gain = fmean(gains[:window])
+    average_loss = fmean(losses[:window])
+
+    def rsi(gain: float, loss: float) -> float:
+        if loss == 0:
+            return 100.0 if gain > 0 else 50.0
+        if gain == 0:
+            return 0.0
+        relative_strength = gain / loss
+        return 100 - (100 / (1 + relative_strength))
+
+    values = [rsi(average_gain, average_loss)]
+    for index in range(window, len(changes)):
+        average_gain = ((average_gain * (window - 1)) + gains[index]) / window
+        average_loss = ((average_loss * (window - 1)) + losses[index]) / window
+        values.append(rsi(average_gain, average_loss))
+
+    value = values[-1]
+    previous = values[-2] if len(values) > 1 else None
+    if value >= 70:
+        state = "overbought"
+    elif value <= 30:
+        state = "oversold"
+    elif value >= 50:
+        state = "positive"
+    else:
+        state = "negative"
+    return {
+        "available": True,
+        "quality_status": "ok",
+        "value": round(value, 6),
+        "previous_value": round(previous, 6) if previous is not None else None,
+        "change": round(value - previous, 6) if previous is not None else None,
+        "state": state,
+        "unit": "index",
+        "as_of": as_of,
+        "sample_count": len(closes),
+        "source": source,
+        "window": window,
+        "method": "wilder",
+        "thresholds": {"oversold": 30, "overbought": 70},
+        "warnings": warnings,
+    }
 
 
 def _bollinger_metric(

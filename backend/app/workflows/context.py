@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from app.integrations.anomalo import AnomaloAdapter
 from app.integrations.decision import DecisionAdapter
@@ -32,14 +32,37 @@ class RunContext:
     options_adapter: OptionsCollectorAdapter | None = None
     anomalo_adapter: AnomaloAdapter | None = None
     decision_adapter: DecisionAdapter | None = None
+    decision_enabled: bool = False
     event_repository: "EventRepository | None" = None
     expected_events_enabled: bool = False
     breaking_events_enabled: bool = False
     scheduled_event_agent: str = "scheduled-event-investigator"
     breaking_event_agent: str = "breaking-event-investigator"
     event_horizon_days: int = 120
+    workflow_research_variant: str = "events"
+    cta_proxy_symbols: list[str] = field(default_factory=list)
+    cta_market_input: dict[str, Any] = field(default_factory=dict)
+    instrument_persistence_input: dict[str, Any] = field(default_factory=dict)
     results: dict[str, StepResult] = field(default_factory=dict)
     snapshot_id: str | None = None
+    decision_packet: dict[str, Any] | None = None
+    decision_dataset_key: str | None = None
+    decision_source_run_ids: list[str] = field(default_factory=list)
+    decision_source_snapshot_ids: list[str] = field(default_factory=list)
+    decision_pair_status: str = "not_prepared"
+    decision_pair_reason: str | None = None
+    decision_phase: str = "pre_close"
+    decision_trading_date: str = ""
+    decision_parent_session_id: str | None = None
+    trigger_type: str = "scheduled"
+    analysis_mode: str = "official_cycle"
+    session_context: str = "unknown"
+    official_cycle: bool = True
+    eligible_for_scoring: bool = True
+    updates_official_cta_state: bool = True
+    universe_version_id: str | None = None
+    universe_content_sha256: str | None = None
+    universe_items_by_symbol: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def should_fail(self, code: str) -> bool:
         return self.fail_step == code

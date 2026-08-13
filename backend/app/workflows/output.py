@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from app.core.time import utc_now
 from app.models import StepStatus
+from app.urus_agent.evidence import EvidenceStore
+from app.urus_agent.reports import build_technical_report
 from app.workflows.base import StepResult, data_state_for
 from app.workflows.context import RunContext
+from app.workflows.cta import build_systematic_flows
 
 
 STEP_LABELS = {
@@ -12,7 +15,7 @@ STEP_LABELS = {
     "2": "2 · 期权结构",
     "3a": "3A · 个股采集",
     "3b": "3B · 个股事件摘要",
-    "4": "4 · 决策占位",
+    "4": "4 · Urus Agent 决策",
     "5": "5 · 输出 read model",
 }
 
@@ -44,6 +47,27 @@ def _data_payload(result: StepResult | None) -> dict[str, object] | None:
     return payload
 
 
+def _decision_payload(result: StepResult | None) -> dict[str, object] | None:
+    """Keep explicit waiting/blocked states even when Step 4 did not run a model."""
+
+    if result is None or not result.payload:
+        return None
+    payload = dict(result.payload)
+    payload.setdefault("is_mock", False)
+    payload.setdefault("data_state", data_state_for(result))
+    # A failed Step 4 can carry only an error code/message.  Keep that
+    # diagnostic state readable by the discriminated read-model schema rather
+    # than letting it fail a second time because DecisionAnalysis requires the
+    # provider and note fields.
+    if payload.get("is_mock") is False:
+        payload.setdefault("provider", "not_called")
+        payload.setdefault(
+            "note",
+            result.error_message or result.summary or "决策步骤未生成模型结果。",
+        )
+    return payload
+
+
 class OutputStep:
     code = "5"
     label = "5 · 输出 read model"
@@ -66,10 +90,19 @@ class OutputStep:
         errors: list[str] = []
         warnings: list[str] = []
         for code, result in context.results.items():
+            label = STEP_LABELS.get(code, code)
+            if result.payload.get("variant") == "cta":
+                label = (
+                    "1B · CTA 市场压力"
+                    if code == "1b"
+                    else "3B · 系统化资金压力"
+                    if code == "3b"
+                    else label
+                )
             result_steps.append(
                 {
                     "code": code,
-                    "label": STEP_LABELS.get(code, code),
+                    "label": label,
                     "status": result.status.value,
                     "data_state": data_state_for(result),
                     "summary": result.summary,
@@ -92,6 +125,11 @@ class OutputStep:
             for item in (instrument or {}).get("instruments", [])
             if isinstance(item, dict)
         ]
+        systematic_flows = build_systematic_flows(
+            context.results.get("1b").payload if context.results.get("1b") else {},
+            context.results.get("3b").payload if context.results.get("3b") else {},
+            run_type=context.run_type,
+        )
         options = _data_payload(context.results.get("2")) or {
             "is_mock": True,
             "status": "unavailable",
@@ -99,7 +137,7 @@ class OutputStep:
             "data_state": "unavailable",
             "note": "期权结构结果不可用。",
         }
-        decision = _data_payload(context.results.get("4")) or {
+        decision = _decision_payload(context.results.get("4")) or {
             "is_mock": True,
             "status": "unavailable",
             "stance": None,
@@ -107,6 +145,20 @@ class OutputStep:
             "summary": "决策占位结果不可用。",
             "note": "框架阶段不执行真实决策 AI。",
         }
+        technical_report = decision.get("technical_report") if isinstance(decision, dict) else None
+        if not isinstance(technical_report, dict) or not technical_report:
+            try:
+                if context.decision_packet is None:
+                    raise ValueError(context.decision_pair_reason or "Decision Dataset is not ready.")
+                technical_report = build_technical_report(EvidenceStore(context.decision_packet))
+            except Exception as exc:  # preserve an otherwise readable read model
+                technical_report = {
+                    "schema_version": "urus.technical_report.v1",
+                    "status": "waiting_for_pair"
+                    if context.decision_pair_status.startswith("waiting")
+                    else "unavailable",
+                    "error": str(exc),
+                }
         if market:
             market_warnings = market.get("quality_warnings", [])
             if isinstance(market_warnings, list):
@@ -211,6 +263,18 @@ class OutputStep:
             "run_id": context.run_id,
             "snapshot_id": context.snapshot_id,
             "run_type": context.run_type,
+            "trigger_type": context.trigger_type,
+            "analysis_mode": context.analysis_mode,
+            "session_context": context.session_context,
+            "official_cycle": context.official_cycle,
+            "eligible_for_scoring": context.eligible_for_scoring,
+            "updates_official_cta_state": context.updates_official_cta_state,
+            "universe": {
+                "version_id": context.universe_version_id,
+                "content_sha256": context.universe_content_sha256,
+                "requested_symbols": context.symbols,
+                "items": list(context.universe_items_by_symbol.values()),
+            },
             "run_status": data_state if data_state == "mixed" else "succeeded",
             "cutoff_time": context.cutoff_time.isoformat(),
             "generated_at": utc_now().isoformat(),
@@ -222,7 +286,9 @@ class OutputStep:
             "macro_event": _event_payload(context.results.get("1b"), "macro"),
             "options": options,
             "instrument_event": _event_payload(context.results.get("3b"), "instrument"),
+            "systematic_flows": systematic_flows,
             "decision": decision,
+            "technical_report": technical_report,
             "steps": result_steps + [
                 {
                     "code": "5",

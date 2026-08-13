@@ -24,6 +24,14 @@ def app(tmp_path: Path):
         fred_enabled=False,
         anomalo_enabled=False,
         expected_events_enabled=False,
+        # Legacy event-workflow API assertions remain isolated from the CTA
+        # branch default; CTA behavior has dedicated workflow/API coverage.
+        workflow_research_variant="events",
+        # Make the fixture independent of a developer's local .env.  A
+        # paired pre_close run now reaches Step 4, so an inherited
+        # URUS_AGENT_ENABLED=true would invoke the real preflight instead of
+        # the mock adapter this API suite is designed to exercise.
+        urus_agent_enabled=False,
     )
     return create_app(settings)
 

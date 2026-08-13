@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { dataStateLabel, formatDate, formatNumber, nullable } from '@/utils/format'
+import { dataStateLabel, formatDate, formatNumber, nullable, runTypeLabel } from '@/utils/format'
 
 describe('display formatting', () => {
   it('renders missing fields as unavailable rather than zero', () => {
@@ -15,5 +15,6 @@ describe('display formatting', () => {
     expect(formatDate('2026-08-02T17:27:00')).toContain('08/03 02:27 JST')
     expect(dataStateLabel('live')).toBe('真实数据')
     expect(dataStateLabel('placeholder')).toBe('占位数据')
+    expect(runTypeLabel('manual_analysis')).toBe('手动即时分析')
   })
 })

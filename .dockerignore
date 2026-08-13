@@ -1,0 +1,14 @@
+.git
+.codex
+.playwright-cli
+.env
+artifacts
+backend/.venv
+backend/__pycache__
+backend/.pytest_cache
+backend/urus.db
+backend/data
+frontend/node_modules
+frontend/dist
+**/__pycache__
+**/*.pyc

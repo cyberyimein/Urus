@@ -93,9 +93,12 @@ class InstrumentCard(MockBase):
 
 
 class EventSummary(MockBase):
+    schema_version: str | None = None
     category: str
     status: StepStatusValue
     mode: str = "scheduled"
+    variant: str = "events"
+    scope: str | None = None
     agent: str | None = None
     schedule_step: dict[str, Any] = Field(default_factory=dict)
     result_step: dict[str, Any] = Field(default_factory=dict)
@@ -110,6 +113,11 @@ class EventSummary(MockBase):
     counts: dict[str, int] = Field(default_factory=dict)
     next_check_at: str | None = None
     warnings: list[str] = Field(default_factory=list)
+    signals: list[dict[str, Any]] = Field(default_factory=list)
+    aggregate: dict[str, Any] = Field(default_factory=dict)
+    expected_symbols: list[str] = Field(default_factory=list)
+    missing_symbols: list[str] = Field(default_factory=list)
+    quality_status: str | None = None
     market_reaction_count: int = 0
     data_state: str = "skipped"
 
@@ -126,7 +134,7 @@ class OptionsSnapshotSymbol(BaseModel):
     symbol: str
     spot: float
     spot_time: str | None = None
-    overview: dict[str, float | None]
+    overview: dict[str, Any]
     expirations: list[dict[str, Any]]
 
 
@@ -148,11 +156,38 @@ class OptionsAnalysis(BaseModel):
 
 
 class DecisionPlaceholder(MockBase):
+    is_mock: Literal[True] = True
     status: str
     stance: str | None = None
     confidence: float | None = None
     summary: str
     data_state: str = "placeholder"
+    availability_status: str | None = None
+    dataset_key: str | None = None
+    source_run_ids: list[str] = Field(default_factory=list)
+    source_snapshot_ids: list[str] = Field(default_factory=list)
+    note: str
+
+
+class DecisionAnalysis(BaseModel):
+    is_mock: Literal[False]
+    status: str
+    data_state: str = "derived"
+    provider: str
+    model: str | None = None
+    skill_name: str | None = None
+    skill_hash: str | None = None
+    tool_call_count: int = 0
+    decision_session_id: str | None = None
+    availability_status: str | None = None
+    dataset_key: str | None = None
+    source_run_ids: list[str] = Field(default_factory=list)
+    source_snapshot_ids: list[str] = Field(default_factory=list)
+    pair_status: str | None = None
+    reason: str | None = None
+    technical_report: dict[str, Any] = Field(default_factory=dict)
+    decision_report: dict[str, Any] = Field(default_factory=dict)
+    decision: dict[str, Any] = Field(default_factory=dict)
     note: str
 
 
@@ -181,6 +216,13 @@ class FrontendReadModel(BaseModel):
     run_id: str
     snapshot_id: str
     run_type: RunTypeValue
+    trigger_type: str = "scheduled"
+    analysis_mode: str = "official_cycle"
+    session_context: str = "unknown"
+    official_cycle: bool = True
+    eligible_for_scoring: bool = True
+    updates_official_cta_state: bool = True
+    universe: dict[str, Any] = Field(default_factory=dict)
     run_status: RunStatusValue
     cutoff_time: datetime
     generated_at: datetime
@@ -192,7 +234,9 @@ class FrontendReadModel(BaseModel):
     macro_event: EventSummary
     options: Annotated[OptionsPlaceholder | OptionsAnalysis, Field(discriminator="is_mock")]
     instrument_event: EventSummary
-    decision: DecisionPlaceholder
+    systematic_flows: dict[str, Any] = Field(default_factory=dict)
+    decision: Annotated[DecisionPlaceholder | DecisionAnalysis, Field(discriminator="is_mock")]
+    technical_report: dict[str, Any] = Field(default_factory=dict)
     steps: list[ReadModelStep]
     data_quality: DataQuality
 
@@ -211,7 +255,25 @@ class RunCreateRequest(BaseModel):
     symbols: list[str] | None = None
     simulate_macro_event: bool = False
     simulate_instrument_event: bool = False
+    # Per-run kill switch for scheduled/raw-data collection.  This takes
+    # precedence over URUS_AGENT_ENABLED and can never enable the agent.
+    skip_ai_decision: bool = False
     fail_step: StepCodeValue | None = None
+
+
+class ManualAnalysisCreateRequest(BaseModel):
+    symbols: list[str] | None = None
+
+
+class ManualAnalysisCreateResponse(BaseModel):
+    run_id: str
+    status: RunStatusValue
+    session_context: str
+    trigger_type: Literal["manual"] = "manual"
+    analysis_mode: Literal["current_state"] = "current_state"
+    official_cycle: Literal[False] = False
+    eligible_for_scoring: Literal[False] = False
+    updates_official_cta_state: Literal[False] = False
 
 
 class StepRunResponse(BaseModel):
@@ -248,6 +310,8 @@ class RunListItem(BaseModel):
     cutoff_time: datetime
     snapshot_id: str | None = None
     error_message: str | None = None
+    universe_version_id: str | None = None
+    universe_content_sha256: str | None = None
 
     @field_validator("started_at", "completed_at", "cutoff_time", mode="before")
     @classmethod

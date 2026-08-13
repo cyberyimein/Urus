@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { RouterLink, useRoute } from 'vue-router'
 
 import AppShell from '@/components/AppShell.vue'
 import MockBadge from '@/components/MockBadge.vue'
@@ -36,10 +36,44 @@ const simulateMacroEvent = ref(false)
 const simulateInstrumentEvent = ref(false)
 const runSteps = computed(() => store.latestRun?.steps ?? [])
 const readModel = computed(() => store.latestReadModel)
+const decisionData = computed(() => readModel.value?.decision ?? null)
 const market = computed<MarketCard | null>(() => readModel.value?.market ?? null)
 const instrumentCards = computed<InstrumentCard[]>(() => readModel.value?.instrument_cards ?? [])
 const liveInstrumentCount = computed(() => instrumentCards.value.filter((card) => card.is_mock === false).length)
 const activeInstrumentTheme = ref('')
+
+function decisionField(key: string): unknown {
+  const decision = decisionData.value
+  if (!decision || decision.is_mock) return null
+  const report = decision.decision_report
+  return report && typeof report === 'object' ? (report as Record<string, unknown>)[key] : null
+}
+
+function decisionDisplayStance(): string {
+  if (!decisionData.value) return '不可用'
+  if (decisionData.value.is_mock) return decisionData.value.stance || '不可用'
+  const regime = decisionField('market_regime')
+  if (regime && typeof regime === 'object') return String((regime as Record<string, unknown>).classification ?? '已生成')
+  return decisionData.value.status
+}
+
+function decisionDisplayConfidence(): string {
+  const decision = decisionData.value
+  if (!decision) return '不可用'
+  if (decision.is_mock) return decision.confidence === null ? '不可用' : `${(decision.confidence * 100).toFixed(1)}%`
+  const regime = decisionField('market_regime')
+  if (regime && typeof regime === 'object' && typeof (regime as Record<string, unknown>).confidence === 'number') {
+    return `${(Number((regime as Record<string, unknown>).confidence) * 100).toFixed(1)}%`
+  }
+  return '不可用'
+}
+
+function decisionDisplaySummary(): string {
+  const decision = decisionData.value
+  if (!decision) return '不可用'
+  if (decision.is_mock) return decision.summary
+  return 'Urus Agent 已完成结构化决策报告；打开报告可查看候选闸门与期权分支。'
+}
 
 const instrumentThemesBySymbol: Record<string, string[]> = {
   QQQ: ['ETF'],
@@ -145,6 +179,7 @@ const tabs = computed<DashboardTab[]>(() => {
       : eventStatuses.includes('skipped')
         ? 'skipped'
         : 'unavailable'
+  const isCtaVariant = current?.macro_event.variant === 'cta' || current?.instrument_event.variant === 'cta'
 
   return [
     {
@@ -162,7 +197,12 @@ const tabs = computed<DashboardTab[]>(() => {
       meta: instrumentCount > 0 ? `${liveInstrumentCount}/${instrumentCount} live` : '未采集',
       status: current?.instrument?.data_state ?? 'unavailable',
     },
-    { id: 'events', label: '事件 / 1B + 3B', meta: '宏观 + 个股', status: eventStatus },
+    {
+      id: 'events',
+      label: isCtaVariant ? 'CTA / 1B + 3B' : '事件 / 1B + 3B',
+      meta: isCtaVariant ? '市场 + 跨资产' : '宏观 + 个股',
+      status: eventStatus,
+    },
     {
       id: 'options',
       label: '期权 / 2',
@@ -172,7 +212,7 @@ const tabs = computed<DashboardTab[]>(() => {
     {
       id: 'decision',
       label: '决策 / 4',
-      meta: current?.decision?.stance ?? '未接入',
+      meta: current?.decision?.is_mock ? current.decision.stance ?? '未接入' : current?.decision?.status ?? '未接入',
       status: current?.decision?.data_state ?? 'placeholder',
     },
     {
@@ -683,10 +723,30 @@ onMounted(() => {
       </section>
 
       <section v-else-if="activeTab === 'events'" class="tab-panel" role="tabpanel">
-        <div class="tab-titlebar"><div><p class="eyebrow">CONDITIONAL / 1B + 3B</p><h2>事件数据</h2></div><span class="source-label">只在命中条件时运行</span></div>
+        <div class="tab-titlebar"><div><p class="eyebrow">RESEARCH OVERLAY / 1B + 3B</p><h2>{{ store.latestReadModel.macro_event.variant === 'cta' ? 'CTA 与系统化资金压力' : '事件数据' }}</h2></div><span class="source-label">{{ store.latestReadModel.macro_event.variant === 'cta' ? '确定性 ETF 代理模型' : '只在命中条件时运行' }}</span></div>
         <div class="event-tab-grid">
           <section v-for="event in [store.latestReadModel.macro_event, store.latestReadModel.instrument_event]" :key="event.category" class="event-panel">
-            <div class="section-label-row"><div><span class="section-kicker">{{ event.category === 'macro' ? '1B' : '3B' }}</span><h3>{{ event.category === 'macro' ? '宏观事件' : '个股事件' }}</h3></div><StatusBadge :status="event.status" /></div>
+            <div class="section-label-row"><div><span class="section-kicker">{{ event.category === 'macro' ? '1B' : '3B' }}</span><h3>{{ event.variant === 'cta' ? (event.category === 'macro' ? '市场 CTA 压力' : '跨资产代理压力') : (event.category === 'macro' ? '宏观事件' : '个股事件') }}</h3></div><StatusBadge :status="event.status" /></div>
+            <template v-if="event.variant === 'cta'">
+              <dl class="field-list">
+                <div><dt>有效信号</dt><dd>{{ event.aggregate?.signal_count || 0 }} / {{ event.expected_symbols?.length || 0 }}</dd></div>
+                <div><dt>平均目标暴露</dt><dd>{{ formatNumber(event.aggregate?.average_target_exposure ?? null, 3) }}</dd></div>
+                <div><dt>平均压力</dt><dd>{{ formatNumber(event.aggregate?.average_pressure_index ?? null, 1) }}</dd></div>
+                <div><dt>方向 / 边际变化</dt><dd>{{ event.aggregate?.classification || 'unavailable' }} · {{ event.aggregate?.pressure_classification || 'unavailable' }}</dd></div>
+                <div><dt>摘要</dt><dd>{{ event.summary || '暂无 CTA 代理结果' }}</dd></div>
+              </dl>
+              <div v-if="event.signals?.length" class="event-record-list">
+                <article v-for="signal in event.signals" :key="signal.symbol" class="event-record">
+                  <div class="event-record-header"><strong>{{ signal.symbol }} → {{ signal.proxy_for }}</strong><StatusBadge :status="signal.quality_status" /></div>
+                  <small>{{ signal.as_of || '无日期' }} · {{ signal.sample_count }} 根日线 · {{ signal.source_mode }}</small>
+                  <p v-if="signal.available">目标暴露 {{ formatNumber(signal.target_exposure ?? null, 3) }} · 边际变化 {{ formatNumber(signal.exposure_change ?? null, 3) }} · 压力 {{ formatNumber(signal.pressure_index ?? null, 1) }} · {{ signal.direction }} / {{ signal.pressure_direction }}</p>
+                  <p v-else>{{ signal.warnings.join('；') || '数据不足' }}</p>
+                </article>
+              </div>
+              <p v-else class="empty-state compact">当前没有可计算的 CTA 代理日线。</p>
+              <div v-if="event.warnings?.length" class="notice-box warning-box"><strong>模型边界</strong><span>{{ event.warnings.join('；') }}</span></div>
+            </template>
+            <template v-else>
             <dl class="field-list">
               <div><dt>状态</dt><dd>{{ event.status }}</dd></div>
               <div><dt>模式 / Agent</dt><dd>{{ event.mode || 'scheduled' }} · {{ event.agent || '未配置' }}</dd></div>
@@ -707,6 +767,7 @@ onMounted(() => {
               </article>
             </div>
             <p v-else class="empty-state compact">当前没有登记的预期事件。</p>
+            </template>
           </section>
         </div>
       </section>
@@ -714,8 +775,8 @@ onMounted(() => {
       <OptionsPanel v-else-if="activeTab === 'options'" :options="store.latestReadModel.options" />
 
       <section v-else-if="activeTab === 'decision'" class="tab-panel" role="tabpanel">
-        <div class="tab-titlebar"><div><p class="eyebrow">NOT CONNECTED / 4</p><h2>决策输出</h2></div><StatusBadge :status="store.latestReadModel.decision.data_state" /></div>
-        <section class="data-section"><div class="metric-grid primary-metrics"><div class="metric-cell"><span>状态</span><strong>{{ store.latestReadModel.decision.status }}</strong><small>当前为占位结果</small></div><div class="metric-cell"><span>姿态</span><strong>{{ store.latestReadModel.decision.stance || '不可用' }}</strong><small>未调用决策 AI</small></div><div class="metric-cell"><span>置信度</span><strong>{{ store.latestReadModel.decision.confidence === null ? '不可用' : `${(store.latestReadModel.decision.confidence * 100).toFixed(1)}%` }}</strong><small>未计算</small></div></div><div class="notice-box"><strong>当前记录</strong><span>{{ store.latestReadModel.decision.summary }}</span><span>{{ store.latestReadModel.decision.note }}</span></div></section>
+        <div class="tab-titlebar"><div><p class="eyebrow">URUS AGENT / 4</p><h2>决策输出</h2></div><StatusBadge :status="store.latestReadModel.decision.data_state" /></div>
+        <section class="data-section"><div class="metric-grid primary-metrics"><div class="metric-cell"><span>状态</span><strong>{{ store.latestReadModel.decision.status }}</strong><small>{{ store.latestReadModel.decision.is_mock ? '当前为占位结果' : '结构化 AI 输出' }}</small></div><div class="metric-cell"><span>市场姿态</span><strong>{{ decisionDisplayStance() }}</strong><small>{{ store.latestReadModel.decision.is_mock ? '未调用决策 AI' : '来自 market_regime' }}</small></div><div class="metric-cell"><span>置信度</span><strong>{{ decisionDisplayConfidence() }}</strong><small>{{ store.latestReadModel.decision.is_mock ? '未计算' : '来自 market_regime' }}</small></div></div><div class="notice-box"><strong>开发期结果</strong><span>{{ decisionDisplaySummary() }}</span><span>{{ store.latestReadModel.decision.note }}</span><RouterLink v-if="store.latestRun" class="secondary-button decision-report-link" :to="`/runs/${store.latestRun.id}/report`">打开研究报告 →</RouterLink></div></section>
       </section>
 
       <section v-else class="tab-panel" role="tabpanel">

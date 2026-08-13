@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import asdict
 from datetime import UTC, date, datetime
 from math import isfinite
+import socket
 from time import monotonic, sleep
 from typing import Any, Protocol
 
@@ -35,6 +36,8 @@ class DisabledOptionsAdapter:
 
 class MoomooOptionsAdapter:
     """Snapshot-only Moomoo options collector; never calls subscribe()."""
+
+    _connect_timeout_seconds = 3.0
 
     def __init__(
         self,
@@ -92,8 +95,24 @@ class MoomooOptionsAdapter:
                 from futu import OpenQuoteContext
 
                 factory = OpenQuoteContext
+                self._probe_endpoint()
             self._quote_ctx = factory(host=self.host, port=self.port)
         return self._quote_ctx
+
+    def _probe_endpoint(self) -> None:
+        """Fail before the SDK retry loop when OpenD is unreachable."""
+
+        try:
+            with socket.create_connection(
+                (self.host, self.port),
+                timeout=self._connect_timeout_seconds,
+            ):
+                return
+        except OSError as exc:
+            raise RuntimeError(
+                f"无法连接 Moomoo OpenD {self.host}:{self.port}；"
+                "请确认 OpenD 已启动且该端口可访问。"
+            ) from exc
 
     @staticmethod
     def _require_ok(label: str, result: tuple[int, object]) -> object:

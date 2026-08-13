@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,7 +18,14 @@ from app.core.errors import (
     validation_error_handler,
 )
 from app.core.logging import configure_logging, request_logging_middleware
+from app.core.time import utc_now
+from app.frontend import SPAStaticFiles
 from app.models import (  # noqa: F401 - register ORM tables
+    AIDecisionRunModel,
+    AIDecisionSessionModel,
+    AIModelTurnModel,
+    AITraceNodeModel,
+    AIToolCallModel,
     EventAgentRunModel,
     EventDefinitionModel,
     EventMarketReactionModel,
@@ -37,8 +45,14 @@ from app.models import (  # noqa: F401 - register ORM tables
     RunModel,
     SnapshotModel,
     StepRunModel,
+    RuntimeSettingsModel,
+    InstrumentUniverseItemModel,
+    InstrumentUniverseVersionModel,
     StrategyResearchDatasetModel,
 )
+from app.repositories.runs import RunRepository
+from app.repositories.runtime_settings import RuntimeSettingsRepository, apply_payload
+from app.repositories.universe import InstrumentUniverseRepository
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +67,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # This keeps a fresh local checkout runnable. Alembic remains the
         # explicit schema migration path for environments that manage schema state.
         Base.metadata.create_all(bind=engine)
+        with session_factory() as session:
+            persisted_settings = RuntimeSettingsRepository(session).get()
+            if persisted_settings is not None:
+                apply_payload(settings, persisted_settings.payload)
+            InstrumentUniverseRepository(session).ensure_default(settings)
+            recovered = RunRepository(session).recover_interrupted_runs(completed_at=utc_now())
+        if recovered:
+            logger.warning("Recovered %s interrupted workflow run(s)", recovered)
         logger.info("Urus started environment=%s", settings.app_env)
         try:
             yield
@@ -74,7 +96,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,
         allow_credentials=False,
-        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_methods=["GET", "POST", "PUT", "OPTIONS"],
         allow_headers=["Content-Type"],
     )
     app.middleware("http")(request_logging_middleware)
@@ -84,6 +106,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_exception_handler(404, http_error_handler)
     app.add_exception_handler(Exception, unexpected_error_handler)
     app.include_router(api_router)
+    frontend_dist = Path(__file__).resolve().parents[1] / "frontend_dist"
+    if frontend_dist.joinpath("index.html").is_file():
+        # Mount last so API routes retain precedence while Vue history routes
+        # are handled by the bundled production frontend.
+        app.mount("/", SPAStaticFiles(directory=frontend_dist, html=True), name="frontend")
     return app
 
 

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Urus Equity Decision"
+  short_description: "Rank Urus watchlist setups from paired market evidence"
+  default_prompt: "Use $urus-equity-decision to rank Stage 4B equity setups from a paired decision packet."

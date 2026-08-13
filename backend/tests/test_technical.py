@@ -31,6 +31,9 @@ def test_daily_technical_indicators_include_required_metadata() -> None:
     assert result["atr14_percent"]["unit"] == "percent"
     assert result["bollinger_20_2"]["sample_count"] == 20
     assert result["bollinger_20_2"]["current_price"] == 129.0
+    assert result["rsi14"]["available"] is True
+    assert result["rsi14"]["value"] == 100.0
+    assert result["rsi14"]["state"] == "overbought"
 
 
 def test_daily_technical_indicators_include_multiband_macd_and_effort_result() -> None:
@@ -53,6 +56,7 @@ def test_daily_technical_indicators_include_multiband_macd_and_effort_result() -
     assert result["bollinger_bandwidth_20"]["value"] > 0
     assert result["macd_12_26_9"]["available"] is True
     assert result["macd_12_26_9"]["histogram"] is not None
+    assert 0 <= result["rsi14"]["value"] <= 100
     assert result["volume_effort_result"]["available"] is True
     assert result["volume_effort_result"]["volume_ratio_20d"] == 3.0
     assert result["volume_effort_result"]["combination"] == "high_down"
@@ -100,6 +104,8 @@ def test_daily_technical_indicators_report_insufficient_samples() -> None:
     assert result["available"] is False
     assert result["quality_status"] == "partial"
     assert result["warnings"]
+    assert result["rsi14"]["available"] is False
+    assert result["rsi14"]["value"] is None
 
 
 def test_daily_technical_indicators_include_extended_windows() -> None:

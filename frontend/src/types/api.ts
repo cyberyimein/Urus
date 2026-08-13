@@ -1,4 +1,4 @@
-export type RunType = 'pre_market' | 'pre_close' | 'post_close_review'
+export type RunType = 'pre_market' | 'pre_close' | 'post_close_review' | 'manual_analysis'
 export type RunStatus = 'pending' | 'running' | 'succeeded' | 'mixed' | 'partial' | 'failed'
 export type StepStatus = 'pending' | 'running' | 'succeeded' | 'placeholder' | 'unavailable' | 'skipped' | 'failed'
 export type DataState = 'live' | 'mock' | 'mixed' | 'placeholder' | 'unavailable' | 'skipped'
@@ -57,6 +57,17 @@ export interface RunCreateResponse {
   run_id: string
   status: RunStatus
   snapshot_id: string | null
+}
+
+export interface ManualAnalysisCreateResponse {
+  run_id: string
+  status: RunStatus
+  session_context: string
+  trigger_type: 'manual'
+  analysis_mode: 'current_state'
+  official_cycle: false
+  eligible_for_scoring: false
+  updates_official_cta_state: false
 }
 
 export interface SnapshotResponse {
@@ -337,9 +348,12 @@ export interface InstrumentCard {
 
 export interface EventSummary {
   is_mock: boolean
+  schema_version?: string | null
   category: string
   status: StepStatus
   mode?: string
+  variant?: 'events' | 'cta' | string
+  scope?: string | null
   agent?: string | null
   schedule_step?: EventWorkflowPhase
   result_step?: EventWorkflowPhase
@@ -354,8 +368,44 @@ export interface EventSummary {
   counts?: Record<string, number>
   next_check_at?: string | null
   warnings?: string[]
+  signals?: CTAProxySignal[]
+  aggregate?: CTAProxyAggregate
+  expected_symbols?: string[]
+  missing_symbols?: string[]
+  quality_status?: string | null
   market_reaction_count?: number
   data_state: DataState
+}
+
+export interface CTAProxySignal {
+  schema_version: string
+  symbol: string
+  proxy_for: string
+  source: string
+  source_mode: 'etf_proxy' | string
+  as_of: string | null
+  sample_count: number
+  available: boolean
+  quality_status: string
+  forecast_volatility?: number
+  raw_signal?: number
+  target_exposure?: number
+  previous_target_exposure?: number
+  exposure_change?: number
+  pressure_index?: number
+  direction?: 'long' | 'short' | 'neutral' | string
+  pressure_direction?: 'buying' | 'selling' | 'stable' | string
+  components?: Record<string, unknown>
+  warnings: string[]
+}
+
+export interface CTAProxyAggregate {
+  available?: boolean
+  signal_count?: number
+  average_target_exposure?: number | null
+  average_pressure_index?: number | null
+  classification?: string
+  pressure_classification?: string
 }
 
 export interface EventWorkflowPhase {
@@ -516,7 +566,7 @@ export interface OptionSymbolAnalysis {
   symbol: string
   spot: number
   spot_time: string | null
-  overview: Record<string, number | null>
+  overview: Record<string, unknown>
   expirations: OptionExpirationAnalysis[]
 }
 
@@ -540,14 +590,42 @@ export interface OptionsAnalysis {
 export type OptionsData = OptionsPlaceholder | OptionsAnalysis
 
 export interface DecisionPlaceholder {
-  is_mock: boolean
+  is_mock: true
   status: string
   stance: string | null
   confidence: number | null
   summary: string
   data_state: DataState
+  availability_status?: string | null
+  dataset_key?: string | null
+  source_run_ids?: string[]
+  source_snapshot_ids?: string[]
   note: string
 }
+
+export interface DecisionAnalysis {
+  is_mock: false
+  status: string
+  data_state: DataState
+  provider: string
+  model?: string | null
+  skill_name?: string | null
+  skill_hash?: string | null
+  tool_call_count: number
+  decision_session_id?: string | null
+  availability_status?: string | null
+  dataset_key?: string | null
+  source_run_ids?: string[]
+  source_snapshot_ids?: string[]
+  pair_status?: string | null
+  reason?: string | null
+  technical_report: Record<string, unknown>
+  decision_report: Record<string, unknown>
+  decision: Record<string, unknown>
+  note: string
+}
+
+export type DecisionData = DecisionPlaceholder | DecisionAnalysis
 
 export interface ReadModelStep {
   code: StepCode
@@ -573,6 +651,12 @@ export interface FrontendReadModel {
   run_id: string
   snapshot_id: string
   run_type: RunType
+  trigger_type?: string
+  analysis_mode?: string
+  session_context?: string
+  official_cycle?: boolean
+  eligible_for_scoring?: boolean
+  updates_official_cta_state?: boolean
   run_status: RunStatus
   cutoff_time: string
   generated_at: string
@@ -581,10 +665,12 @@ export interface FrontendReadModel {
   market: MarketCard | null
   instrument: InstrumentCard | null
   instrument_cards?: InstrumentCard[]
+  systematic_flows?: Record<string, unknown>
   macro_event: EventSummary
   options: OptionsData
   instrument_event: EventSummary
-  decision: DecisionPlaceholder
+  decision: DecisionData
+  technical_report?: Record<string, unknown>
   steps: ReadModelStep[]
   data_quality: DataQuality
 }

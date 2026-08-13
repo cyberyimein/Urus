@@ -49,6 +49,9 @@ class InstrumentCollectorStep:
             cards = [
                 {
                     **item,
+                    "asset_type": context.universe_items_by_symbol.get(str(item.get("symbol")), {}).get("asset_type", item.get("asset_type", "equity")),
+                    "theme": context.universe_items_by_symbol.get(str(item.get("symbol")), {}).get("theme", item.get("theme", "其他关注")),
+                    "themes": [context.universe_items_by_symbol.get(str(item.get("symbol")), {}).get("theme", item.get("theme", "其他关注"))],
                     "provider": item.get("provider") or provider,
                     "source_mode": item.get("source_mode") or source_mode,
                     "captured_at": item.get("captured_at") or captured_at,

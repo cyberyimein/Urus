@@ -13,6 +13,7 @@ from app.analytics.options import (
     calculate_spot_gamma_profile,
     trim_exposure_display,
 )
+from app.analytics.options_volatility import enrich_option_overview
 from app.core.config import Settings
 from app.integrations.moomoo_options import MoomooOptionsAdapter
 from app.models import StepStatus
@@ -174,6 +175,26 @@ def test_crossed_market_does_not_create_expected_move() -> None:
     ]
 
     assert calculate_expected_move(contracts)["amount"] is None
+
+
+def test_iv_hv_features_are_deterministic_and_explicitly_proxy_quality() -> None:
+    overview = enrich_option_overview(
+        {"iv": 35.429, "hv_30d": 58.328, "iv_rank": 35.58}
+    )
+
+    assert overview["iv_hv_spread"] == pytest.approx(-22.899)
+    assert overview["iv_hv_ratio"] == pytest.approx(0.607410, abs=1e-6)
+    assert overview["iv_hv_regime"] == "deep_discount"
+    assert overview["term_match_method"] == "provider_composite_proxy"
+    assert overview["model_fidelity"] == "proxy"
+
+
+def test_iv_hv_features_do_not_divide_by_zero() -> None:
+    overview = enrich_option_overview({"iv": 25.0, "hv_30d": 0.0})
+
+    assert overview["iv_hv_ratio"] is None
+    assert overview["iv_hv_regime"] == "unknown"
+    assert "hv30_unavailable_or_non_positive" in overview["iv_hv_warnings"]
 
 
 class FakeOptionsAdapter:

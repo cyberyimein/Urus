@@ -1,6 +1,7 @@
 import type {
   FrontendReadModel,
   HealthResponse,
+  ManualAnalysisCreateResponse,
   RunCreateResponse,
   RunDetail,
   RunListItem,
@@ -9,8 +10,22 @@ import type {
   VersionResponse,
   WatchlistResponse,
 } from '@/types/api'
+import type {
+  DecisionReport,
+  DecisionTraceGraph,
+  RawResponsePayload,
+  ResearchReportIndex,
+  ResearchReportPayload,
+  TechnicalReport,
+  TraceNodeDetail,
+} from '@/types/research'
+import type { RuntimeSettingsResponse, RuntimeSettingsUpdate } from '@/types/settings'
+import type { UniverseResponse, UniverseUpdate } from '@/types/universe'
 
-const baseUrl = (import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000/api').replace(/\/$/, '')
+// Local Vite serves `/api` through the dev proxy, which keeps browser requests
+// same-origin and avoids loopback cross-port restrictions. Deployments can
+// still provide an explicit absolute VITE_API_BASE_URL.
+const baseUrl = (import.meta.env.VITE_API_BASE_URL ?? '/api').replace(/\/$/, '')
 
 export class ApiError extends Error {
   readonly status: number
@@ -54,6 +69,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   health: () => request<HealthResponse>('/health'),
   version: () => request<VersionResponse>('/version'),
+  getSettings: () => request<RuntimeSettingsResponse>('/settings'),
+  updateSettings: (requestBody: RuntimeSettingsUpdate) =>
+    request<RuntimeSettingsResponse>('/settings', {
+      method: 'PUT',
+      body: JSON.stringify(requestBody),
+    }),
+  getUniverse: () => request<UniverseResponse>('/settings/universe'),
+  updateUniverse: (requestBody: UniverseUpdate) =>
+    request<UniverseResponse>('/settings/universe', {
+      method: 'PUT',
+      body: JSON.stringify(requestBody),
+    }),
   watchlist: () => request<WatchlistResponse>('/watchlist'),
   listRuns: () => request<RunListItem[]>('/runs'),
   getRun: (runId: string) => request<RunDetail>(`/runs/${encodeURIComponent(runId)}`),
@@ -61,6 +88,22 @@ export const api = {
     request<SnapshotResponse>(`/snapshots/${encodeURIComponent(snapshotId)}`),
   getFrontendReadModel: (snapshotId: string) =>
     request<FrontendReadModel>(`/snapshots/${encodeURIComponent(snapshotId)}/frontend`),
+  listResearchReports: (runId: string) =>
+    request<ResearchReportIndex[]>(`/runs/${encodeURIComponent(runId)}/research-reports`),
+  listAllResearchReports: (limit = 50) =>
+    request<ResearchReportIndex[]>(`/research-reports?limit=${encodeURIComponent(String(limit))}`),
+  getResearchReport: (reportId: string) =>
+    request<ResearchReportPayload>(`/research-reports/${encodeURIComponent(reportId)}`),
+  getTechnicalReport: (reportId: string) =>
+    request<TechnicalReport>(`/research-reports/${encodeURIComponent(reportId)}/technical`),
+  getDecisionReport: (reportId: string) =>
+    request<DecisionReport>(`/research-reports/${encodeURIComponent(reportId)}/decision`),
+  getDecisionTrace: (reportId: string) =>
+    request<DecisionTraceGraph>(`/research-reports/${encodeURIComponent(reportId)}/trace`),
+  getTraceNode: (reportId: string, nodeId: string) =>
+    request<TraceNodeDetail>(`/research-reports/${encodeURIComponent(reportId)}/trace/nodes/${encodeURIComponent(nodeId)}`),
+  getTraceNodeRawResponse: (reportId: string, nodeId: string) =>
+    request<RawResponsePayload>(`/research-reports/${encodeURIComponent(reportId)}/trace/nodes/${encodeURIComponent(nodeId)}/raw-response`),
   createRun: (requestBody: {
     run_type: RunType
     symbols?: string[]
@@ -70,5 +113,15 @@ export const api = {
     request<RunCreateResponse>('/runs', {
       method: 'POST',
       body: JSON.stringify(requestBody),
+    }),
+  createManualAnalysis: (requestBody: { symbols?: string[] } = {}) =>
+    request<ManualAnalysisCreateResponse>('/analysis/runs', {
+      method: 'POST',
+      body: JSON.stringify(requestBody),
+    }),
+  retryManualAnalysisAi: (runId: string) =>
+    request<{ run_id: string; status: string }>(`/analysis/runs/${encodeURIComponent(runId)}/retry-ai`, {
+      method: 'POST',
+      body: JSON.stringify({}),
     }),
 }

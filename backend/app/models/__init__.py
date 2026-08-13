@@ -8,6 +8,13 @@ from app.models.events import (
     EventScheduleInitializationModel,
     EventSourceModel,
 )
+from app.models.agent import (
+    AIDecisionRunModel,
+    AIDecisionSessionModel,
+    AIModelTurnModel,
+    AITraceNodeModel,
+    AIToolCallModel,
+)
 from app.models.instruments import (
     InstrumentAnalysisBatchModel,
     InstrumentDailyBarModel,
@@ -22,6 +29,8 @@ from app.models.options import (
     OptionSymbolSnapshotModel,
 )
 from app.models.run import RunModel, SnapshotModel, StepRunModel
+from app.models.runtime_settings import RuntimeSettingsModel
+from app.models.universe import InstrumentUniverseItemModel, InstrumentUniverseVersionModel
 from app.models.strategy import StrategyResearchDatasetModel
 
 __all__ = [
@@ -40,6 +49,9 @@ __all__ = [
     "SnapshotModel",
     "StepRunModel",
     "StepStatus",
+    "RuntimeSettingsModel",
+    "InstrumentUniverseItemModel",
+    "InstrumentUniverseVersionModel",
     "StrategyResearchDatasetModel",
     "EventAgentRunModel",
     "EventDefinitionModel",
@@ -48,4 +60,9 @@ __all__ = [
     "EventResultModel",
     "EventScheduleInitializationModel",
     "EventSourceModel",
+    "AIDecisionRunModel",
+    "AIDecisionSessionModel",
+    "AIModelTurnModel",
+    "AITraceNodeModel",
+    "AIToolCallModel",
 ]

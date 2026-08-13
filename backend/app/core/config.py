@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -76,8 +77,46 @@ class Settings(BaseSettings):
     # remains defined but disabled until its source policy is finalized.
     expected_events_enabled: bool = False
     breaking_events_enabled: bool = False
+    # Select the 1B/3B research overlay. ``events`` preserves the scheduled
+    # event workflow; ``cta`` runs deterministic ETF-proxy trend pressure.
+    # This branch is the CTA research fork. Deployments can still opt back
+    # into the scheduled-event overlay explicitly with `events`.
+    workflow_research_variant: Literal["events", "cta"] = "cta"
+    cta_proxy_symbols: str = "SPY,QQQ,IWM,IEF,TLT,UUP,GLD,USO,HYG,LQD,SMH,IGV"
     anomalo_scheduled_agent: str = "scheduled-event-investigator"
     anomalo_breaking_agent: str = "breaking-event-investigator"
+    urus_agent_enabled: bool = False
+    openrouter_api_key: str | None = None
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    urus_agent_model: str = "deepseek/deepseek-v4-flash-0731"
+    urus_agent_temperature: float = 0.1
+    # A full daily-cycle synthesis can be slower than a single small model
+    # turn; keep this configurable while using the long-running local default.
+    urus_agent_timeout_seconds: float = 1200.0
+    # Optional provider-side completion cap.  Leave unset (or set to 0) to let
+    # the model finish a large synthesis response without Urus truncating it.
+    urus_agent_max_completion_tokens: int | None = None
+    urus_agent_input_cost_per_million: float = 0.0
+    urus_agent_output_cost_per_million: float = 0.0
+    urus_agent_max_tool_iterations: int = 8
+    urus_agent_max_tool_result_bytes: int = 100000
+    urus_agent_max_total_tool_result_bytes: int = 500000
+    urus_agent_max_context_bytes: int = 500000
+    urus_agent_max_total_tool_calls: int = 24
+    urus_agent_max_raw_response_bytes: int = 200000
+    # Independent theme invocations run concurrently. Market and synthesis
+    # remain dependency boundaries; option structure is deterministic context.
+    urus_agent_theme_max_concurrency: int = 6
+    urus_agent_enforce_stage_tools: bool = True
+    urus_agent_event_limit: int = 10
+    # Runtime scheduler defaults. They can be overridden from /settings and
+    # are intentionally separate from the provider credentials above.
+    scheduled_pre_market_enabled: bool = True
+    scheduled_pre_market_skip_ai_decision: bool = False
+    scheduled_pre_close_enabled: bool = True
+    scheduled_pre_close_skip_ai_decision: bool = True
+    scheduled_post_close_enabled: bool = True
+    scheduled_post_close_skip_ai_decision: bool = False
     event_discovery_horizon_days: int = 120
     event_instrument_symbols: str = (
         "LITE,COHR,MRVL,NOK,AMD,INTC,NVDA,NBIS,ORCL,MSFT,NOW,RKLB,AMZN,AAPL,GOOG"
@@ -110,6 +149,14 @@ class Settings(BaseSettings):
         return [
             item.strip().upper()
             for item in self.event_instrument_symbols.split(",")
+            if item.strip()
+        ]
+
+    @property
+    def cta_proxy_symbol_list(self) -> list[str]:
+        return [
+            item.strip().upper()
+            for item in self.cta_proxy_symbols.split(",")
             if item.strip()
         ]
 

@@ -1,5 +1,6 @@
 from app.workflows.base import StepResult, WorkflowStep
 from app.workflows.context import RunContext
+from app.workflows.cta import InstrumentCTAProxyStep, MarketCTAProxyStep
 from app.workflows.events import InstrumentEventSummaryStep, MarketEventSummaryStep
 from app.workflows.instrument import InstrumentCollectorStep
 from app.workflows.market import MarketCollectorStep
@@ -12,8 +13,10 @@ __all__ = [
     "DEFAULT_STEP_CODES",
     "DecisionStep",
     "InstrumentCollectorStep",
+    "InstrumentCTAProxyStep",
     "InstrumentEventSummaryStep",
     "MarketCollectorStep",
+    "MarketCTAProxyStep",
     "MarketEventSummaryStep",
     "OptionsCollectorStep",
     "OutputStep",
@@ -22,4 +25,3 @@ __all__ = [
     "WorkflowPipeline",
     "WorkflowStep",
 ]
-

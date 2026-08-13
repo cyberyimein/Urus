@@ -1,0 +1,4 @@
+interface:
+  display_name: "Urus Options Decision"
+  short_description: "Turn Urus option exposures into bounded trade structures"
+  default_prompt: "Use $urus-options-decision to evaluate a Stage 4B options packet and return a bounded strategy decision."

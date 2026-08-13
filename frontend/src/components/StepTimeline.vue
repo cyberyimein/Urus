@@ -5,14 +5,23 @@ import StatusBadge from './StatusBadge.vue'
 
 const props = defineProps<{ steps: Array<StepRun | ReadModelStep> }>()
 
-const labels: Record<StepCode, string> = {
+const defaultLabels: Record<StepCode, string> = {
   '1a': '1A · 大盘采集',
   '1b': '1B · 宏观事件摘要',
   '2': '2 · 期权结构',
   '3a': '3A · 个股采集',
   '3b': '3B · 个股事件摘要',
-  '4': '4 · 决策占位',
+  '4': '4 · Urus Agent 决策',
   '5': '5 · 输出 read model',
+}
+
+function label(step: StepRun | ReadModelStep): string {
+  if ('label' in step && step.label) return step.label
+  const stepCode = code(step)
+  const variant = 'payload' in step ? step.payload?.variant : undefined
+  if (variant === 'cta' && stepCode === '1b') return '1B · CTA 市场压力'
+  if (variant === 'cta' && stepCode === '3b') return '3B · 系统化资金压力'
+  return defaultLabels[stepCode]
 }
 
 function code(step: StepRun | ReadModelStep): StepCode {
@@ -43,7 +52,7 @@ function dataState(step: StepRun | ReadModelStep): DataState {
       <div class="step-marker">{{ code(step).toUpperCase() }}</div>
       <div class="step-copy">
         <div class="step-titleline">
-          <strong>{{ labels[code(step)] }}</strong>
+          <strong>{{ label(step) }}</strong>
           <div class="step-state-meta">
             <span class="data-state-badge" :data-state="dataState(step)">{{ dataStateLabel(dataState(step)) }}</span>
             <StatusBadge :status="step.status" />

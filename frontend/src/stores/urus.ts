@@ -26,13 +26,13 @@ export const useUrusStore = defineStore('urus', () => {
       const [, nextRuns] = await Promise.all([api.health(), api.listRuns()])
       connection.value = 'connected'
       runs.value = nextRuns
-      const first = nextRuns[0]
-      if (!first) {
+      const firstReadable = nextRuns.find((run) => Boolean(run.snapshot_id))
+      if (!firstReadable) {
         latestRun.value = null
         latestReadModel.value = null
         return
       }
-      await loadRun(first.id, false)
+      await loadRun(firstReadable.id, false)
       latestRun.value = selectedRun.value
       latestReadModel.value = selectedReadModel.value
     } catch (reason) {
@@ -109,4 +109,3 @@ export const useUrusStore = defineStore('urus', () => {
     triggerRun,
   }
 })
-
