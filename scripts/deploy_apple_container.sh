@@ -13,7 +13,7 @@ Environment:
   SSH_PORT                Default: 22
   ENV_FILE                Private Urus env file copied to the Mac mini
   DATABASE_FILE           Optional existing SQLite file to seed/replace remote data
-  REMOTE_STORAGE_ROOT     Optional absolute root; defaults to ~/.urus paths
+  REMOTE_STORAGE_ROOT     Optional absolute Urus data root; defaults to ~/data/urus
   REMOTE_DIR              Deploy files directory
   REMOTE_DATA_DIR         Persistent SQLite/scheduler directory
   REMOTE_ENV_FILE         Default: REMOTE_DIR/urus.env
@@ -21,7 +21,7 @@ Environment:
   CONTAINER_NAME          Default: urus
   SCHEDULER_NAME          Default: urus-scheduler
   CONTAINER_NETWORK       Default: urus-internal
-  HOST_PORT               Default: 5173
+  HOST_PORT               Default: 7777 (Mac mini host port; 8000 is used by Anomalo)
   APP_PORT                Default: 8000
 EOF
 }
@@ -55,11 +55,11 @@ SSH_PORT="${SSH_PORT:-22}"
 REMOTE_STORAGE_ROOT="${REMOTE_STORAGE_ROOT:-}"
 if [[ -n "$REMOTE_STORAGE_ROOT" ]]; then
     [[ "$REMOTE_STORAGE_ROOT" == /* ]] || fail "REMOTE_STORAGE_ROOT must be absolute"
-    default_remote_dir="$REMOTE_STORAGE_ROOT/urus-deploy"
-    default_data_dir="$REMOTE_STORAGE_ROOT/urus-data"
+    default_remote_dir="$REMOTE_STORAGE_ROOT/deploy"
+    default_data_dir="$REMOTE_STORAGE_ROOT"
 else
-    default_remote_dir=".urus/urus-deploy"
-    default_data_dir=".urus/urus-data"
+    default_remote_dir="data/urus/deploy"
+    default_data_dir="data/urus"
 fi
 REMOTE_DIR="${REMOTE_DIR:-$default_remote_dir}"
 REMOTE_DATA_DIR="${REMOTE_DATA_DIR:-$default_data_dir}"
@@ -68,10 +68,10 @@ REMOTE_CONTAINER_CLI="${REMOTE_CONTAINER_CLI:-container}"
 CONTAINER_NAME="${CONTAINER_NAME:-urus}"
 SCHEDULER_NAME="${SCHEDULER_NAME:-urus-scheduler}"
 CONTAINER_NETWORK="${CONTAINER_NETWORK:-urus-internal}"
-HOST_PORT="${HOST_PORT:-5173}"
+HOST_PORT="${HOST_PORT:-7777}"
 APP_PORT="${APP_PORT:-8000}"
 remote_archive="$REMOTE_DIR/$(basename "$archive_path")"
-remote_database_upload=""
+remote_database_upload="-"
 
 require_command ssh
 require_command scp
@@ -95,7 +95,7 @@ ssh "${ssh_args[@]}" "$ssh_target" "bash -s" -- \
     "$REMOTE_ENV_FILE" "$REMOTE_DATA_DIR" "$remote_database_upload" <<'REMOTE_SCRIPT'
 set -Eeuo pipefail
 container_cli="$1"; archive="$2"; image_ref="$3"; app_name="$4"; scheduler_name="$5"
-network="$6"; host_port="$7"; app_port="$8"; env_file="$9"; data_dir="${10}"; database_upload="${11}"
+network="$6"; host_port="$7"; app_port="$8"; env_file="$9"; data_dir="${10}"; database_upload="${11:-}"
 
 "$container_cli" system start >/dev/null 2>&1 || true
 if ! "$container_cli" network list | awk 'NR > 1 {print $1}' | grep -Fxq "$network"; then

@@ -39,7 +39,7 @@ DATABASE_FILE=backend/urus.db
 
 部署脚本会先把远端已有数据库复制成带时间戳的备份，再替换数据库。不要在本地后端仍写入 SQLite 时传输数据库。
 
-默认页面为 `http://<macmini>:5173`，健康检查为 `/api/health`。持久化目录默认是远端 `~/.urus/urus-data`。
+默认页面为 `http://<macmini>:7777`，健康检查为 `/api/health`。容器内部仍监听 `8000`，仅在 Mac mini 宿主机映射为 `7777`；这样不会占用现有 Anomalo 的 `8000`。持久化目录默认是远端 `~/data/urus`。
 
 该宿主机目录包含：
 
@@ -52,7 +52,7 @@ DATABASE_FILE=backend/urus.db
 ## 今晚上线前必须通过
 
 1. `container list` 同时看到 `urus` 与 `urus-scheduler`。
-2. `curl http://127.0.0.1:5173/api/health` 返回 `status=ok`。
+2. 在 Mac mini 上执行 `curl http://127.0.0.1:7777/api/health` 返回 `status=ok`。
 3. `/api/settings` 显示 `ai_decision_enabled=true`、`openrouter_configured=true`。
 4. 运行设置为盘前 AI、尾盘只采集、收盘复盘 AI。
 5. Universe 标的、CTA、期权和 AI 候选范围正确。
