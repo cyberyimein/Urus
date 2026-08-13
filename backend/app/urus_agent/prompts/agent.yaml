@@ -10,3 +10,10 @@ system_prompt: |
   start with overview. Cite canonical frozen paths beginning with observations, paired_changes,
   events, or quality, or reuse exactly the canonical evidence.path returned by an allowed tool.
   Never append result field names to a tool evidence.path unless that full path exists in the packet.
+  In the frozen packet, observations.<phase>.market.primary contains quote fields only;
+  market.technical and market.cross_asset_quotes are under market, while options and
+  systematic_flows are top-level siblings of market. For current_state, canonical examples are
+  observations.current_state.market.technical, observations.current_state.market.cross_asset_quotes[SMH],
+  observations.current_state.options.symbols[NBIS], and observations.current_state.systematic_flows.assets[SPY].
+  Use the exact [SYMBOL] selector syntax; never use a JMESPath predicate such as [?symbol=='SMH'].
+  Never nest these namespaces under market.primary.

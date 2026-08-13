@@ -54,4 +54,29 @@ describe('UniverseSettingsView', () => {
     expect(wrapper.text()).toContain('QQQ 是当前相对强弱算法的固定基准，不能删除')
     expect(wrapper.find('.danger-button').exists()).toBe(false)
   })
+
+  it('adds and removes cross-cutting themes without changing the primary label unexpectedly', async () => {
+    vi.spyOn(api, 'getUniverse').mockResolvedValue(structuredClone(universe))
+    const save = vi.spyOn(api, 'updateUniverse').mockResolvedValue(structuredClone(universe))
+    const wrapper = mount(UniverseSettingsView, { global: { stubs: { AppShell: true, RouterLink: true } } })
+    await flushPromises()
+
+    await wrapper.findAll('tbody tr')[1].trigger('click')
+    const input = wrapper.find('.theme-add-row input')
+    await input.setValue('AI 基础设施')
+    await wrapper.get('.theme-add-row button').trigger('click')
+    expect(wrapper.find('.theme-chip-list').text()).toContain('大型科技')
+    expect(wrapper.find('.theme-chip-list').text()).toContain('AI 基础设施')
+
+    await wrapper.find('button[aria-label="移除主题 大型科技"]').trigger('click')
+    expect(wrapper.find('.theme-chip-list').text()).toContain('AI 基础设施')
+    await wrapper.get('.universe-actions .primary-button').trigger('click')
+    await wrapper.find('.confirm-card .primary-button').trigger('click')
+    await flushPromises()
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({
+      items: expect.arrayContaining([
+        expect.objectContaining({ symbol: 'AAPL', theme: 'AI 基础设施', themes: ['AI 基础设施'] }),
+      ]),
+    }))
+  })
 })

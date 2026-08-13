@@ -21,7 +21,7 @@ Read these files before producing a decision:
 2. Stop with `insufficient_data` when quality has blocking errors or usable market and instrument observations are absent.
 3. Establish the market and theme regime before ranking symbols. Use SPY, QQQ, SMH, and IGV when present; do not assume missing ETF evidence.
 4. Compare each symbol's pre-market and pre-close observations. Use paired changes as confirmation evidence, not as two independent forecasts.
-5. Evaluate trend alignment, 252-day position, relative strength versus QQQ, MACD, Bollinger location, ATR/realized volatility, and volume effort/result.
+5. Evaluate trend alignment, 252-day position, relative strength versus QQQ, MACD, Bollinger location, ATR/realized volatility, volume effort/result, and deterministic RSI continuation-versus-reversal context.
 6. Check scheduled macro and instrument events. Flag nearby earnings or unresolved results as binary risk.
 7. Mark strict SEPA completeness as `partial` whenever MA150, EPS, revenue, margins, or other required fundamentals are absent. Never substitute MA100 for MA150 without labeling it an Urus-specific proxy.
 8. Rank the watchlist and assign one action from `setup_ready`, `watch`, `observe`, `avoid`, or `insufficient_data`.

@@ -45,6 +45,7 @@ class InstrumentUniverseItemModel(Base):
     display_name: Mapped[str] = mapped_column(String(128), nullable=False)
     asset_type: Mapped[str] = mapped_column(String(16), nullable=False)
     theme: Mapped[str] = mapped_column(String(64), nullable=False)
+    themes: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     roles: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     benchmarks: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)

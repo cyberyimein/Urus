@@ -49,6 +49,7 @@ from app.models import (  # noqa: F401 - register ORM tables
     InstrumentUniverseItemModel,
     InstrumentUniverseVersionModel,
     StrategyResearchDatasetModel,
+    ReportDisplayProjectionModel,
 )
 from app.repositories.runs import RunRepository
 from app.repositories.runtime_settings import RuntimeSettingsRepository, apply_payload
@@ -96,7 +97,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,
         allow_credentials=False,
-        allow_methods=["GET", "POST", "PUT", "OPTIONS"],
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type"],
     )
     app.middleware("http")(request_logging_middleware)

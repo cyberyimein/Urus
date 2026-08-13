@@ -55,8 +55,8 @@ onMounted(checkRuntime)
     <RouterLink class="back-link" to="/">← 返回首页</RouterLink>
     <section class="analysis-confirm-card">
       <p class="eyebrow">ON-DEMAND CURRENT STATE</p>
-      <h1>立即分析当前市场</h1>
-      <p class="hero-copy">拉取当前行情并生成一份即时分析报告。当前完整 Universe 通常需要 8–20 分钟。</p>
+      <h1>发起手动分析</h1>
+      <p class="hero-copy">这是确认页；点击“开始分析”后才会拉取行情并创建任务。当前完整 Universe 通常需要 8–20 分钟。</p>
 
       <dl class="analysis-summary">
         <div>

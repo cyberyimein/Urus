@@ -46,18 +46,32 @@ class InstrumentCollectorStep:
             # Keep collection metadata on every card. The collector payload is
             # the source of truth; otherwise InstrumentCard's mock-oriented
             # schema defaults can make live data look like a mock card.
-            cards = [
-                {
+            normalized_cards = []
+            for item in cards:
+                config = context.universe_items_by_symbol.get(str(item.get("symbol")), {})
+                configured_themes = [
+                    str(theme).strip()
+                    for theme in (config.get("themes") or [])
+                    if str(theme).strip()
+                ]
+                if not configured_themes and config.get("theme"):
+                    configured_themes = [str(config["theme"]).strip()]
+                provider_themes = [
+                    str(theme).strip()
+                    for theme in (item.get("themes") or [])
+                    if str(theme).strip()
+                ]
+                themes = configured_themes or provider_themes or [str(item.get("theme") or "其他关注")]
+                normalized_cards.append({
                     **item,
-                    "asset_type": context.universe_items_by_symbol.get(str(item.get("symbol")), {}).get("asset_type", item.get("asset_type", "equity")),
-                    "theme": context.universe_items_by_symbol.get(str(item.get("symbol")), {}).get("theme", item.get("theme", "其他关注")),
-                    "themes": [context.universe_items_by_symbol.get(str(item.get("symbol")), {}).get("theme", item.get("theme", "其他关注"))],
+                    "asset_type": config.get("asset_type", item.get("asset_type", "equity")),
+                    "theme": themes[0],
+                    "themes": list(dict.fromkeys(themes)),
                     "provider": item.get("provider") or provider,
                     "source_mode": item.get("source_mode") or source_mode,
                     "captured_at": item.get("captured_at") or captured_at,
-                }
-                for item in cards
-            ]
+                })
+            cards = normalized_cards
             primary = next((item for item in cards if item.get("symbol") == "INTC"), None)
             primary = primary or (cards[0] if cards else {
                 "is_mock": False,

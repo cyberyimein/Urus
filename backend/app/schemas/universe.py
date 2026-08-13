@@ -52,7 +52,11 @@ class InstrumentConfig(BaseModel):
     symbol: str = Field(min_length=1, max_length=16)
     display_name: str = Field(min_length=1, max_length=128)
     asset_type: Literal["market", "etf", "equity"]
-    theme: str = Field(min_length=1, max_length=64)
+    # ``theme`` remains the primary/backwards-compatible label. ``themes`` is
+    # the canonical collection so a symbol can belong to several cross-cutting
+    # concepts (for example, AI infrastructure and semiconductors).
+    theme: str = Field(default="", max_length=64)
+    themes: list[str] = Field(default_factory=list, max_length=12)
     enabled: bool = True
     roles: UniverseRoles = Field(default_factory=UniverseRoles)
     benchmarks: UniverseBenchmarks = Field(default_factory=UniverseBenchmarks)
@@ -67,7 +71,7 @@ class InstrumentConfig(BaseModel):
             raise ValueError("Symbol 只能包含大写字母、数字、点和连字符")
         return symbol
 
-    @field_validator("display_name", "theme")
+    @field_validator("display_name")
     @classmethod
     def strip_required(cls, value: str) -> str:
         value = value.strip()
@@ -75,8 +79,43 @@ class InstrumentConfig(BaseModel):
             raise ValueError("字段不能为空")
         return value
 
+    @field_validator("theme", mode="before")
+    @classmethod
+    def strip_primary_theme(cls, value: str | None) -> str:
+        return str(value or "").strip()
+
+    @field_validator("themes", mode="before")
+    @classmethod
+    def normalize_themes(cls, value: object) -> list[str]:
+        if value is None or value == "":
+            return []
+        values = [value] if isinstance(value, str) else value
+        if not isinstance(values, (list, tuple, set)):
+            raise ValueError("主题必须是字符串列表")
+        normalized: list[str] = []
+        for entry in values:
+            theme = str(entry).strip()
+            if not theme:
+                continue
+            if len(theme) > 64:
+                raise ValueError("单个主题不能超过 64 个字符")
+            if theme not in normalized:
+                normalized.append(theme)
+        return normalized
+
     @model_validator(mode="after")
     def validate_roles(self) -> "InstrumentConfig":
+        # A legacy payload may only contain ``theme``. When the canonical
+        # ``themes`` field is explicitly supplied, it is authoritative even
+        # if a response round-trip carries a stale legacy ``theme`` value.
+        themes = list(self.themes)
+        explicit_themes = "themes" in self.model_fields_set
+        if not explicit_themes and not themes and self.theme:
+            themes = [self.theme]
+        if not themes:
+            raise ValueError("至少需要填写一个主题")
+        self.themes = themes
+        self.theme = themes[0]
         if self.roles.cta_proxy and not self.benchmarks.cta_proxy_for:
             raise ValueError("CTA proxy 必须填写代表的期货或风险因子")
         if self.roles.options_collection and not self.collection.options:

@@ -2,7 +2,7 @@ import { mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import DecisionReportTab from '@/components/research/DecisionReportTab.vue'
-import type { DecisionReport } from '@/types/research'
+import type { DecisionReport, TechnicalReport } from '@/types/research'
 
 const report: DecisionReport = {
   schema_version: 'urus.equity_decision.v3',
@@ -48,13 +48,37 @@ const report: DecisionReport = {
   disclaimer: 'Research only.',
 }
 
+const technical: TechnicalReport = {
+  instruments: {
+    themes: {
+      半导体: [{
+        symbol: 'NVDA',
+        trend: '高于 MA20',
+        quote: { last_price: 176.2, change_percent: 1.4 },
+        technical: {
+          as_of: '2026-08-12',
+          returns_percent: { '1d': 1.4, '5d': 2.2, '20d': 6.8, '60d': 12.1, '252d': 88.4 },
+          moving_average: { '20d': 170, '50d': 164, '100d': 151, '200d': 128 },
+          rsi14: { value: 63.4, state: 'positive' },
+          macd_12_26_9: { dif: 2.4, dea: 1.8, histogram: 0.6 },
+          realized_volatility: { '20d': { value: 31.2 } },
+          atr14_percent: { value: 2.1 },
+          volume_effort_result: { volume_ratio_20d: 1.3, signal: 'normal_up' },
+          high_low_distance_percent: { '252d_high': -2.4, '252d_low': 78.1 },
+        },
+        relative_strength: { excess_returns_percent: { '5d': 1.1, '20d': 4.6, '60d': 9.2 } },
+      }],
+    },
+  },
+}
+
 afterEach(() => {
   document.body.innerHTML = ''
 })
 
 describe('DecisionReportTab', () => {
   it('renders a conclusion-first current-state report and opens a symbol drawer', async () => {
-    const wrapper = mount(DecisionReportTab, { props: { report } })
+    const wrapper = mount(DecisionReportTab, { props: { report, technical } })
 
     expect(wrapper.text()).toContain('当前市场状态')
     expect(wrapper.text()).toContain('趋势仍偏多，但软件扩散不足。')
@@ -71,6 +95,14 @@ describe('DecisionReportTab', () => {
     expect(document.body.querySelector('.inspection-drawer-shell')).not.toBeNull()
     expect(document.body.querySelector('.instrument-detail-drawer')?.getAttribute('role')).toBe('complementary')
     expect(document.body.querySelector('.instrument-detail-drawer')?.hasAttribute('aria-modal')).toBe(false)
+
+    const drawerTabs = document.body.querySelectorAll<HTMLButtonElement>('.drawer-tabs button')
+    expect(drawerTabs).toHaveLength(4)
+    drawerTabs[1].click()
+    await wrapper.vm.$nextTick()
+    expect(document.body.textContent).toContain('收益与均线')
+    expect(document.body.textContent).toContain('63.4')
+    expect(document.body.textContent).not.toContain('技术详情尚未单独投影')
   })
 
   it('keeps the technical report path visible when AI output is unavailable', () => {

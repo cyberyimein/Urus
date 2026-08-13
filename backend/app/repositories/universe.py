@@ -71,7 +71,7 @@ def default_universe(settings: Settings) -> list[InstrumentConfig]:
             "symbol": symbol,
             "display_name": symbol,
             "asset_type": asset_type,
-            "theme": THEMES.get(symbol, "个股观察" if asset_type == "equity" else "行业 ETF"),
+            "themes": [THEMES.get(symbol, "个股观察" if asset_type == "equity" else "行业 ETF")],
             "enabled": True,
             "roles": {
                 "market_benchmark": symbol in {"QQQ", "SPY"},
@@ -149,7 +149,7 @@ class InstrumentUniverseRepository:
         version.items = [
             InstrumentUniverseItemModel(
                 id=str(uuid4()), position=position, symbol=item.symbol, display_name=item.display_name,
-                asset_type=item.asset_type, theme=item.theme, enabled=item.enabled,
+                asset_type=item.asset_type, theme=item.theme, themes=item.themes, enabled=item.enabled,
                 roles=item.roles.model_dump(mode="json"), benchmarks=item.benchmarks.model_dump(mode="json"),
                 collection=item.collection.model_dump(mode="json"), notes=item.notes,
             )
@@ -171,7 +171,7 @@ class InstrumentUniverseRepository:
     def response(version: InstrumentUniverseVersionModel) -> UniverseResponse:
         items = [InstrumentConfig.model_validate({
             "symbol": item.symbol, "display_name": item.display_name, "asset_type": item.asset_type,
-            "theme": item.theme, "enabled": item.enabled, "roles": item.roles,
+            "theme": item.theme, "themes": item.themes or [item.theme], "enabled": item.enabled, "roles": item.roles,
             "benchmarks": item.benchmarks, "collection": item.collection, "notes": item.notes,
         }) for item in version.items]
         return UniverseResponse(

@@ -70,6 +70,7 @@ def _technical(card: dict[str, Any]) -> dict[str, Any]:
         },
         "macd_12_26_9": indicators.get("macd_12_26_9"),
         "rsi14": indicators.get("rsi14"),
+        "rsi_context": indicators.get("rsi_context"),
         "volume_effort_result": indicators.get("volume_effort_result"),
         "quality_status": indicators.get("quality_status") or card.get("quality_status"),
         "warnings": indicators.get("warnings") or history.get("warnings") or [],

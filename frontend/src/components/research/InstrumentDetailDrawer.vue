@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 
+import type { TechnicalReport } from '@/types/research'
 import { actionLabel, evidence, list, optionFor, record, returnRange, text } from './reportHelpers'
 
 type Ranking = Record<string, unknown>
@@ -10,6 +11,7 @@ const props = defineProps<{
   symbol?: string
   rankings: Ranking[]
   optionContext: Ranking[]
+  technical?: TechnicalReport | null
   manual?: boolean
 }>()
 
@@ -23,6 +25,14 @@ const selected = computed(() => props.rankings.find((item) => String(item.symbol
 const option = computed(() => optionFor(props.optionContext, props.symbol))
 const pricing = computed(() => record(option.value.volatility_pricing))
 const forecast = computed(() => record(selected.value?.instrument_forecast))
+const technicalCards = computed(() => {
+  const themes = record(record(props.technical).instruments).themes as Record<string, unknown>
+  return Object.values(themes).flatMap((value) => Array.isArray(value) ? value.filter((item): item is Ranking => Boolean(item && typeof item === 'object')) : [])
+})
+const technicalCard = computed(() => technicalCards.value.find((item) => String(item.symbol) === String(props.symbol)) ?? null)
+const technicalMetrics = computed(() => record(technicalCard.value?.technical))
+const technicalQuote = computed(() => record(technicalCard.value?.quote))
+const technicalRelativeStrength = computed(() => record(technicalCard.value?.relative_strength))
 const selectedEvidence = computed(() => evidence(selected.value?.evidence))
 const optionEvidence = computed(() => option.value.evidence_path ? [{ path: String(option.value.evidence_path), observation: '期权结构上下文' }] : [])
 const allRisks = computed(() => [
@@ -35,6 +45,11 @@ watch(() => props.symbol, () => { activeTab.value = 'decision' })
 
 function value(item: Ranking | null, key: string, fallback = '—'): string {
   return text(item?.[key], fallback)
+}
+
+function metric(valueToFormat: unknown, fallback = '—'): string {
+  const item = record(valueToFormat)
+  return text(item.value ?? valueToFormat, fallback)
 }
 </script>
 
@@ -78,10 +93,40 @@ function value(item: Ranking | null, key: string, fallback = '—'): string {
           </section>
 
           <section v-else-if="activeTab === 'technical'" class="drawer-panel">
-            <div v-if="Object.keys(record(selected.technical)).length" class="drawer-fact-grid">
-              <div v-for="(item, key) in record(selected.technical)" :key="String(key)"><span>{{ key }}</span><strong>{{ text(item) }}</strong></div>
-            </div>
-            <div v-else class="drawer-empty"><strong>技术详情尚未单独投影</strong><span>阶段 B 会把价格、均线、MACD、相对强弱和量价图表接入这里。</span></div>
+            <template v-if="technicalCard">
+              <div class="drawer-fact-grid drawer-fact-grid-2">
+                <div><span>价格</span><strong>{{ text(technicalQuote.last_price ?? technicalQuote.regular_price) }}</strong></div>
+                <div><span>日变动</span><strong>{{ text(technicalQuote.change_percent) }}%</strong></div>
+                <div><span>趋势</span><strong>{{ text(technicalCard.trend) }}</strong></div>
+                <div><span>技术截至</span><strong>{{ text(technicalMetrics.as_of) }}</strong></div>
+              </div>
+              <div class="drawer-technical-section">
+                <span class="drawer-label">收益与均线</span>
+                <div class="drawer-fact-grid drawer-fact-grid-2">
+                  <div><span>收益 1D / 5D / 20D</span><strong>{{ text(record(technicalMetrics.returns_percent)['1d']) }} / {{ text(record(technicalMetrics.returns_percent)['5d']) }} / {{ text(record(technicalMetrics.returns_percent)['20d']) }}</strong></div>
+                  <div><span>收益 60D / 252D</span><strong>{{ text(record(technicalMetrics.returns_percent)['60d']) }} / {{ text(record(technicalMetrics.returns_percent)['252d']) }}</strong></div>
+                  <div><span>MA20 / MA50</span><strong>{{ text(record(technicalMetrics.moving_average)['20d']) }} / {{ text(record(technicalMetrics.moving_average)['50d']) }}</strong></div>
+                  <div><span>MA100 / MA200</span><strong>{{ text(record(technicalMetrics.moving_average)['100d']) }} / {{ text(record(technicalMetrics.moving_average)['200d']) }}</strong></div>
+                </div>
+              </div>
+              <div class="drawer-technical-section">
+                <span class="drawer-label">动量、波动与量价</span>
+                <div class="drawer-fact-grid drawer-fact-grid-2">
+                  <div><span>RSI14 · Wilder</span><strong>{{ metric(technicalMetrics.rsi14) }} · {{ text(record(technicalMetrics.rsi14).state) }}</strong></div>
+                  <div><span>MACD DIF / DEA / Hist</span><strong>{{ text(record(technicalMetrics.macd_12_26_9).dif) }} / {{ text(record(technicalMetrics.macd_12_26_9).dea) }} / {{ text(record(technicalMetrics.macd_12_26_9).histogram) }}</strong></div>
+                  <div><span>RV20 / ATR14%</span><strong>{{ metric(record(technicalMetrics.realized_volatility)['20d']) }} / {{ metric(technicalMetrics.atr14_percent) }}%</strong></div>
+                  <div><span>量比 / Effort</span><strong>{{ text(record(technicalMetrics.volume_effort_result).volume_ratio_20d) }}× / {{ text(record(technicalMetrics.volume_effort_result).signal) }}</strong></div>
+                </div>
+              </div>
+              <div class="drawer-technical-section">
+                <span class="drawer-label">相对强弱与位置</span>
+                <div class="drawer-fact-grid drawer-fact-grid-2">
+                  <div><span>超额收益 vs QQQ · 5D / 20D / 60D</span><strong>{{ text(record(technicalRelativeStrength.excess_returns_percent)['5d']) }} / {{ text(record(technicalRelativeStrength.excess_returns_percent)['20d']) }} / {{ text(record(technicalRelativeStrength.excess_returns_percent)['60d']) }}</strong></div>
+                  <div><span>距 252D 高 / 低</span><strong>{{ text(record(technicalMetrics.high_low_distance_percent)['252d_high']) }} / {{ text(record(technicalMetrics.high_low_distance_percent)['252d_low']) }}</strong></div>
+                </div>
+              </div>
+            </template>
+            <div v-else class="drawer-empty"><strong>暂无该标的技术证据</strong><span>当前报告的技术整理数据中没有找到 {{ selected.symbol }}，请查看技术报告的个股技术标签。</span></div>
           </section>
 
           <section v-else-if="activeTab === 'options'" class="drawer-panel">

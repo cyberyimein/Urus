@@ -107,7 +107,10 @@ onUnmounted(() => {
         <h1>{{ marketClock.headline }}</h1>
         <p>数据截至 {{ latestSnapshotRun ? formatDate(latestSnapshotRun.cutoff_time) : '尚无快照' }} · 下一次正式任务：收盘后复盘</p>
       </div>
-      <RouterLink class="primary-button home-analyze-button" to="/analysis/new">立即分析当前市场</RouterLink>
+      <div class="home-analyze-cta">
+        <RouterLink class="primary-button home-analyze-button" to="/analysis/new">打开手动分析</RouterLink>
+        <small>进入确认页，不会立即采集</small>
+      </div>
     </section>
 
     <section class="market-clock" :data-session="marketClock.session" aria-label="美东交易时间">

@@ -32,6 +32,7 @@ from app.models.run import RunModel, SnapshotModel, StepRunModel
 from app.models.runtime_settings import RuntimeSettingsModel
 from app.models.universe import InstrumentUniverseItemModel, InstrumentUniverseVersionModel
 from app.models.strategy import StrategyResearchDatasetModel
+from app.models.report_display import ReportDisplayProjectionModel
 
 __all__ = [
     "RunModel",
@@ -65,4 +66,5 @@ __all__ = [
     "AIModelTurnModel",
     "AITraceNodeModel",
     "AIToolCallModel",
+    "ReportDisplayProjectionModel",
 ]

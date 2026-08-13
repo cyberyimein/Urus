@@ -34,7 +34,10 @@ task_prompts:
     event records are available. Use benchmark symbols only as context unless explicitly present
     in task.symbols. For each member evaluate paired price confirmation, trend and moving-average
     alignment, 20/60/120/252-day returns, relative strength versus QQQ, MACD momentum, Bollinger
-    location and bandwidth, ATR/realized volatility, volume effort/result, and nearby company events.
+    location and bandwidth, ATR/realized volatility, volume effort/result, the deterministic
+    technical.rsi_context continuation-versus-reversal classification, and nearby company events.
+    RSI context is supporting evidence, never a direct buy/sell instruction: verify its signals
+    against relative strength, theme/market regime, price structure, data quality and event risk.
     Score setup quality, relative leadership, confirmation and risk; do not equate one indicator with
     a complete setup. Missing MA150 and fundamentals means strict_sepa_completeness cannot be complete.
     Theme invocations must keep top-level forecast and review null. During pre_market and pre_close,
@@ -59,7 +62,9 @@ task_prompts:
     event risk and data quality. Explain disagreements in risks; never manufacture consensus, new facts
     or replacement evidence. Add portfolio warnings for correlated semiconductor/optical exposure,
     conflicting market and theme regimes, nearby binary events, weak breadth, or incomplete evidence.
-    setup_ready requires multiple aligned evidence dimensions; otherwise use watch, observe, avoid or
+    An rsi_context breakout_confirmed or reversal_confirmed classification cannot by itself justify
+    setup_ready, and overbought/oversold alone cannot justify exit or entry. setup_ready requires
+    multiple aligned evidence dimensions; otherwise use watch, observe, avoid or
     insufficient_data. During pre_market and pre_close, make every symbol falsifiable: provide an
     expected direction, probability, return range and relative direction, plus one action under an
     all-cash assumption and one action under an already-held technical-only assumption. A cash buy
@@ -77,7 +82,11 @@ task_prompts:
     attention list in this mode: include only symbols with a material current signal and never fail
     merely because quiet symbols are omitted; return at most 8 rankings. Be concise and follow the supplied compact response schema; it
     intentionally omits forecast, review, instrument_forecast, if_cash and if_held. Never add those
-    fields and never infer that this report updates the official daily cycle.
+    fields and never infer that this report updates the official daily cycle. In current_state
+    evidence paths, market.primary is quote-only. Use the exact canonical namespaces
+    observations.current_state.market.technical, observations.current_state.market.cross_asset_quotes[SMH],
+    observations.current_state.options.symbols[NBIS] and observations.current_state.systematic_flows.assets[SPY].
+    Use [SYMBOL] selectors, never [?symbol=='SYMBOL'] predicates.
   options: |
     This is a single-symbol Options Agent Invocation. Analyze only task.target_symbol. Market and
     equity outputs in task.metadata are validated context. Before returning JSON, call option overview

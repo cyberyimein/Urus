@@ -34,7 +34,36 @@ export interface ResearchReportIndex {
     technical: string
     decision: string
     trace: string
+    display_manifest?: string
+    display_options?: string
   }
+  display_projection?: ReportDisplayManifest
+}
+
+export interface ReportDisplayManifest {
+  report_id?: string
+  schema_version: string
+  available: boolean
+  endpoint: string
+  options_endpoint?: string
+  source_snapshot_ids: string[]
+  content_sha256?: string | null
+  created_at?: string | null
+  data_quality?: Record<string, unknown>
+}
+
+export interface ReportDisplayOptionPayload {
+  schema_version: string
+  report_id: string
+  symbol: string
+  spot: number | null
+  as_of: string | null
+  overview?: Record<string, unknown>
+  expiration: string
+  data: Record<string, unknown>
+  source: Record<string, unknown>
+  chart_specs: Array<Record<string, unknown>>
+  data_quality: Record<string, unknown>
 }
 
 export interface ReportRunSummary {

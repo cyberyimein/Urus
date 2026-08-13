@@ -20,8 +20,8 @@ Urus Agent 是运行在 Urus 后端内部的、面向股票研究决策的无聊
 - `backend/app/repositories/strategy.py`：策略研究数据捕获逻辑。
 - `backend/scripts/capture_strategy_pair.py`：盘前/收盘前配对数据导出。
 - `backend/scripts/build_stage4b_decision_packet.py`：Stage 4B 决策包和任务投影生成器。
-- `.codex/skills/urus-equity-decision/`：股票决策 Skill 原型。
-- `.codex/skills/urus-options-decision/`：期权决策 Skill 原型。
+- `backend/app/urus_agent/skills/urus-equity-decision/`：股票决策 Skill 运行时资源。
+- `backend/app/urus_agent/skills/urus-options-decision/`：期权决策 Skill 运行时资源。
 - `docs/stage4b-ai-decision.md`：Stage 4B 当前决策包说明。
 - `docs/strategy-step4-datasets.md`：研究数据保存约定。
 - `docs/preset-agent-integration.md`：Urus 当前调用 Anomalo 的方式。
@@ -197,9 +197,10 @@ Runtime 不应知道 SQLAlchemy 查询细节、期权公式实现或 OpenRouter 
 - `urus-equity-decision`
 - `urus-options-decision`
 
-`.codex/skills` 中的现有原型现在作为产品 Skill 的唯一事实来源。后端 `SkillLoader` 直接加载该目录及其
-`references/*.md`，并将主文档与引用文件一起计算 hash；`backend/app/urus_agent/skills/` 只保留运行时位置说明，
-不得再写入另一份规则。
+生产运行时的 Skill 资源位于 `backend/app/urus_agent/skills/`，随 Urus 镜像一起打包；后端 `SkillLoader`
+只从该应用目录加载 `SKILL.md` 及其 `references/*.md`，并将主文档与引用文件一起计算 hash。
+`.codex/skills/` 是开发工具侧的独立原型目录，不属于 Urus 容器运行时，也不应作为部署依赖。
+修改 Skill 时必须同步更新应用目录及对应测试，避免容器内出现 `skill_not_found` 或规则漂移。
 
 ### 5.4 Tool Registry Module
 
@@ -215,7 +216,38 @@ Runtime 不应知道 SQLAlchemy 查询细节、期权公式实现或 OpenRouter 
 
 第一阶段工具只能读取数据或执行纯计算，不能写数据库事实、调用外部网页或下单。
 
-### 5.5 OpenRouter Provider Module
+### 5.5 Decision Packet 与 Report Display Projection
+
+Universe 中的 `InstrumentConfig.themes` 是标的主题的规范数组，`theme` 仅保留为首个主题的兼容主标签。一个标的可以同时进入多个主题分析任务；协调器不得把它强制归属为单一主题。旧版本只有 `theme` 的 Universe 在迁移或读取时应回退为单元素数组。
+
+决策输入和报告展示必须是两条独立的投影链路，唯一事实来源仍是不可变的
+Snapshot/SQLite 标准化数据：
+
+```text
+完整 Snapshot ──> urus.stage4b_decision_packet.v1 ──> Urus Agent
+             └─> urus.report_display_projection.v1 ──> 技术报告图表
+```
+
+`packet.py` 继续压缩 AI 输入，不包含完整 `by_strike`、Gamma Profile
+`points` 或全部合约报价。报告图表从 `report_display_projections` 表读取独立展示投影，按
+标的和到期日懒加载。展示投影至少保留：
+
+- 每个行权价的 Call/Put OI、Volume、DEX、GEX、Net；
+- 全部 Gamma Profile 点、所有 Flip level 和方向；
+- Spot、Max Pain、Expected Move、墙位和数据质量；
+- `source_snapshot_ids`、`source_run_ids` 与稳定 `content_sha256`。
+
+接口约定：
+
+```text
+GET /api/research-reports/{report_id}/display/manifest
+GET /api/research-reports/{report_id}/display/options/{symbol}?expiration=YYYY-MM-DD
+```
+
+AI 失败不能阻止展示投影生成；源 Snapshot 不存在时必须返回明确的不可恢复原因。删除
+报告时删除报告拥有的展示投影，但保留工作流 Run 和源 Snapshot。
+
+### 5.6 OpenRouter Provider Module
 
 职责：
 
@@ -765,8 +797,8 @@ Decision Session 持久化 `decision_phase`、
 
 现有两个 Skill 的输出契约作为初始来源：
 
-- `.codex/skills/urus-equity-decision/references/output-contract.md`
-- `.codex/skills/urus-options-decision/references/output-contract.md`
+- `backend/app/urus_agent/skills/urus-equity-decision/references/output-contract.md`
+- `backend/app/urus_agent/skills/urus-options-decision/references/output-contract.md`
 
 开发时应把它们转换为后端 Pydantic 模型和 JSON Schema，确保 Skill 文档、模型请求和本地校验使用同一个事实来源，禁止手工维护三份容易漂移的 Schema。
 

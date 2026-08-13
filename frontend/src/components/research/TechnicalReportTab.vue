@@ -1,10 +1,20 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 
-import type { TechnicalReport, TechnicalSection } from '@/types/research'
+import { api } from '@/api/client'
+import type {
+  ReportDisplayManifest,
+  ReportDisplayOptionPayload,
+  TechnicalReport,
+  TechnicalSection,
+} from '@/types/research'
 import { formatDate, formatNumber } from '@/utils/format'
 
-const props = defineProps<{ report: TechnicalReport | null; activeSection?: TechnicalSection }>()
+const props = defineProps<{
+  report: TechnicalReport | null
+  activeSection?: TechnicalSection
+  reportId?: string
+}>()
 const emit = defineEmits<{ (event: 'select-section', value: TechnicalSection): void }>()
 
 const selectedSection = computed<TechnicalSection>(() => props.activeSection ?? 'overview')
@@ -47,6 +57,42 @@ watch(optionExpirations, (value) => {
   if (!value.some((item) => String(item.expiration) === activeExpiration.value)) activeExpiration.value = String(value[0]?.expiration ?? '')
 }, { immediate: true })
 const selectedExpiration = computed(() => optionExpirations.value.find((item) => String(item.expiration) === activeExpiration.value) ?? optionExpirations.value[0] ?? {})
+const displayManifest = ref<ReportDisplayManifest | null>(null)
+const displayOption = ref<ReportDisplayOptionPayload | null>(null)
+const displayLoading = ref(false)
+const displayError = ref('')
+let displayRequestSequence = 0
+
+async function loadDisplayProjection(): Promise<void> {
+  const reportId = props.reportId
+  const symbol = activeOptionSymbol.value
+  const expiration = activeExpiration.value
+  const requestSequence = ++displayRequestSequence
+  displayOption.value = null
+  displayError.value = ''
+  if (!reportId || !symbol || !expiration) {
+    displayManifest.value = null
+    displayLoading.value = false
+    return
+  }
+  displayLoading.value = true
+  try {
+    if (!displayManifest.value || displayManifest.value.report_id !== reportId) {
+      displayManifest.value = await api.getReportDisplayManifest(reportId)
+    }
+    if (requestSequence !== displayRequestSequence) return
+    displayOption.value = await api.getReportDisplayOptions(reportId, symbol, expiration)
+  } catch (error) {
+    if (requestSequence !== displayRequestSequence) return
+    displayError.value = error instanceof Error ? error.message : '完整期权展示数据加载失败。'
+  } finally {
+    if (requestSequence === displayRequestSequence) displayLoading.value = false
+  }
+}
+
+watch([() => props.reportId, activeOptionSymbol, activeExpiration], () => {
+  void loadDisplayProjection()
+}, { immediate: true })
 const activeOptionOverview = computed(() => dict(activeOption.value.overview))
 const optionIvHvSpread = computed(() => number(activeOptionOverview.value.iv_hv_spread)
   ?? ((number(activeOptionOverview.value.iv) !== null && number(activeOptionOverview.value.hv_30d) !== null)
@@ -118,6 +164,43 @@ function rsiState(value: unknown): string {
   const state = String(dict(value).state ?? 'unavailable')
   return ({ overbought: '超买', oversold: '超卖', positive: '偏强', negative: '偏弱', unavailable: '历史快照未采集' } as Record<string, string>)[state] ?? state
 }
+function rsiContextLabel(value: unknown): string {
+  const classification = String(dict(value).classification ?? 'insufficient_data')
+  return ({
+    breakout_confirmed: '强势突破',
+    extended_intact: '高位趋势完整',
+    exhaustion_watch: '高位衰竭观察',
+    exit_confirmed: '退出风险确认',
+    breakdown_confirmed: '下跌加速',
+    oversold_downtrend: '超卖趋势未止',
+    reversal_watch: '反转观察',
+    reversal_confirmed: '反转初步确认',
+    base_forming: '筑底修复',
+    neutral: '常规动量',
+    insufficient_data: '复合判断不可用',
+  } as Record<string, string>)[classification] ?? classification
+}
+function rsiSignalLabel(key: string): string {
+  return ({
+    breakout_20d: '突破前20日高点',
+    breakout_60d: '突破前60日高点',
+    breakdown_20d: '跌破前20日低点',
+    breakdown_60d: '跌破前60日低点',
+    bearish_divergence_20d: '20日顶背离',
+    bullish_divergence_20d: '20日底背离',
+    crossed_below_70: 'RSI跌回70下方',
+    crossed_above_30: 'RSI重回30上方',
+    bullish_ma_alignment: '均线多头排列',
+    bearish_ma_alignment: '均线空头排列',
+    macd_strengthening_up: 'MACD上行动量增强',
+    macd_strengthening_down: 'MACD下行动量增强',
+    rsi_slope_3d_up: 'RSI三日斜率向上',
+    rsi_slope_3d_down: 'RSI三日斜率向下',
+    high_volume_close_high: '放量且收盘靠近最高',
+    high_volume_close_low: '放量且收盘靠近最低',
+    wide_range_1_5_atr: '振幅超过1.5 ATR',
+  } as Record<string, string>)[key] ?? key
+}
 function metricPercent(value: unknown, fallback = '不可用'): string {
   const numeric = metricNumber(value)
   return numeric === null ? fallback : `${numeric.toFixed(2)}%`
@@ -187,10 +270,16 @@ const instrumentRows = computed(() => activeThemeRows.value.map(dict).slice(0, 8
   const bollinger = dict(t.bollinger)
   const macd = dict(t.macd_12_26_9)
   const rsi = dict(t.rsi14)
+  const rsiContext = dict(t.rsi_context)
   const effort = dict(t.volume_effort_result)
   const relative20 = relativeValue(card, 'excess_returns_percent', '20d')
-  return { card, q, t, bollinger, macd, rsi, effort, relative20 }
+  return { card, q, t, bollinger, macd, rsi, rsiContext, effort, relative20 }
 }))
+const activeRsiContext = computed(() => dict(technical(activeSymbolCard.value).rsi_context))
+const activeRsiMetrics = computed(() => dict(activeRsiContext.value.metrics))
+const activeRsiSignals = computed(() => Object.entries(dict(activeRsiContext.value.signals))
+  .filter(([, enabled]) => enabled === true)
+  .map(([key]) => ({ key, label: rsiSignalLabel(key) })))
 const instrumentSort = ref<'change' | 'symbol' | 'macd' | 'volume'>('change')
 const sortedInstrumentRows = computed(() => [...instrumentRows.value].sort((left, right) => {
   if (instrumentSort.value === 'symbol') return String(left.card.symbol ?? '').localeCompare(String(right.card.symbol ?? ''))
@@ -202,13 +291,42 @@ const sortedInstrumentRows = computed(() => [...instrumentRows.value].sort((left
 const exposure = computed(() => dict(selectedExpiration.value.exposure ?? selectedExpiration.value.exposure_totals))
 const totals = computed(() => dict(selectedExpiration.value.exposure_totals ?? exposure.value.totals))
 const walls = computed(() => dict(selectedExpiration.value.walls ?? exposure.value.walls))
-const byStrike = computed(() => Array.isArray(exposure.value.by_strike) ? exposure.value.by_strike.map(dict).filter((item) => number(item.strike) !== null) : [])
+const displayExpiration = computed(() => dict(displayOption.value?.data))
+const displayStrikeStructure = computed(() => dict(displayExpiration.value.strike_structure))
+const byStrike = computed(() => Array.isArray(displayStrikeStructure.value.rows)
+  ? displayStrikeStructure.value.rows.map(dict).filter((item) => number(item.strike) !== null)
+  : [])
 const gammaProfile = computed(() => dict(selectedExpiration.value.spot_gamma_profile))
-const profilePoints = computed(() => Array.isArray(gammaProfile.value.points) ? gammaProfile.value.points.map(dict).filter((item) => number(item.spot ?? item.strike) !== null) : [])
+const displayGammaProfile = computed(() => dict(displayExpiration.value.gamma_profile))
+const profilePoints = computed(() => Array.isArray(displayGammaProfile.value.points)
+  ? displayGammaProfile.value.points.map(dict).filter((item) => number(item.spot ?? item.strike) !== null)
+  : [])
 const gammaRange = computed(() => {
   const values = profilePoints.value.map((item) => number(item.net_gex ?? item.gex)).filter((value): value is number => value !== null)
   const max = Math.max(Math.abs(Math.min(...values, 0)), Math.abs(Math.max(...values, 0)), 1)
   return { min: Math.min(...values, 0), max: Math.max(...values, 0), abs: max }
+})
+const profileSpot = computed(() => number(
+  displayGammaProfile.value.current_spot
+    ?? activeOption.value.spot
+    ?? gammaProfile.value.current_spot,
+))
+const profileGammaFlip = computed(() => number(
+  displayGammaProfile.value.primary_gamma_flip
+    ?? gammaProfile.value.primary_gamma_flip,
+))
+const profileGammaFlips = computed(() => {
+  const projected = (Array.isArray(displayGammaProfile.value.flips) ? displayGammaProfile.value.flips : [])
+    .map(dict)
+    .map((item) => ({
+      spot: number(item.spot),
+      isPrimary: Boolean(item.is_primary),
+    }))
+    .filter((item): item is { spot: number; isPrimary: boolean } => item.spot !== null)
+  if (projected.length) return projected
+  return profileGammaFlip.value === null
+    ? []
+    : [{ spot: profileGammaFlip.value, isPrimary: true }]
 })
 
 function wall(label: string, key: string): { label: string; strike: unknown; exposure: unknown } {
@@ -228,6 +346,9 @@ function strikeClass(item: Dict): string {
   const regime = String(item.gamma_regime ?? 'neutral').toLowerCase()
   if (regime.includes('positive')) return 'positive'
   if (regime.includes('negative')) return 'negative'
+  const netGex = number(item.net_gex ?? item.modeled_net_gex)
+  if (netGex !== null && netGex > 0) return 'positive'
+  if (netGex !== null && netGex < 0) return 'negative'
   return 'neutral'
 }
 function strikeFocus(item: Dict): string[] {
@@ -258,6 +379,25 @@ function profilePolyline(): string {
     return `${px.toFixed(2)},${Math.max(5, Math.min(95, py)).toFixed(2)}`
   }).join(' ')
 }
+function profileXForPrice(price: number | null): number | null {
+  if (price === null || !profilePoints.value.length) return null
+  const values = profilePoints.value
+    .map((item) => number(item.spot ?? item.strike))
+    .filter((value): value is number => value !== null)
+  if (!values.length) return null
+  const minX = Math.min(...values)
+  const maxX = Math.max(...values, minX + 1)
+  return Math.max(0, Math.min(100, ((price - minX) / (maxX - minX)) * 100))
+}
+const profileSpotX = computed(() => profileXForPrice(profileSpot.value))
+const profileGammaFlipX = computed(() => profileXForPrice(profileGammaFlip.value))
+const profileGammaFlipMarkers = computed(() => profileGammaFlips.value
+  .map((item, index) => ({
+    ...item,
+    x: profileXForPrice(item.spot),
+    key: `${item.spot}-${index}`,
+  }))
+  .filter((item) => item.x !== null))
 </script>
 
 <template>
@@ -339,7 +479,7 @@ function profilePolyline(): string {
             <td><span class="matrix-price">{{ text(row.q.last_price ?? row.q.regular_price) }}</span><small :class="signedClass(row.q.change_percent)">{{ percent(row.q.change_percent) }}</small></td>
             <td :class="signedClass(row.relative20)"><strong>{{ percent(row.relative20) }}</strong><small>5D {{ percent(relativeValue(row.card, 'excess_returns_percent', '5d')) }}</small></td>
             <td><span>{{ movingAverageState(row.card) }}</span><small>vs MA20 {{ distanceFromAverage(row.card, '20d') }}</small></td>
-            <td><strong>{{ text(row.rsi.value, '历史未采集') }}</strong><small>{{ rsiState(row.rsi) }}</small></td>
+            <td><strong>{{ text(row.rsi.value, '历史未采集') }}</strong><small>{{ row.rsiContext.available ? rsiContextLabel(row.rsiContext) : rsiState(row.rsi) }}</small></td>
             <td><span>{{ text(row.macd.momentum) }}</span><small>Hist {{ text(row.macd.histogram) }}</small></td>
             <td><span>{{ metricPercent(dict(row.t.realized_volatility)['20d']) }}</span><small>ATR {{ metricPercent(row.t.atr14_percent) }}</small></td>
             <td><span>量比 {{ text(row.effort.volume_ratio_20d) }}</span><small>{{ text(row.effort.signal) }}</small></td>
@@ -353,6 +493,7 @@ function profilePolyline(): string {
         <div class="technical-detail-sections">
           <section><h3>收益与趋势</h3><div class="instrument-detail-grid instrument-detail-grid-6"><div v-for="window in ['1d', '5d', '20d', '60d', '120d', '252d']" :key="window"><span>收益 {{ window.toUpperCase() }}</span><strong :class="signedClass(dict(technical(activeSymbolCard).returns_percent)[window])">{{ percent(dict(technical(activeSymbolCard).returns_percent)[window]) }}</strong></div></div><div class="instrument-detail-grid instrument-detail-grid-5"><div v-for="window in ['10d', '20d', '50d', '100d', '200d']" :key="window"><span>MA {{ window.replace('d', '') }}</span><strong>{{ text(movingAverage(activeSymbolCard, window)) }}</strong><small>价格距离 {{ distanceFromAverage(activeSymbolCard, window) }}</small></div></div></section>
           <section><h3>动量与波动</h3><div class="instrument-detail-grid"><div><span>RSI14 · Wilder</span><strong>{{ text(dict(technical(activeSymbolCard).rsi14).value, '历史快照未采集') }} · {{ rsiState(technical(activeSymbolCard).rsi14) }}</strong><small>日变动 {{ text(dict(technical(activeSymbolCard).rsi14).change) }}</small></div><div><span>MACD DIF / DEA / Hist</span><strong>{{ text(dict(technical(activeSymbolCard).macd_12_26_9).dif) }} / {{ text(dict(technical(activeSymbolCard).macd_12_26_9).dea) }} / {{ text(dict(technical(activeSymbolCard).macd_12_26_9).histogram) }}</strong><small>{{ text(dict(technical(activeSymbolCard).macd_12_26_9).momentum) }}</small></div><div><span>RV10 / RV20 / RV60</span><strong>{{ metricPercent(dict(technical(activeSymbolCard).realized_volatility)['10d']) }} / {{ metricPercent(dict(technical(activeSymbolCard).realized_volatility)['20d']) }} / {{ metricPercent(dict(technical(activeSymbolCard).realized_volatility)['60d']) }}</strong></div><div><span>ATR14 / ATR%</span><strong>{{ text(metricNumber(technical(activeSymbolCard).atr14)) }} / {{ metricPercent(technical(activeSymbolCard).atr14_percent) }}</strong></div></div></section>
+          <section v-if="activeRsiContext.available" class="rsi-context-section"><div class="rsi-context-heading"><div><h3>RSI 复合判断</h3><p>{{ text(activeRsiContext.interpretation) }}</p></div><span class="rsi-context-badge" :data-context="String(activeRsiContext.classification)">{{ rsiContextLabel(activeRsiContext) }}</span></div><div class="instrument-detail-grid"><div><span>{{ activeRsiContext.continuation_direction === 'down' ? '下跌延续分' : '上涨延续分' }}</span><strong>{{ text(activeRsiContext.continuation_score) }} / {{ text(activeRsiContext.score_scale) }}</strong></div><div><span>{{ activeRsiContext.continuation_direction === 'down' ? '反转修复分' : '衰竭风险分' }}</span><strong>{{ text(activeRsiContext.reversal_score) }} / {{ text(activeRsiContext.score_scale) }}</strong></div><div><span>RSI 3D / 5D 斜率</span><strong>{{ text(activeRsiMetrics.rsi_slope_3d) }} / {{ text(activeRsiMetrics.rsi_slope_5d) }}</strong></div><div><span>连续超买 / 超卖</span><strong>{{ text(activeRsiMetrics.overbought_days, '0') }} / {{ text(activeRsiMetrics.oversold_days, '0') }} 日</strong></div></div><div v-if="activeRsiSignals.length" class="rsi-signal-list"><span v-for="signal in activeRsiSignals" :key="signal.key">{{ signal.label }}</span></div><p class="report-note quality-note">程序生成的动量上下文，会提供给 AI 作为证据；不会单独转换成买入、卖出或持仓指令。</p></section>
           <section><h3>相对强弱与位置</h3><div class="instrument-detail-grid"><div><span>超额收益 vs QQQ · 5 / 20 / 60D</span><strong>{{ percent(relativeValue(activeSymbolCard, 'excess_returns_percent', '5d')) }} / {{ percent(relativeValue(activeSymbolCard, 'excess_returns_percent', '20d')) }} / {{ percent(relativeValue(activeSymbolCard, 'excess_returns_percent', '60d')) }}</strong></div><div><span>Beta · 20 / 60D</span><strong>{{ text(relativeValue(activeSymbolCard, 'beta', '20d')) }} / {{ text(relativeValue(activeSymbolCard, 'beta', '60d')) }}</strong></div><div><span>Correlation · 20 / 60D</span><strong>{{ text(relativeValue(activeSymbolCard, 'correlation', '20d')) }} / {{ text(relativeValue(activeSymbolCard, 'correlation', '60d')) }}</strong></div><div><span>距 52 周高 / 低</span><strong>{{ percent(dict(technical(activeSymbolCard).high_low_distance_percent)['252d_high']) }} / {{ percent(dict(technical(activeSymbolCard).high_low_distance_percent)['252d_low']) }}</strong></div></div></section>
           <section><h3>布林与量价</h3><div class="instrument-detail-grid"><div><span>Bollinger 1σ / 2σ / 3σ 位置</span><strong>{{ percent(bollingerBand(activeSymbolCard, '1_sigma').position_percent) }} / {{ percent(bollingerBand(activeSymbolCard, '2_sigma').position_percent) }} / {{ percent(bollingerBand(activeSymbolCard, '3_sigma').position_percent) }}</strong><small>2σ 带宽 {{ metricPercent(dict(technical(activeSymbolCard).bollinger).bandwidth_20) }}</small></div><div><span>成交量 / 20D 均量</span><strong>{{ text(dict(technical(activeSymbolCard).volume_effort_result).volume_ratio_20d) }}×</strong><small>{{ text(dict(technical(activeSymbolCard).volume_effort_result).effort) }} effort</small></div><div><span>Range / ATR · 收盘位置</span><strong>{{ text(dict(technical(activeSymbolCard).volume_effort_result).range_atr_ratio) }} / {{ ratioPercent(dict(technical(activeSymbolCard).volume_effort_result).close_location_ratio) }}</strong></div><div><span>Effort / Result 信号</span><strong>{{ text(dict(technical(activeSymbolCard).volume_effort_result).combination) }}</strong><small>{{ text(dict(technical(activeSymbolCard).volume_effort_result).signal) }} · {{ text(dict(technical(activeSymbolCard).volume_effort_result).signal_strength) }}</small></div></div></section>
         </div>
@@ -369,8 +510,8 @@ function profilePolyline(): string {
           <div class="report-card-title"><strong>{{ text(activeOption.symbol) }} · {{ text(selectedExpiration.expiration) }}</strong><span>spot {{ text(activeOption.spot ?? gammaProfile.current_spot) }}</span></div>
           <div class="report-metric-grid report-metric-grid-4 option-summary-metrics"><div class="report-metric"><span>综合 IV / HV30</span><strong>{{ text(activeOptionOverview.iv) }}% / {{ text(activeOptionOverview.hv_30d) }}%</strong></div><div class="report-metric"><span>IV − HV30</span><strong :class="signedClass(optionIvHvSpread)">{{ text(optionIvHvSpread) }} pp</strong></div><div class="report-metric"><span>IV / HV30</span><strong>{{ text(optionIvHvRatio) }}</strong></div><div class="report-metric"><span>波动率定价</span><strong>{{ optionIvHvRegime }}</strong><small>{{ text(activeOptionOverview.term_match_method, 'provider_composite_proxy') }}</small></div><div class="report-metric"><span>Max Pain</span><strong>{{ text(selectedExpiration.max_pain) }}</strong></div><div class="report-metric"><span>Expected Move</span><strong>{{ text(dict(selectedExpiration.expected_move).amount) }}</strong></div><div class="report-metric"><span>Call / Put DEX</span><strong>{{ text(totals.call_dex) }} / {{ text(totals.put_dex) }}</strong></div><div class="report-metric"><span>Net GEX</span><strong>{{ text(totals.modeled_net_gex) }}</strong></div><div class="report-metric"><span>Gamma Flip</span><strong>{{ text(gammaProfile.primary_gamma_flip) }}</strong></div><div class="report-metric"><span>Spot Gamma</span><strong>{{ text(gammaProfile.current_spot_net_gex) }}</strong></div><div class="report-metric"><span>正 / 负区间</span><strong>{{ text(selectedExpiration.gamma_zone_count, '0') }} / {{ text(Array.isArray(selectedExpiration.gamma_zones) ? selectedExpiration.gamma_zones.filter((item: unknown) => String(dict(item).sign).toLowerCase().includes('negative')).length : 0, '0') }}</strong></div><div class="report-metric"><span>Gamma 状态</span><strong>{{ text(gammaProfile.gamma_regime ?? selectedExpiration.gamma_regime) }}</strong></div></div>
           <div class="options-visual-grid">
-            <div><div class="visual-title"><strong>DEX / GEX 按行权价</strong><span>现价附近高亮</span></div><div v-if="byStrike.length" class="horizontal-exposure-scroll"><div class="horizontal-exposure-chart"><div class="horizontal-zero-axis"></div><div v-for="item in byStrike" :key="String(item.strike)" class="strike-column" :class="[`gamma-${strikeClass(item)}`, { 'focus-row': strikeFocus(item).length, 'focus-spot': strikeFocus(item).includes('Spot'), 'focus-wall': strikeFocus(item).some((label) => label.includes('Wall')), 'focus-max-pain': strikeFocus(item).includes('Max Pain') }]" :title="`${item.strike} · ${strikeFocus(item).join(', ')}`"><div class="vertical-exposure-bars"><span class="vertical-bar dex-vertical" :class="number(item.net_dex) !== null && number(item.net_dex)! >= 0 ? 'positive-bar' : 'negative-bar'" :style="barStyle(item.net_dex)"></span><span class="vertical-bar gex-vertical" :class="number(item.modeled_net_gex ?? item.net_gex) !== null && number(item.modeled_net_gex ?? item.net_gex)! >= 0 ? 'positive-bar' : 'negative-bar'" :style="barStyle(item.modeled_net_gex ?? item.net_gex)"></span></div><span class="horizontal-strike-label" :class="{ 'spot-nearby': strikeFocus(item).includes('Spot') }">{{ text(item.strike) }}</span><span class="horizontal-focus-badges"><small v-for="label in strikeFocus(item).slice(0, 2)" :key="label">{{ label.replace(' Gamma', '') }}</small></span></div></div></div><div v-else class="chart-unavailable">当前证据包没有保留按行权价明细。</div><div class="chart-legend"><span><i class="legend-dex"></i>DEX</span><span><i class="legend-gex"></i>GEX</span><span><i class="legend-positive"></i>正 Gamma</span><span><i class="legend-negative"></i>负 Gamma</span></div></div>
-            <div><div class="visual-title"><strong>Spot Gamma Profile / Flip</strong><span>{{ profilePoints.length ? `${profilePoints.length} points` : 'summary only' }}</span></div><div v-if="profilePoints.length" class="spot-profile-chart"><svg viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="Spot Gamma Profile"><line x1="0" y1="50" x2="100" y2="50" class="profile-zero-line"/><polyline :points="profilePolyline()" class="profile-line" fill="none"/><line v-if="gammaProfile.primary_gamma_flip != null" x1="50" y1="5" x2="50" y2="95" class="profile-flip-line"/></svg><div class="profile-axis-labels"><span>负 Gamma</span><span>0</span><span>正 Gamma</span></div></div><div v-else class="chart-unavailable">当前证据包未保留 profile points；仍保留 Gamma Flip、Spot Gamma 与区间摘要。</div></div>
+            <div><div class="visual-title"><strong>DEX / GEX 按行权价</strong><span>{{ displayLoading ? '正在读取完整链…' : byStrike.length ? `${byStrike.length} strikes · 完整展示投影` : '完整展示数据不可用' }}</span></div><div v-if="displayLoading" class="chart-unavailable">正在从报告展示投影读取完整行权价结构，不使用 AI 输入包。</div><div v-else-if="byStrike.length" class="horizontal-exposure-scroll"><div class="horizontal-exposure-chart"><div class="horizontal-zero-axis"></div><div v-for="item in byStrike" :key="String(item.strike)" class="strike-column" :class="[`gamma-${strikeClass(item)}`, { 'focus-row': strikeFocus(item).length, 'focus-spot': strikeFocus(item).includes('Spot'), 'focus-wall': strikeFocus(item).some((label) => label.includes('Wall')), 'focus-max-pain': strikeFocus(item).includes('Max Pain') }]" :title="`${item.strike} · ${strikeFocus(item).join(', ')}`"><div class="vertical-exposure-bars"><span class="vertical-bar dex-vertical" :class="number(item.net_dex) !== null && number(item.net_dex)! >= 0 ? 'positive-bar' : 'negative-bar'" :style="barStyle(item.net_dex)"></span><span class="vertical-bar gex-vertical" :class="number(item.modeled_net_gex ?? item.net_gex) !== null && number(item.modeled_net_gex ?? item.net_gex)! >= 0 ? 'positive-bar' : 'negative-bar'" :style="barStyle(item.modeled_net_gex ?? item.net_gex)"></span></div><span class="horizontal-strike-label" :class="{ 'spot-nearby': strikeFocus(item).includes('Spot') }">{{ text(item.strike) }}</span><span class="horizontal-focus-badges"><small v-for="label in strikeFocus(item).slice(0, 2)" :key="label">{{ label.replace(' Gamma', '') }}</small></span></div></div></div><div v-else class="chart-unavailable">{{ displayError || '完整行权价展示数据不可用；请查看数据质量说明。' }}</div><div class="chart-legend"><span><i class="legend-dex"></i>DEX</span><span><i class="legend-gex"></i>GEX</span><span><i class="legend-positive"></i>正 Gamma</span><span><i class="legend-negative"></i>负 Gamma</span></div></div>
+            <div><div class="visual-title"><strong>Spot Gamma Profile / Flip</strong><span>{{ displayLoading ? '正在读取…' : profilePoints.length ? `${profilePoints.length} points · 完整展示投影` : '完整 profile 不可用' }}</span></div><div v-if="displayLoading" class="chart-unavailable">正在从报告展示投影读取全部 Gamma Profile 点。</div><div v-else-if="profilePoints.length" class="spot-profile-chart"><svg viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="Spot Gamma Profile"><line x1="0" y1="50" x2="100" y2="50" class="profile-zero-line"/><polyline :points="profilePolyline()" class="profile-line" fill="none"/><line v-if="profileSpotX !== null" :x1="profileSpotX" y1="5" :x2="profileSpotX" y2="95" class="profile-spot-line"/><line v-if="profileGammaFlipX !== null" :x1="profileGammaFlipX" y1="5" :x2="profileGammaFlipX" y2="95" class="profile-flip-line"/><g v-for="marker in profileGammaFlipMarkers" :key="marker.key"><circle :cx="marker.x ?? 0" cy="50" r="2" class="profile-zero-point" :class="{ primary: marker.isPrimary }"/><title>{{ marker.isPrimary ? 'Gamma Flip' : '0 GEX' }} {{ text(marker.spot) }}</title></g></svg><div class="profile-axis-labels"><span>负 Gamma</span><span>0</span><span>正 Gamma</span></div><div class="profile-marker-labels"><span v-if="profileSpot !== null" class="profile-spot-label">现价 {{ text(profileSpot) }}</span><span v-for="marker in profileGammaFlipMarkers" :key="`label-${marker.key}`" :class="marker.isPrimary ? 'profile-flip-label' : 'profile-zero-label'">{{ marker.isPrimary ? 'Gamma Flip' : '0 GEX' }} {{ text(marker.spot) }}</span></div></div><div v-else class="chart-unavailable">{{ displayError || '完整 Gamma Profile 数据不可用；请查看数据质量说明。' }}</div></div>
           </div>
           <div class="option-walls-grid"><div v-for="row in wallRows" :key="row.label" class="wall-chip"><span>{{ row.label }}</span><strong>{{ text(row.strike) }}</strong><small>{{ text(row.exposure) }}</small></div></div>
           <div v-if="byStrike.length" class="report-table-wrap option-strike-table"><table class="report-table"><thead><tr><th>Strike</th><th>Gamma 区间</th><th>Call DEX</th><th>Put DEX</th><th>Net DEX</th><th>Net GEX</th><th>关注</th></tr></thead><tbody><tr v-for="item in byStrike" :key="String(item.strike)" :class="`gamma-row-${strikeClass(item)}`"><td><strong>{{ text(item.strike) }}</strong></td><td><span :class="`gamma-regime-tag gamma-${strikeClass(item)}`">{{ strikeClass(item) }}</span></td><td>{{ text(item.call_dex) }}</td><td>{{ text(item.put_dex) }}</td><td>{{ text(item.net_dex) }}</td><td>{{ text(item.modeled_net_gex ?? item.net_gex) }}</td><td><span v-for="label in strikeFocus(item)" :key="label" class="focus-label">{{ label }}</span><span v-if="!strikeFocus(item).length" class="subtle">—</span></td></tr></tbody></table></div>

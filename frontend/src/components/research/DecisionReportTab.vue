@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
-import type { DecisionReport } from '@/types/research'
+import type { DecisionReport, TechnicalReport } from '@/types/research'
 import { formatDate } from '@/utils/format'
 import AttentionTable from './AttentionTable.vue'
 import DecisionFailureState from './DecisionFailureState.vue'
@@ -12,6 +12,7 @@ import { list, record, records, text } from './reportHelpers'
 
 const props = defineProps<{
   report: DecisionReport | null
+  technical?: TechnicalReport | null
   status?: string
   errorMessage?: string | null
   selectedSymbol?: string
@@ -111,6 +112,7 @@ function listText(value: unknown): string {
       :symbol="selectedSymbol"
       :rankings="rankings"
       :option-context="optionContext"
+      :technical="technical"
       :manual="isManual"
       @close="emit('close-symbol')"
       @focus-evidence="emit('focus-evidence', $event)"

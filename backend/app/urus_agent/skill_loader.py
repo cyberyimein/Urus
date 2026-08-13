@@ -21,10 +21,9 @@ class SkillLoader:
     """Load versioned, context-only Skill documents for Urus Agent."""
 
     def __init__(self, root: Path | None = None) -> None:
-        # The project-level .codex/skills tree is the single authoring source
-        # shared by the runtime and developer tooling.  A caller can still
-        # inject a temporary root for tests.
-        self.root = root or Path(__file__).resolve().parents[3] / ".codex" / "skills"
+        # Runtime skills are application resources, not Codex tooling.  A
+        # caller can inject a temporary root for tests.
+        self.root = root or Path(__file__).resolve().parent / "skills"
 
     def load(self, name: str) -> SkillDefinition:
         skill_dir = self.root / name

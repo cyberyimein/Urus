@@ -16,6 +16,8 @@ import type {
   RawResponsePayload,
   ResearchReportIndex,
   ResearchReportPayload,
+  ReportDisplayManifest,
+  ReportDisplayOptionPayload,
   TechnicalReport,
   TraceNodeDetail,
 } from '@/types/research'
@@ -94,10 +96,22 @@ export const api = {
     request<ResearchReportIndex[]>(`/research-reports?limit=${encodeURIComponent(String(limit))}`),
   getResearchReport: (reportId: string) =>
     request<ResearchReportPayload>(`/research-reports/${encodeURIComponent(reportId)}`),
+  deleteResearchReport: (reportId: string) =>
+    request<{ report_id: string; deleted: boolean }>(`/research-reports/${encodeURIComponent(reportId)}`, {
+      method: 'DELETE',
+    }),
   getTechnicalReport: (reportId: string) =>
     request<TechnicalReport>(`/research-reports/${encodeURIComponent(reportId)}/technical`),
   getDecisionReport: (reportId: string) =>
     request<DecisionReport>(`/research-reports/${encodeURIComponent(reportId)}/decision`),
+  getReportDisplayManifest: (reportId: string) =>
+    request<ReportDisplayManifest>(`/research-reports/${encodeURIComponent(reportId)}/display/manifest`),
+  getReportDisplayOptions: (reportId: string, symbol: string, expiration?: string) => {
+    const query = expiration ? `?expiration=${encodeURIComponent(expiration)}` : ''
+    return request<ReportDisplayOptionPayload>(
+      `/research-reports/${encodeURIComponent(reportId)}/display/options/${encodeURIComponent(symbol)}${query}`,
+    )
+  },
   getDecisionTrace: (reportId: string) =>
     request<DecisionTraceGraph>(`/research-reports/${encodeURIComponent(reportId)}/trace`),
   getTraceNode: (reportId: string, nodeId: string) =>

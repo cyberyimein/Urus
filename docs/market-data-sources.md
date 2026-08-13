@@ -39,6 +39,7 @@
 - `market.history.technical_indicators`：QQQ 技术指标及各项 `as_of`、`sample_count`、`source`。
 - `market.history.technical_indicators.macd_12_26_9`：收盘日线 MACD 的 DIF、DEA、柱体、交叉和动量状态。
 - `market.history.technical_indicators.volume_effort_result`：成交量相对 20 日均量、真实波幅、收盘位置和放量/缩量信号；`combination` 保留放量/正常量/缩量 × 上涨/下跌/横盘的完整 3×3 组合，前端会将原来归并为中性的组合明确显示；缺成交量时为 `unavailable`。
+- `market.history.technical_indicators.rsi_context`：基于 Wilder RSI14、此前 20/60 日高低点、均线、MACD、量价和 ATR 生成延续/反转评分，区分 `breakout_confirmed`、`exhaustion_watch`、`breakdown_confirmed`、`reversal_watch` 等状态。只提供研究上下文，不直接代表买入或卖出。
 - `instrument_cards`：3A QQQ 基准、核心 ETF 和公开关注股的快照、日线收益、技术指标、主题分组和相对 QQQ 强弱；每张卡显式保留 `provider`、`source_mode`、`captured_at`。
 - `instrument.quota_audit`：3A 采集前后订阅/历史额度快照及变化量。
 - 所有宏观观测保留 `as_of`；Yahoo 数据不会伪装成实时行情。

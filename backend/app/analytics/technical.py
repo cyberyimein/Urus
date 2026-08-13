@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from math import log, sqrt
 from statistics import fmean, pstdev
 from typing import Any
@@ -175,6 +175,16 @@ def calculate_technical_indicators(
     )
     result["volume_effort_result"] = volume_effort_result
     warnings.extend(str(item) for item in volume_effort_result.get("warnings", []))
+    result["rsi_context"] = _calculate_rsi_context(
+        clean_bars,
+        rsi14=rsi14,
+        moving_average=result["moving_average"],
+        macd=macd,
+        volume_effort_result=volume_effort_result,
+        atr14=atr14_value,
+        as_of=as_of,
+        source=source,
+    )
 
     available_keys = {
         "realized_volatility_20d",
@@ -220,25 +230,7 @@ def _calculate_rsi(
             "warnings": warnings,
         }
 
-    changes = [closes[index] - closes[index - 1] for index in range(1, len(closes))]
-    gains = [max(change, 0.0) for change in changes]
-    losses = [max(-change, 0.0) for change in changes]
-    average_gain = fmean(gains[:window])
-    average_loss = fmean(losses[:window])
-
-    def rsi(gain: float, loss: float) -> float:
-        if loss == 0:
-            return 100.0 if gain > 0 else 50.0
-        if gain == 0:
-            return 0.0
-        relative_strength = gain / loss
-        return 100 - (100 / (1 + relative_strength))
-
-    values = [rsi(average_gain, average_loss)]
-    for index in range(window, len(changes)):
-        average_gain = ((average_gain * (window - 1)) + gains[index]) / window
-        average_loss = ((average_loss * (window - 1)) + losses[index]) / window
-        values.append(rsi(average_gain, average_loss))
+    values = [value for value in _wilder_rsi_series(closes, window) if value is not None]
 
     value = values[-1]
     previous = values[-2] if len(values) > 1 else None
@@ -266,6 +258,319 @@ def _calculate_rsi(
         "thresholds": {"oversold": 30, "overbought": 70},
         "warnings": warnings,
     }
+
+
+def _wilder_rsi_series(closes: list[float], window: int) -> list[float | None]:
+    """Return a Wilder RSI series aligned one-to-one with ``closes``."""
+    series: list[float | None] = [None] * len(closes)
+    if len(closes) < window + 1:
+        return series
+
+    changes = [closes[index] - closes[index - 1] for index in range(1, len(closes))]
+    gains = [max(change, 0.0) for change in changes]
+    losses = [max(-change, 0.0) for change in changes]
+    average_gain = fmean(gains[:window])
+    average_loss = fmean(losses[:window])
+
+    def rsi(gain: float, loss: float) -> float:
+        if loss == 0:
+            return 100.0 if gain > 0 else 50.0
+        if gain == 0:
+            return 0.0
+        relative_strength = gain / loss
+        return 100 - (100 / (1 + relative_strength))
+
+    series[window] = rsi(average_gain, average_loss)
+    for change_index in range(window, len(changes)):
+        average_gain = ((average_gain * (window - 1)) + gains[change_index]) / window
+        average_loss = ((average_loss * (window - 1)) + losses[change_index]) / window
+        series[change_index + 1] = rsi(average_gain, average_loss)
+    return series
+
+
+def _calculate_rsi_context(
+    bars: list[dict[str, object]],
+    *,
+    rsi14: dict[str, object],
+    moving_average: object,
+    macd: dict[str, object],
+    volume_effort_result: dict[str, object],
+    atr14: float | None,
+    as_of: str | None,
+    source: str,
+) -> dict[str, object]:
+    """Classify extreme RSI as continuation or reversal evidence.
+
+    RSI is deliberately not converted into a direct buy/sell label.  The
+    deterministic context combines prior-range breaks, trend, momentum and
+    completed-bar volume/price response.  Relative strength and event risk
+    remain separate evidence dimensions for the decision Agent.
+    """
+    unavailable = {
+        "available": False,
+        "quality_status": "unavailable",
+        "zone": "unavailable",
+        "classification": "insufficient_data",
+        "continuation_direction": "none",
+        "continuation_score": 0,
+        "reversal_score": 0,
+        "score_scale": 8,
+        "signals": {},
+        "metrics": {},
+        "interpretation": "RSI 复合状态所需日线样本不足。",
+        "as_of": as_of,
+        "source": source,
+        "method": "urus_rsi_context_v1",
+        "warnings": ["RSI 复合状态至少需要 RSI14 的当前值与前值。"],
+    }
+    current_rsi = _as_float(rsi14.get("value"))
+    previous_rsi = _as_float(rsi14.get("previous_value"))
+    if current_rsi is None or previous_rsi is None or len(bars) < RSI_WINDOW + 2:
+        return unavailable
+
+    closes = [float(bar["close"]) for bar in bars]
+    highs = [float(bar["high"]) for bar in bars]
+    lows = [float(bar["low"]) for bar in bars]
+    current_close = closes[-1]
+    rsi_series = _wilder_rsi_series(closes, RSI_WINDOW)
+    valid_rsi = [value for value in rsi_series if value is not None]
+
+    def prior_high(window: int) -> float | None:
+        values = highs[max(0, len(highs) - window - 1) : -1]
+        return max(values) if values else None
+
+    def prior_low(window: int) -> float | None:
+        values = lows[max(0, len(lows) - window - 1) : -1]
+        return min(values) if values else None
+
+    prior_high_20d = prior_high(20)
+    prior_high_60d = prior_high(60)
+    prior_low_20d = prior_low(20)
+    prior_low_60d = prior_low(60)
+    breakout_20d = prior_high_20d is not None and current_close > prior_high_20d
+    breakout_60d = prior_high_60d is not None and current_close > prior_high_60d
+    breakdown_20d = prior_low_20d is not None and current_close < prior_low_20d
+    breakdown_60d = prior_low_60d is not None and current_close < prior_low_60d
+
+    divergence_start = max(RSI_WINDOW, len(bars) - 20)
+    split = max(divergence_start + 1, len(bars) - 5)
+    prior_indices = [index for index in range(divergence_start, split) if rsi_series[index] is not None]
+    recent_indices = [index for index in range(split, len(bars)) if rsi_series[index] is not None]
+    bearish_divergence = False
+    bullish_divergence = False
+    if prior_indices and recent_indices:
+        prior_high_index = max(prior_indices, key=lambda index: highs[index])
+        recent_high_index = max(recent_indices, key=lambda index: highs[index])
+        prior_low_index = min(prior_indices, key=lambda index: lows[index])
+        recent_low_index = min(recent_indices, key=lambda index: lows[index])
+        bearish_divergence = (
+            highs[recent_high_index] > highs[prior_high_index]
+            and float(rsi_series[recent_high_index]) <= float(rsi_series[prior_high_index]) - 3
+        )
+        bullish_divergence = (
+            lows[recent_low_index] < lows[prior_low_index]
+            and float(rsi_series[recent_low_index]) >= float(rsi_series[prior_low_index]) + 3
+        )
+
+    rsi_slope_3d = current_rsi - valid_rsi[-4] if len(valid_rsi) >= 4 else None
+    rsi_slope_5d = current_rsi - valid_rsi[-6] if len(valid_rsi) >= 6 else None
+    overbought_days = _consecutive_count(valid_rsi, lambda value: value >= 70)
+    oversold_days = _consecutive_count(valid_rsi, lambda value: value <= 30)
+    crossed_below_70 = previous_rsi >= 70 and current_rsi < 70
+    crossed_above_30 = previous_rsi <= 30 and current_rsi > 30
+
+    averages = moving_average if isinstance(moving_average, dict) else {}
+    ma10 = _as_float(averages.get("10d"))
+    ma20 = _as_float(averages.get("20d"))
+    ma50 = _as_float(averages.get("50d"))
+    ma200 = _as_float(averages.get("200d"))
+    bullish_ma = (
+        ma20 is not None
+        and ma50 is not None
+        and current_close > ma20 > ma50
+        and (ma200 is None or ma50 > ma200)
+    )
+    bearish_ma = (
+        ma20 is not None
+        and ma50 is not None
+        and current_close < ma20 < ma50
+        and (ma200 is None or ma50 < ma200)
+    )
+    below_ma10 = ma10 is not None and current_close < ma10
+    above_ma10 = ma10 is not None and current_close > ma10
+
+    volume_ratio = _as_float(volume_effort_result.get("volume_ratio_20d"))
+    close_location = _as_float(volume_effort_result.get("close_location_ratio"))
+    range_atr_ratio = _as_float(volume_effort_result.get("range_atr_ratio"))
+    high_volume = volume_ratio is not None and volume_ratio >= 1.3
+    high_volume_close_high = high_volume and close_location is not None and close_location >= 0.75
+    high_volume_close_low = high_volume and close_location is not None and close_location <= 0.25
+    wide_range = range_atr_ratio is not None and range_atr_ratio >= 1.5
+    volume_signal = str(volume_effort_result.get("signal") or "")
+
+    histogram = _as_float(macd.get("histogram"))
+    previous_histogram = _as_float(macd.get("previous_histogram"))
+    macd_up = histogram is not None and histogram > 0 and (
+        previous_histogram is None or histogram >= previous_histogram
+    )
+    macd_down = histogram is not None and histogram < 0 and (
+        previous_histogram is None or histogram <= previous_histogram
+    )
+    macd_improving = (
+        histogram is not None and previous_histogram is not None and histogram > previous_histogram
+    )
+    macd_weakening = (
+        histogram is not None and previous_histogram is not None and histogram < previous_histogram
+    )
+
+    bullish_continuation_score = (
+        2 * int(breakout_20d)
+        + int(breakout_60d)
+        + int(high_volume)
+        + int(close_location is not None and close_location >= 0.75)
+        + int(macd_up)
+        + int(bullish_ma)
+        + int(rsi_slope_3d is not None and rsi_slope_3d >= 0)
+    )
+    bearish_exhaustion_score = (
+        2 * int(bearish_divergence)
+        + int(crossed_below_70)
+        + int(rsi_slope_3d is not None and rsi_slope_3d < 0)
+        + int(macd_weakening)
+        + int(volume_signal == "volume_down_distribution")
+        + 2 * int(below_ma10)
+    )
+    bearish_continuation_score = (
+        2 * int(breakdown_20d)
+        + int(breakdown_60d)
+        + int(high_volume_close_low)
+        + int(macd_down)
+        + int(bearish_ma)
+        + int(wide_range)
+        + int(rsi_slope_3d is not None and rsi_slope_3d <= 0)
+    )
+    bullish_reversal_score = (
+        2 * int(bullish_divergence)
+        + 2 * int(crossed_above_30)
+        + int(rsi_slope_3d is not None and rsi_slope_3d > 0)
+        + int(macd_improving)
+        + int(high_volume_close_high or volume_signal == "volume_up_demand")
+        + int(above_ma10)
+    )
+
+    if current_rsi >= 70 or crossed_below_70:
+        zone = "overbought" if current_rsi >= 70 else "cooling_from_overbought"
+        direction = "up"
+        continuation_score = bullish_continuation_score
+        reversal_score = bearish_exhaustion_score
+        if crossed_below_70 and reversal_score >= 4:
+            classification = "exit_confirmed"
+            interpretation = "RSI 已离开超买区且价格或动量结构同步转弱，退出风险得到确认。"
+        elif reversal_score >= 3:
+            classification = "exhaustion_watch"
+            interpretation = "高位动量出现衰竭证据，需要观察短期支撑与后续量价确认。"
+        elif continuation_score >= 5:
+            classification = "breakout_confirmed"
+            interpretation = "高动量突破得到趋势与量价确认；RSI 超买本身不构成退出信号。"
+        else:
+            classification = "extended_intact"
+            interpretation = "RSI 处于高位但趋势尚未破坏；避免仅因超买读数机械退出。"
+    elif current_rsi <= 30 or crossed_above_30:
+        zone = "oversold" if current_rsi <= 30 else "recovering_from_oversold"
+        direction = "down"
+        continuation_score = bearish_continuation_score
+        reversal_score = bullish_reversal_score
+        if crossed_above_30 and reversal_score >= 5 and continuation_score <= 2:
+            classification = "reversal_confirmed"
+            interpretation = "RSI 离开超卖区且价格、量能或动量同步修复，反转得到初步确认。"
+        elif reversal_score >= 3:
+            classification = "reversal_watch"
+            interpretation = "超卖后出现修复证据，但尚需价格结构继续确认。"
+        elif continuation_score >= 5:
+            classification = "breakdown_confirmed"
+            interpretation = "超卖伴随跌破与抛压确认，尚未形成可靠反转证据。"
+        else:
+            classification = "oversold_downtrend"
+            interpretation = "RSI 处于超卖区但下跌趋势尚未终止；超卖本身不是买入确认。"
+    else:
+        zone = "neutral"
+        direction = "none"
+        continuation_score = 0
+        reversal_score = 0
+        if 30 < current_rsi < 50 and bullish_divergence and rsi_slope_3d is not None and rsi_slope_3d > 0:
+            classification = "base_forming"
+            interpretation = "RSI 已脱离极弱区并出现底部修复迹象，但仍需趋势与相对强弱确认。"
+        else:
+            classification = "neutral"
+            interpretation = "RSI 未处于极值转换状态，使用常规趋势与量价证据判断。"
+
+    context_warnings: list[str] = []
+    if not macd.get("available"):
+        context_warnings.append("MACD 不完整，复合状态未获得完整动量确认。")
+    if not volume_effort_result.get("available"):
+        context_warnings.append("成交量或 OHLC 不完整，复合状态未获得完整量价确认。")
+    if ma50 is None:
+        context_warnings.append("MA50 不可用，复合状态未获得完整趋势排列确认。")
+
+    return {
+        "available": True,
+        "quality_status": "ok" if not context_warnings else "partial",
+        "zone": zone,
+        "classification": classification,
+        "continuation_direction": direction,
+        "continuation_score": min(continuation_score, 8),
+        "reversal_score": min(reversal_score, 8),
+        "score_scale": 8,
+        "signals": {
+            "breakout_20d": breakout_20d,
+            "breakout_60d": breakout_60d,
+            "breakdown_20d": breakdown_20d,
+            "breakdown_60d": breakdown_60d,
+            "bearish_divergence_20d": bearish_divergence,
+            "bullish_divergence_20d": bullish_divergence,
+            "crossed_below_70": crossed_below_70,
+            "crossed_above_30": crossed_above_30,
+            "bullish_ma_alignment": bullish_ma,
+            "bearish_ma_alignment": bearish_ma,
+            "macd_strengthening_up": macd_up,
+            "macd_strengthening_down": macd_down,
+            "rsi_slope_3d_up": rsi_slope_3d is not None and rsi_slope_3d > 0,
+            "rsi_slope_3d_down": rsi_slope_3d is not None and rsi_slope_3d < 0,
+            "high_volume_close_high": high_volume_close_high,
+            "high_volume_close_low": high_volume_close_low,
+            "wide_range_1_5_atr": wide_range,
+        },
+        "metrics": {
+            "rsi_slope_3d": round(rsi_slope_3d, 6) if rsi_slope_3d is not None else None,
+            "rsi_slope_5d": round(rsi_slope_5d, 6) if rsi_slope_5d is not None else None,
+            "overbought_days": overbought_days,
+            "oversold_days": oversold_days,
+            "volume_ratio_20d": volume_ratio,
+            "close_location_ratio": close_location,
+            "range_atr_ratio": range_atr_ratio,
+            "atr14": round(atr14, 6) if atr14 is not None else None,
+        },
+        "interpretation": interpretation,
+        "as_of": as_of,
+        "source": source,
+        "method": "urus_rsi_context_v1",
+        "warnings": context_warnings,
+    }
+
+
+def _as_float(value: object) -> float | None:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    return None
+
+
+def _consecutive_count(values: list[float], predicate: Callable[[float], bool]) -> int:
+    count = 0
+    for value in reversed(values):
+        if not predicate(value):
+            break
+        count += 1
+    return count
 
 
 def _bollinger_metric(

@@ -117,6 +117,39 @@ def test_build_decision_packet_compacts_and_pairs_observations() -> None:
     assert packet["execution_ready"] is False
 
 
+def test_decision_packet_exposes_rsi_context_as_structured_ai_evidence() -> None:
+    observation = _observation("pre_close", 700.0, 690.0)
+    instrument = observation["snapshot"]["payload"]["instrument_cards"][0]
+    instrument["history"]["technical_indicators"]["rsi_context"] = {
+        "available": True,
+        "zone": "overbought",
+        "classification": "breakout_confirmed",
+        "continuation_direction": "up",
+        "continuation_score": 6,
+        "reversal_score": 1,
+        "score_scale": 8,
+        "signals": {"breakout_20d": True},
+        "interpretation": "高动量突破得到量价确认。",
+    }
+    pair = {
+        "backup_schema": "urus.stage4b_strategy_pair.v1",
+        "dataset_key": "rsi-context-pair",
+        "pair": {
+            "observations": {
+                "pre_market": _observation("pre_market", 690.0, 685.0),
+                "pre_close": observation,
+            }
+        },
+        "events": {"records": []},
+    }
+
+    packet = build_decision_packet(pair)
+
+    context = packet["observations"]["pre_close"]["instruments"][0]["technical"]["rsi_context"]
+    assert context["classification"] == "breakout_confirmed"
+    assert context["continuation_score"] == 6
+
+
 def test_build_decision_packet_rejects_incomplete_pair() -> None:
     pair = {
         "backup_schema": "urus.stage4b_strategy_pair.v1",

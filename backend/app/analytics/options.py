@@ -80,9 +80,10 @@ def calculate_expected_move(contracts: list[OptionContract]) -> dict[str, float 
     }
 
 
-def _strike_gex_structure(
+def classify_strike_gex_structure(
     rows: list[dict[str, object]],
 ) -> tuple[list[dict[str, object]], list[dict[str, object]], float]:
+    """Apply the canonical noise threshold and derive contiguous GEX zones."""
     max_net_gex = max((abs(float(row["modeled_net_gex"])) for row in rows), default=0.0)
     noise_threshold = max_net_gex * 0.02
     for row in rows:
@@ -146,7 +147,7 @@ def trim_exposure_display(
     lower = spot * (1 - strike_range_percent / 100)
     upper = spot * (1 + strike_range_percent / 100)
     display_rows = [row for row in rows if lower <= float(row["strike"]) <= upper]
-    zones, sign_changes, noise_threshold = _strike_gex_structure(display_rows)
+    zones, sign_changes, noise_threshold = classify_strike_gex_structure(display_rows)
     exposure["calculation_strike_count"] = len(rows)
     exposure["display_strike_count"] = len(display_rows)
     exposure["by_strike"] = display_rows
@@ -304,7 +305,7 @@ def calculate_exposure(contracts: list[OptionContract]) -> dict[str, object]:
         for strike, values in sorted(strike_rows.items())
     ]
 
-    gamma_zones, sign_changes, gamma_noise_threshold = _strike_gex_structure(rows)
+    gamma_zones, sign_changes, gamma_noise_threshold = classify_strike_gex_structure(rows)
 
     def wall(metric: str, *, absolute: bool = False) -> dict[str, float] | None:
         if not rows:

@@ -34,6 +34,7 @@ THEME_BENCHMARKS = {
     "航天与新兴": ["SPY", "QQQ"],
     "其他关注": ["SPY", "QQQ"],
 }
+MAX_THEME_TASKS = 12
 MANUAL_CURRENT_STATE_MAX_COMPLETION_TOKENS = 8_000
 MANUAL_CURRENT_STATE_TIMEOUT_SECONDS = 240.0
 
@@ -111,7 +112,7 @@ class DecisionCoordinator:
         technical_report = build_technical_report(evidence)
         configured_theme_concurrency = max(
             1,
-            min(int(self.settings.urus_agent_theme_max_concurrency), len(THEME_ORDER)),
+            min(int(self.settings.urus_agent_theme_max_concurrency), MAX_THEME_TASKS),
         )
         # A caller-provided provider may carry mutable test/client state. Only
         # a factory guarantees an independent Adapter for each worker.
@@ -281,7 +282,11 @@ class DecisionCoordinator:
             for offset, (theme, symbols) in enumerate(
                 _theme_scopes(evidence, requested_symbols), start=2
             ):
-                benchmarks = [symbol for symbol in THEME_BENCHMARKS.get(theme, []) if symbol in available_symbols]
+                benchmarks = [
+                    symbol
+                    for symbol in THEME_BENCHMARKS.get(theme, ["QQQ"])
+                    if symbol in available_symbols
+                ]
                 theme_task = self._task(
                     request,
                     decision_session.id,
@@ -718,7 +723,11 @@ def _theme_scopes(evidence: EvidenceStore, requested_symbols: list[str]) -> list
     observations = evidence.packet.get("observations") or {}
     close = observations.get(evidence.current_phase) or {}
     items = [item for item in close.get("instruments", []) if isinstance(item, dict)]
-    owned: dict[str, list[str]] = {theme: [] for theme in THEME_ORDER}
+    # Themes are descriptive tags carried inside each instrument record. They
+    # must not multiply paid Agent calls: one symbol belongs to one primary
+    # analysis scope while the model can still inspect all of its tags.
+    primary_by_symbol: dict[str, str] = {}
+    custom_order: list[str] = []
     for item in items:
         symbol = str(item.get("symbol") or "").upper()
         if not symbol or symbol not in requested:
@@ -727,9 +736,29 @@ def _theme_scopes(evidence: EvidenceStore, requested_symbols: list[str]) -> list
         candidates = [label for label in labels if label and label != "ETF"]
         if not candidates and str(item.get("asset_type") or "").lower() != "etf":
             candidates = ["其他关注"]
-        owner = next((theme for theme in THEME_ORDER if theme in candidates), None)
-        if owner and symbol not in owned[owner]:
-            owned[owner].append(symbol)
+        candidates = list(dict.fromkeys(candidates))
+        if not candidates:
+            continue
+        primary = candidates[0]
+        primary_by_symbol[symbol] = primary
+        if primary not in THEME_ORDER and primary not in custom_order:
+            custom_order.append(primary)
+
+    used = set(primary_by_symbol.values())
+    theme_order = [theme for theme in THEME_ORDER if theme in used]
+    theme_order.extend(theme for theme in custom_order if theme in used)
+    if len(theme_order) > MAX_THEME_TASKS:
+        if "其他关注" in theme_order[:MAX_THEME_TASKS]:
+            allowed = theme_order[:MAX_THEME_TASKS]
+        else:
+            allowed = [*theme_order[: MAX_THEME_TASKS - 1], "其他关注"]
+    else:
+        allowed = theme_order
+    allowed_set = set(allowed)
+    owned: dict[str, list[str]] = {theme: [] for theme in allowed}
+    for symbol, primary in primary_by_symbol.items():
+        owner = primary if primary in allowed_set else "其他关注"
+        owned.setdefault(owner, []).append(symbol)
     order = {symbol: index for index, symbol in enumerate(requested_symbols)}
     return [
         (theme, sorted(symbols, key=lambda symbol: order.get(symbol, len(order))))

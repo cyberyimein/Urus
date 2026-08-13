@@ -4,6 +4,7 @@ from app.repositories.strategy import StrategyResearchRepository
 from app.repositories.agent import AIDecisionRepository
 from app.repositories.runtime_settings import RuntimeSettingsRepository
 from app.repositories.universe import InstrumentUniverseRepository
+from app.repositories.report_display import ReportDisplayRepository
 
 __all__ = [
     "AIDecisionRepository",
@@ -12,4 +13,5 @@ __all__ = [
     "RuntimeSettingsRepository",
     "InstrumentUniverseRepository",
     "StrategyResearchRepository",
+    "ReportDisplayRepository",
 ]

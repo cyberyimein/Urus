@@ -85,6 +85,11 @@ export const useResearchReportStore = defineStore('research-report', () => {
       }
       if (activeTab.value === 'decision') {
         try {
+          if (!technical.value) technical.value = await api.getTechnicalReport(id)
+        } catch (reason) {
+          setError(reason)
+        }
+        try {
           decision.value = await api.getDecisionReport(id)
         } catch (reason) {
           if (!(reason instanceof ApiError && reason.status === 409)) setError(reason)
@@ -147,9 +152,14 @@ export const useResearchReportStore = defineStore('research-report', () => {
     }
     if (tab === 'decision' && !decision.value && reportId.value) {
       try {
-        decision.value = await api.getDecisionReport(reportId.value)
+        if (!technical.value) technical.value = await api.getTechnicalReport(reportId.value)
       } catch (reason) {
         setError(reason)
+      }
+      try {
+        decision.value = await api.getDecisionReport(reportId.value)
+      } catch (reason) {
+        if (!(reason instanceof ApiError && reason.status === 409)) setError(reason)
       }
     }
     if (tab === 'trace') await loadTrace()

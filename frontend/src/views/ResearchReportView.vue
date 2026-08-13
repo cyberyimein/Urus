@@ -118,12 +118,14 @@ async function focusEvidence(path: string) {
         <TechnicalReportTab
           v-if="store.activeTab === 'technical'"
           :report="store.technical"
+          :report-id="store.report.report_id"
           :active-section="queryTechnicalSection"
           @select-section="selectTechnicalSection"
         />
         <DecisionReportTab
           v-else-if="store.activeTab === 'decision'"
           :report="store.decision"
+          :technical="store.technical"
           :status="store.report.status"
           :error-message="store.report.error_message || store.error"
           :selected-symbol="querySymbol"

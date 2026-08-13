@@ -7,13 +7,93 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core.errors import AppError
-from app.repositories.agent import AIDecisionRepository
+from app.models import RunModel
+from app.repositories.agent import AIDecisionRepository, ReportDeletionConflict
+from app.repositories.report_display import ReportDisplayRepository
+from app.urus_agent.display_projection import (
+    DISPLAY_PROJECTION_SCHEMA,
+    build_report_display_projection,
+    projection_content_sha256,
+)
 
 
 router = APIRouter()
 
 
-def _session_payload(model, repository: AIDecisionRepository | None = None) -> dict[str, Any]:
+def _display_manifest(model, display_repository: ReportDisplayRepository) -> dict[str, Any]:
+    projection = display_repository.get(model.id)
+    if projection is None:
+        return {
+            "schema_version": DISPLAY_PROJECTION_SCHEMA,
+            "available": False,
+            "endpoint": f"/api/research-reports/{model.id}/display",
+            "options_endpoint": f"/api/research-reports/{model.id}/display/options/{{symbol}}",
+            "source_snapshot_ids": [],
+            "content_sha256": None,
+            "data_quality": {
+                "source_available": False,
+                "warnings": ["展示投影尚未生成；请确认源 snapshot 仍然存在。"],
+                "missing_sections": ["options"],
+            },
+        }
+    payload = projection.payload_json if isinstance(projection.payload_json, dict) else {}
+    quality = payload.get("data_quality") if isinstance(payload.get("data_quality"), dict) else {}
+    return {
+        "schema_version": projection.schema_version,
+        "available": bool(quality.get("source_available", False)),
+        "endpoint": f"/api/research-reports/{model.id}/display",
+        "options_endpoint": f"/api/research-reports/{model.id}/display/options/{{symbol}}",
+        "source_snapshot_ids": list(projection.source_snapshot_ids or []),
+        "content_sha256": projection.content_sha256,
+        "created_at": projection.created_at,
+        "data_quality": quality,
+    }
+
+
+def _ensure_display_projection(
+    model,
+    repository: AIDecisionRepository,
+    display_repository: ReportDisplayRepository,
+):
+    existing = display_repository.get(model.id)
+    if existing is not None:
+        return existing
+    source_snapshot_ids: list[str] = []
+    source_run_ids: list[str] = []
+    for run in repository.runs_for_session(model.id):
+        source_snapshot_ids.extend(str(item) for item in (run.source_snapshot_ids or []) if item)
+        source_run_ids.extend(str(item) for item in (run.source_run_ids or []) if item)
+    source_snapshot_ids = list(dict.fromkeys(source_snapshot_ids))
+    source_run_ids = list(dict.fromkeys(source_run_ids))
+    if not source_snapshot_ids:
+        workflow_run = display_repository.session.get(RunModel, model.workflow_run_id)
+        if workflow_run is not None and workflow_run.snapshot_id:
+            source_snapshot_ids = [str(workflow_run.snapshot_id)]
+            source_run_ids = list(dict.fromkeys([*source_run_ids, str(workflow_run.id)]))
+    if not source_snapshot_ids:
+        return None
+    payload = build_report_display_projection(
+        display_repository.session,
+        report_id=model.id,
+        source_snapshot_ids=source_snapshot_ids,
+        source_run_ids=source_run_ids,
+        captured_at=model.cutoff_time,
+    )
+    return display_repository.save(
+        report_id=model.id,
+        payload=payload,
+        source_snapshot_ids=source_snapshot_ids,
+        source_run_ids=source_run_ids,
+        content_sha256=projection_content_sha256(payload),
+        schema_version=str(payload.get("schema_version") or DISPLAY_PROJECTION_SCHEMA),
+    )
+
+
+def _session_payload(
+    model,
+    repository: AIDecisionRepository | None = None,
+    display_repository: ReportDisplayRepository | None = None,
+) -> dict[str, Any]:
     policy = model.policy_json if isinstance(model.policy_json, dict) else {}
     payload = {
         "report_id": model.id,
@@ -48,7 +128,18 @@ def _session_payload(model, repository: AIDecisionRepository | None = None) -> d
             "technical": f"/api/research-reports/{model.id}/technical",
             "decision": f"/api/research-reports/{model.id}/decision",
             "trace": f"/api/research-reports/{model.id}/trace",
+            "display_manifest": f"/api/research-reports/{model.id}/display/manifest",
+            "display_options": f"/api/research-reports/{model.id}/display/options/{{symbol}}",
         },
+        "display_projection": (
+            _display_manifest(model, display_repository)
+            if display_repository is not None
+            else {
+                "schema_version": DISPLAY_PROJECTION_SCHEMA,
+                "available": False,
+                "endpoint": f"/api/research-reports/{model.id}/display",
+            }
+        ),
     }
     if repository is not None:
         payload["run_summary"] = repository.session_summary(model.id)
@@ -69,7 +160,11 @@ def list_research_reports(
     db: Session = Depends(get_db),
 ) -> list[dict[str, Any]]:
     repository = AIDecisionRepository(db)
-    return [_session_payload(item, repository) for item in repository.sessions_for_workflow(run_id)[:limit]]
+    display_repository = ReportDisplayRepository(db)
+    return [
+        _session_payload(item, repository, display_repository)
+        for item in repository.sessions_for_workflow(run_id)[:limit]
+    ]
 
 
 @router.get("/research-reports")
@@ -83,14 +178,17 @@ def list_all_research_reports(
     the workspace loads those resources only after a report is selected.
     """
     repository = AIDecisionRepository(db)
-    return [_session_payload(item, repository) for item in repository.list_sessions(limit)]
+    display_repository = ReportDisplayRepository(db)
+    return [_session_payload(item, repository, display_repository) for item in repository.list_sessions(limit)]
 
 
 @router.get("/research-reports/{report_id}")
 def get_research_report(report_id: str, db: Session = Depends(get_db)) -> dict[str, Any]:
     repository = AIDecisionRepository(db)
     model = _require(repository, report_id)
-    payload = _session_payload(model, repository)
+    display_repository = ReportDisplayRepository(db)
+    _ensure_display_projection(model, repository, display_repository)
+    payload = _session_payload(model, repository, display_repository)
     # The index/metadata request stays small.  The three tabs fetch their
     # payload independently so opening a report does not eagerly transfer the
     # technical packet and trace-adjacent JSON.
@@ -101,6 +199,107 @@ def get_research_report(report_id: str, db: Session = Depends(get_db)) -> dict[s
         "model_run_count": len(repository.runs_for_session(report_id)),
     }
     return payload
+
+
+@router.delete("/research-reports/{report_id}")
+def delete_research_report(report_id: str, db: Session = Depends(get_db)) -> dict[str, Any]:
+    repository = AIDecisionRepository(db)
+    if repository.get_session(report_id) is None:
+        raise AppError("找不到指定研究报告", code="research_report_not_found", status_code=404)
+    try:
+        repository.delete_session(report_id)
+    except ReportDeletionConflict as exc:
+        raise AppError(str(exc), code="research_report_delete_conflict", status_code=409) from exc
+    return {"report_id": report_id, "deleted": True}
+
+
+@router.get("/research-reports/{report_id}/display/manifest")
+def get_display_manifest(report_id: str, db: Session = Depends(get_db)) -> dict[str, Any]:
+    repository = AIDecisionRepository(db)
+    model = _require(repository, report_id)
+    display_repository = ReportDisplayRepository(db)
+    _ensure_display_projection(model, repository, display_repository)
+    return {
+        "report_id": report_id,
+        **_display_manifest(model, display_repository),
+    }
+
+
+@router.get("/research-reports/{report_id}/display")
+def get_display_projection(report_id: str, db: Session = Depends(get_db)) -> dict[str, Any]:
+    repository = AIDecisionRepository(db)
+    model = _require(repository, report_id)
+    display_repository = ReportDisplayRepository(db)
+    projection = _ensure_display_projection(model, repository, display_repository)
+    if projection is None:
+        raise AppError(
+            "展示投影不可用：找不到关联 source snapshot。",
+            code="display_projection_source_unavailable",
+            status_code=409,
+        )
+    return projection.payload_json
+
+
+@router.get("/research-reports/{report_id}/display/options/{symbol}")
+def get_display_options(
+    report_id: str,
+    symbol: str,
+    expiration: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    repository = AIDecisionRepository(db)
+    model = _require(repository, report_id)
+    display_repository = ReportDisplayRepository(db)
+    projection = _ensure_display_projection(model, repository, display_repository)
+    if projection is None:
+        raise AppError(
+            "展示投影不可用：源 snapshot 不存在或没有标准化期权数据。",
+            code="display_projection_source_unavailable",
+            status_code=409,
+        )
+    payload = projection.payload_json if isinstance(projection.payload_json, dict) else {}
+    symbols = ((payload.get("options") or {}).get("symbols") or {})
+    symbol_key = next((key for key in symbols if str(key).upper() == symbol.upper()), None)
+    if symbol_key is None:
+        raise AppError(
+            f"展示投影中没有 {symbol.upper()} 的期权数据。",
+            code="display_projection_symbol_not_found",
+            status_code=404,
+        )
+    symbol_payload = symbols[symbol_key]
+    expirations = symbol_payload.get("expirations") if isinstance(symbol_payload, dict) else {}
+    if not isinstance(expirations, dict) or not expirations:
+        raise AppError(
+            f"展示投影中没有 {symbol.upper()} 的到期日数据。",
+            code="display_projection_expiration_not_found",
+            status_code=404,
+        )
+    selected_expiration = expiration or next(iter(expirations))
+    if selected_expiration not in expirations:
+        raise AppError(
+            f"展示投影中没有 {symbol.upper()} {selected_expiration} 的数据。",
+            code="display_projection_expiration_not_found",
+            status_code=404,
+        )
+    prefix = f"options.symbols.{symbol_key}.expirations.{selected_expiration}"
+    chart_specs = [
+        item
+        for item in (payload.get("chart_specs") or [])
+        if isinstance(item, dict) and str(item.get("data_ref", "")).startswith(prefix)
+    ]
+    return {
+        "schema_version": projection.schema_version,
+        "report_id": report_id,
+        "symbol": symbol_key,
+        "spot": symbol_payload.get("spot"),
+        "as_of": symbol_payload.get("as_of"),
+        "overview": symbol_payload.get("overview") or {},
+        "expiration": selected_expiration,
+        "data": expirations[selected_expiration],
+        "source": payload.get("source") or {},
+        "chart_specs": chart_specs,
+        "data_quality": payload.get("data_quality") or {},
+    }
 
 
 @router.get("/research-reports/{report_id}/technical")

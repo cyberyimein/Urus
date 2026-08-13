@@ -14,10 +14,8 @@ import { RouterLink } from 'vue-router'
     <nav class="topnav" aria-label="主导航">
       <RouterLink to="/" active-class="active">首页</RouterLink>
       <RouterLink to="/research" active-class="active">研究中心</RouterLink>
-      <RouterLink to="/analysis/new" active-class="active">手动分析</RouterLink>
       <RouterLink to="/research/reports" active-class="active">历史报告</RouterLink>
       <RouterLink to="/settings" active-class="active">设置</RouterLink>
-      <RouterLink to="/operations" active-class="active">开发工具</RouterLink>
     </nav>
   </header>
 </template>

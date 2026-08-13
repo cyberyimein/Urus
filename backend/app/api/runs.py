@@ -30,7 +30,7 @@ def _execute_manual_analysis(session_factory, settings: Settings, run_id: str, s
                 RunCreateRequest(run_type="manual_analysis", symbols=symbols),
                 queued_run_id=run_id,
             )
-        except Exception:
+        except Exception as exc:
             logger.exception("manual analysis failed run_id=%s", run_id)
             run = service.repository.get_run(run_id)
             if run is not None and run.status in {"pending", "running"}:
@@ -40,7 +40,10 @@ def _execute_manual_analysis(session_factory, settings: Settings, run_id: str, s
                     run,
                     status="failed",
                     completed_at=utc_now(),
-                    error_message="手动分析后台任务异常终止。",
+                    # Keep the original exception visible in the progress
+                    # page. A generic message made a failed click look like
+                    # a report that had simply never been created.
+                    error_message=f"手动分析后台任务异常终止：{str(exc)[:1000]}",
                 )
 
 

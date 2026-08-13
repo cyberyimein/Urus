@@ -5,7 +5,7 @@ from datetime import datetime
 from uuid import uuid4
 
 from sqlalchemy.orm import Session
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.core.time import utc_now
 from app.models import (
@@ -14,9 +14,14 @@ from app.models import (
     AIModelTurnModel,
     AITraceNodeModel,
     AIToolCallModel,
+    ReportDisplayProjectionModel,
 )
 from app.urus_agent.contracts import AgentTask, DecisionResult
 from app.urus_agent.trace import TraceNodeRecord
+
+
+class ReportDeletionConflict(RuntimeError):
+    """Raised when a report is still being produced and cannot be removed."""
 
 
 class AIDecisionRepository:
@@ -287,6 +292,62 @@ class AIDecisionRepository:
 
     def get_session(self, session_id: str) -> AIDecisionSessionModel | None:
         return self.session.get(AIDecisionSessionModel, session_id)
+
+    def delete_session(self, session_id: str) -> bool:
+        """Delete one report and its Agent audit trail, preserving source data.
+
+        A report owns its decision runs, model turns, tool calls and trace
+        nodes. The workflow run and frozen snapshots remain available through
+        the operations and dataset views.
+        """
+
+        model = self.get_session(session_id)
+        if model is None:
+            return False
+        if model.status == "running":
+            raise ReportDeletionConflict("研究报告仍在生成中，完成后才能删除。")
+
+        child_sessions = list(
+            self.session.scalars(
+                select(AIDecisionSessionModel).where(
+                    AIDecisionSessionModel.parent_session_id == session_id
+                )
+            )
+        )
+        if child_sessions:
+            # The report JSON and review evidence are immutable. Re-parenting
+            # only this foreign-key-like field would leave those persisted
+            # references pointing at a deleted report, so keep the lineage
+            # intact and require the dependent reports to be handled first.
+            raise ReportDeletionConflict(
+                "该报告仍被后续研究报告引用，请先处理后续报告后再删除。"
+            )
+
+        decision_runs = self.runs_for_session(session_id)
+        decision_run_ids = [run.id for run in decision_runs]
+        # The chart projection is report-owned, but source runs and snapshots
+        # remain available for operations/history inspection.
+        self.session.execute(
+            delete(ReportDisplayProjectionModel).where(
+                ReportDisplayProjectionModel.report_id == session_id
+            )
+        )
+        self.session.execute(
+            delete(AITraceNodeModel).where(AITraceNodeModel.decision_session_id == session_id)
+        )
+        if decision_run_ids:
+            self.session.execute(
+                delete(AIToolCallModel).where(AIToolCallModel.decision_run_id.in_(decision_run_ids))
+            )
+            self.session.execute(
+                delete(AIModelTurnModel).where(AIModelTurnModel.decision_run_id.in_(decision_run_ids))
+            )
+            self.session.execute(
+                delete(AIDecisionRunModel).where(AIDecisionRunModel.id.in_(decision_run_ids))
+            )
+        self.session.delete(model)
+        self.session.commit()
+        return True
 
     def sessions_for_workflow(self, workflow_run_id: str) -> list[AIDecisionSessionModel]:
         statement = (

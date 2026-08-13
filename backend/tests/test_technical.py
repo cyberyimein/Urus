@@ -19,6 +19,23 @@ def _bars(count: int = 30) -> list[dict[str, object]]:
     return rows
 
 
+def _descending_bars(count: int = 80) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for index in range(count):
+        close = 200.0 - index
+        rows.append(
+            {
+                "date": f"2026-06-{index + 1:02d}",
+                "open": close + 0.5,
+                "high": close + 1.0,
+                "low": close - 1.0,
+                "close": close,
+                "volume": 1000.0,
+            }
+        )
+    return rows
+
+
 def test_daily_technical_indicators_include_required_metadata() -> None:
     result = calculate_technical_indicators(_bars(), source="test_history")
 
@@ -34,6 +51,104 @@ def test_daily_technical_indicators_include_required_metadata() -> None:
     assert result["rsi14"]["available"] is True
     assert result["rsi14"]["value"] == 100.0
     assert result["rsi14"]["state"] == "overbought"
+
+
+def test_rsi_context_distinguishes_confirmed_breakout_from_automatic_sell_signal() -> None:
+    bars = [{**bar, "volume": 1000.0} for bar in _bars(80)]
+    previous_close = float(bars[-2]["close"])
+    bars[-1] = {
+        **bars[-1],
+        "open": previous_close + 0.5,
+        "high": previous_close + 4.2,
+        "low": previous_close + 0.2,
+        "close": previous_close + 4.0,
+        "volume": 1800.0,
+    }
+
+    result = calculate_technical_indicators(bars, source="test_history")
+    context = result["rsi_context"]
+
+    assert result["rsi14"]["value"] >= 70
+    assert context["zone"] == "overbought"
+    assert context["classification"] == "breakout_confirmed"
+    assert context["continuation_direction"] == "up"
+    assert context["continuation_score"] >= 5
+    assert context["signals"]["breakout_20d"] is True
+    assert context["signals"]["high_volume_close_high"] is True
+    assert "sell" not in context["interpretation"].lower()
+
+
+def test_rsi_context_distinguishes_oversold_breakdown_from_reversal_candidate() -> None:
+    bars = _descending_bars()
+    previous_close = float(bars[-2]["close"])
+    bars[-1] = {
+        **bars[-1],
+        "open": previous_close - 0.5,
+        "high": previous_close - 0.2,
+        "low": previous_close - 5.0,
+        "close": previous_close - 4.8,
+        "volume": 2200.0,
+    }
+
+    result = calculate_technical_indicators(bars, source="test_history")
+    context = result["rsi_context"]
+
+    assert result["rsi14"]["value"] <= 30
+    assert context["zone"] == "oversold"
+    assert context["classification"] == "breakdown_confirmed"
+    assert context["continuation_direction"] == "down"
+    assert context["continuation_score"] >= 5
+    assert context["signals"]["breakdown_20d"] is True
+    assert context["signals"]["high_volume_close_low"] is True
+    assert context["reversal_score"] <= 2
+
+
+def test_rsi_context_confirms_recovery_only_after_rsi_leaves_oversold_zone() -> None:
+    closes = [200.0 - index for index in range(60)] + [142.0, 145.0, 149.0]
+    bars = [
+        {
+            "date": f"2026-recovery-{index:03d}",
+            "open": closes[index - 1] if index else close,
+            "high": max(close, closes[index - 1] if index else close) + 0.5,
+            "low": min(close, closes[index - 1] if index else close) - 0.5,
+            "close": close,
+            "volume": 1000.0,
+        }
+        for index, close in enumerate(closes)
+    ]
+
+    result = calculate_technical_indicators(bars, source="test_history")
+    context = result["rsi_context"]
+
+    assert result["rsi14"]["previous_value"] <= 30
+    assert result["rsi14"]["value"] > 30
+    assert context["signals"]["crossed_above_30"] is True
+    assert context["classification"] == "reversal_confirmed"
+    assert context["reversal_score"] >= 5
+
+
+def test_rsi_context_confirms_exit_risk_only_after_rsi_leaves_overbought_zone() -> None:
+    closes = [100.0 + index for index in range(60)] + [158.0, 155.0, 151.0]
+    bars = [
+        {
+            "date": f"2026-exit-{index:03d}",
+            "open": closes[index - 1] if index else close,
+            "high": max(close, closes[index - 1] if index else close) + 0.5,
+            "low": min(close, closes[index - 1] if index else close) - 0.5,
+            "close": close,
+            "volume": 1000.0,
+        }
+        for index, close in enumerate(closes)
+    ]
+
+    result = calculate_technical_indicators(bars, source="test_history")
+    context = result["rsi_context"]
+
+    assert result["rsi14"]["previous_value"] >= 70
+    assert result["rsi14"]["value"] < 70
+    assert context["signals"]["crossed_below_70"] is True
+    assert context["classification"] == "exit_confirmed"
+    assert context["reversal_score"] >= 4
 
 
 def test_daily_technical_indicators_include_multiband_macd_and_effort_result() -> None:
@@ -106,6 +221,7 @@ def test_daily_technical_indicators_report_insufficient_samples() -> None:
     assert result["warnings"]
     assert result["rsi14"]["available"] is False
     assert result["rsi14"]["value"] is None
+    assert result["rsi_context"]["available"] is False
 
 
 def test_daily_technical_indicators_include_extended_windows() -> None:

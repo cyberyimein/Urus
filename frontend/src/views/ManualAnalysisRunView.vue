@@ -18,6 +18,7 @@ let timer: number | undefined
 const runId = computed(() => String(route.params.runId))
 const terminal = computed(() => run.value ? !['pending', 'running'].includes(run.value.status) : false)
 const reportReady = computed(() => Boolean(report.value && ['succeeded', 'partial'].includes(report.value.status)))
+const runFailed = computed(() => run.value?.status === 'failed')
 const displayStatus = computed(() => reportReady.value ? 'succeeded' : (run.value?.status ?? 'pending'))
 const displaySteps = computed(() => (run.value?.steps ?? []).map((step) => (
   reportReady.value && step.step_code === '4'
@@ -101,8 +102,9 @@ onBeforeUnmount(() => { if (timer) window.clearTimeout(timer) })
     <section v-if="terminal" class="analysis-complete-card" :data-status="displayStatus">
       <div>
         <p class="eyebrow">{{ reportReady ? 'REPORT READY' : aiFailed ? 'PARTIAL RESULT' : 'COLLECTION FINISHED' }}</p>
-        <h2>{{ reportReady ? '技术报告与 AI 现状分析已保存' : report ? '技术报告已完成，AI 现状分析失败' : '本轮数据已冻结' }}</h2>
+        <h2>{{ reportReady ? '技术报告与 AI 现状分析已保存' : report ? '技术报告已完成，AI 现状分析失败' : runFailed ? '手动分析未生成报告' : '本轮数据已冻结' }}</h2>
         <p v-if="aiFailed" class="analysis-failure-message">{{ aiFailureMessage }}</p>
+        <p v-else-if="run?.error_message" class="analysis-failure-message">{{ run.error_message }}</p>
         <p v-else-if="!report">AI 未生成可阅读报告，但已完成的数据和错误仍保留在本轮快照中。</p>
       </div>
       <div class="button-row analysis-result-actions">

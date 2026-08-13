@@ -30,6 +30,7 @@ from app.integrations.yahoo import YahooDailyAdapter
 from app.models import RunModel, RunStatus, StepStatus
 from app.repositories import EventRepository, InstrumentUniverseRepository, RunRepository
 from app.repositories.agent import AIDecisionRepository
+from app.repositories.report_display import ReportDisplayRepository
 from app.schemas.enums import StepCodeValue
 from app.schemas.read_model import (
     FrontendReadModel,
@@ -43,6 +44,7 @@ from app.schemas.read_model import (
 from app.schemas.universe import InstrumentConfig
 from app.urus_agent.packet import build_stage_decision_packet
 from app.urus_agent.coordinator import CoordinatorRequest, DecisionCoordinator
+from app.urus_agent.display_projection import build_report_display_projection, projection_content_sha256
 from app.urus_agent.prompts import load_agent_profile
 from app.workflows import (
     DEFAULT_STEP_CODES,
@@ -338,6 +340,11 @@ class RunService:
                     else None
                 ),
             )
+
+            # The normalized option tables are committed before this point.
+            # Build the report-only chart projection from those complete rows;
+            # the compact decision packet remains unchanged.
+            self._persist_report_display_projection(context)
 
             output_model = step_by_code["5"]
             self.repository.update_step(output_model, payload=snapshot_payload)
@@ -708,6 +715,12 @@ class RunService:
                 analysis_metadata=analysis_metadata,
             )
         )
+        self._persist_report_display_projection_for_report(
+            result.session_id,
+            source_snapshot_ids=[snapshot.id],
+            source_run_ids=[run.id],
+            captured_at=cutoff,
+        )
         if result.decision_report.get("status") in {"succeeded", "partial"}:
             completed_at = utc_now()
             ai_step = next((step for step in run.steps if step.step_code == "4"), None)
@@ -731,6 +744,52 @@ class RunService:
                     error_message=None,
                 )
         return result.session_id
+
+    def _persist_report_display_projection(self, context: RunContext) -> None:
+        step = context.results.get("4")
+        payload = step.payload if step is not None else {}
+        report_id = payload.get("decision_session_id") if isinstance(payload, dict) else None
+        if not report_id:
+            return
+        self._persist_report_display_projection_for_report(
+            str(report_id),
+            source_snapshot_ids=context.decision_source_snapshot_ids,
+            source_run_ids=context.decision_source_run_ids,
+            captured_at=context.cutoff_time,
+        )
+
+    def _persist_report_display_projection_for_report(
+        self,
+        report_id: str,
+        *,
+        source_snapshot_ids: list[str],
+        source_run_ids: list[str],
+        captured_at: datetime,
+    ) -> None:
+        try:
+            payload = build_report_display_projection(
+                self.repository.session,
+                report_id=report_id,
+                source_snapshot_ids=source_snapshot_ids,
+                source_run_ids=source_run_ids,
+                captured_at=captured_at,
+            )
+            ReportDisplayRepository(self.repository.session).save(
+                report_id=report_id,
+                payload=payload,
+                source_snapshot_ids=source_snapshot_ids,
+                source_run_ids=source_run_ids,
+                content_sha256=projection_content_sha256(payload),
+                schema_version=str(payload.get("schema_version") or "unknown"),
+            )
+        except Exception:
+            # A chart projection is additive.  Never turn a valid technical or
+            # AI report into a failed workflow because a display read model
+            # could not be written; the manifest will expose the real gap.
+            # A failed commit/query leaves SQLAlchemy's Session unusable until
+            # rollback, while the report and frozen snapshot are already safe.
+            self.repository.session.rollback()
+            logger.exception("report display projection failed report_id=%s", report_id)
 
     def _build_pipeline(self) -> WorkflowPipeline:
         if self.settings.workflow_research_variant.lower() == "cta":

@@ -44,4 +44,17 @@ describe('api client', () => {
       method: 'POST', body: '{}', cache: 'no-store',
     }))
   })
+
+  it('deletes a research report through the explicit DELETE endpoint', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ report_id: 'report-1', deleted: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(api.deleteResearchReport('report-1')).resolves.toEqual({ report_id: 'report-1', deleted: true })
+    expect(fetchMock).toHaveBeenCalledWith('/api/research-reports/report-1', expect.objectContaining({
+      method: 'DELETE', cache: 'no-store',
+    }))
+  })
 })

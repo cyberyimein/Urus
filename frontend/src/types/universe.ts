@@ -14,6 +14,8 @@ export interface InstrumentConfig {
   display_name: string
   asset_type: AssetType
   theme: string
+  /** Optional while reading a pre-0014 API response; writes always include it. */
+  themes?: string[]
   enabled: boolean
   roles: UniverseRoles
   benchmarks: { relative_strength: string | null; cta_proxy_for: string | null }

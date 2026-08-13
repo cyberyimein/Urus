@@ -13,10 +13,65 @@ from app.main import create_app
 from app.models import AIDecisionSessionModel, AIDecisionRunModel, AIModelTurnModel, AITraceNodeModel, RunModel
 from app.urus_agent.providers import FakeLLMProvider
 from app.urus_agent.providers.openrouter import ProviderResponse
-from app.urus_agent.coordinator import CoordinatorRequest, DecisionCoordinator
+from app.urus_agent.coordinator import (
+    MAX_THEME_TASKS,
+    CoordinatorRequest,
+    DecisionCoordinator,
+    _theme_scopes,
+)
 from app.urus_agent.packet import build_stage_decision_packet
 from app.urus_agent.prompts import load_agent_profile
 from fastapi.testclient import TestClient
+
+
+def test_theme_scopes_keep_cross_themes_as_metadata_without_duplicate_calls() -> None:
+    from types import SimpleNamespace
+
+    evidence = SimpleNamespace(
+        current_phase="pre_close",
+        packet={
+            "observations": {
+                "pre_close": {
+                    "instruments": [
+                        {
+                            "symbol": "AMD",
+                            "asset_type": "equity",
+                            "theme": "半导体",
+                            "themes": ["半导体", "AI 基础设施"],
+                        },
+                    ],
+                },
+            },
+        },
+    )
+
+    assert _theme_scopes(evidence, ["AMD"]) == [
+        ("半导体", ["AMD"]),
+    ]
+
+
+def test_theme_scopes_bound_custom_theme_task_count() -> None:
+    from types import SimpleNamespace
+
+    instruments = [
+        {
+            "symbol": f"S{index}",
+            "asset_type": "equity",
+            "theme": f"自定义主题 {index}",
+            "themes": [f"自定义主题 {index}"],
+        }
+        for index in range(MAX_THEME_TASKS + 5)
+    ]
+    evidence = SimpleNamespace(
+        current_phase="pre_close",
+        packet={"observations": {"pre_close": {"instruments": instruments}}},
+    )
+
+    scopes = _theme_scopes(evidence, [item["symbol"] for item in instruments])
+
+    assert len(scopes) == MAX_THEME_TASKS
+    assert scopes[-1][0] == "其他关注"
+    assert len(scopes[-1][1]) == 6
 
 
 def _equity_output() -> dict:
