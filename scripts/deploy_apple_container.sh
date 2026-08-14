@@ -3,7 +3,8 @@ set -Eeuo pipefail
 
 usage() {
     cat <<'EOF'
-Copy a saved Urus Apple container image to a Mac mini and run API/UI + scheduler.
+Copy a saved Urus Apple container image to a Mac mini and run API/UI + scheduler
+inside one supervised container.
 
 Usage:
   REMOTE=macmini scripts/deploy_apple_container.sh artifacts/container-images/urus-<tag>-linux-arm64.env
@@ -19,10 +20,12 @@ Environment:
   REMOTE_ENV_FILE         Default: REMOTE_DIR/urus.env
   REMOTE_CONTAINER_CLI    Default: container
   CONTAINER_NAME          Default: urus
-  SCHEDULER_NAME          Default: urus-scheduler
+  SCHEDULER_NAME          Legacy container name to remove during migration
   CONTAINER_NETWORK       Default: urus-internal
   HOST_PORT               Default: 7777 (Mac mini host port; 8000 is used by Anomalo)
   APP_PORT                Default: 8000
+  CONTAINER_CPUS          Default: 4
+  CONTAINER_MEMORY        Default: 2G
 EOF
 }
 
@@ -70,6 +73,8 @@ SCHEDULER_NAME="${SCHEDULER_NAME:-urus-scheduler}"
 CONTAINER_NETWORK="${CONTAINER_NETWORK:-urus-internal}"
 HOST_PORT="${HOST_PORT:-7777}"
 APP_PORT="${APP_PORT:-8000}"
+CONTAINER_CPUS="${CONTAINER_CPUS:-4}"
+CONTAINER_MEMORY="${CONTAINER_MEMORY:-2G}"
 remote_archive="$REMOTE_DIR/$(basename "$archive_path")"
 remote_database_upload="-"
 
@@ -92,10 +97,12 @@ fi
 ssh "${ssh_args[@]}" "$ssh_target" "bash -s" -- \
     "$REMOTE_CONTAINER_CLI" "$remote_archive" "$image_ref" "$CONTAINER_NAME" \
     "$SCHEDULER_NAME" "$CONTAINER_NETWORK" "$HOST_PORT" "$APP_PORT" \
-    "$REMOTE_ENV_FILE" "$REMOTE_DATA_DIR" "$remote_database_upload" <<'REMOTE_SCRIPT'
+    "$REMOTE_ENV_FILE" "$REMOTE_DATA_DIR" "$remote_database_upload" \
+    "$CONTAINER_CPUS" "$CONTAINER_MEMORY" <<'REMOTE_SCRIPT'
 set -Eeuo pipefail
 container_cli="$1"; archive="$2"; image_ref="$3"; app_name="$4"; scheduler_name="$5"
 network="$6"; host_port="$7"; app_port="$8"; env_file="$9"; data_dir="${10}"; database_upload="${11:-}"
+container_cpus="${12:-4}"; container_memory="${13:-2G}"
 
 "$container_cli" system start >/dev/null 2>&1 || true
 if ! "$container_cli" network list | awk 'NR > 1 {print $1}' | grep -Fxq "$network"; then
@@ -124,7 +131,12 @@ if [[ -n "$database_upload" && -f "$database_upload" ]]; then
     mv "$database_upload" "$data_dir/urus.db"
 fi
 
-common=(--network "$network")
+common=(
+    --network "$network"
+    --cpus "$container_cpus"
+    --memory "$container_memory"
+    --init
+)
 if [[ -f "$env_file" ]]; then common+=(--env-file "$env_file"); fi
 # Deployment invariants must win over values copied from a development .env.
 common+=(
@@ -146,24 +158,10 @@ for attempt in 1 2 3 4 5 6 7 8 9 10; do
     sleep 2
 done
 if [[ "$healthy" != "1" ]]; then
-    echo "Urus health check failed; scheduler was not started" >&2
+    echo "Urus health check failed" >&2
     "$container_cli" logs "$app_name" 2>/dev/null || true
     exit 1
 fi
-
-app_ip=$("$container_cli" inspect "$app_name" | python3 -c '
-import json, sys
-record = json.load(sys.stdin)[0]
-print(record["status"]["networks"][0]["ipv4Address"].split("/", 1)[0])
-')
-if [[ -z "$app_ip" ]]; then
-    echo "cannot resolve Apple Container IPv4 address for $app_name" >&2
-    exit 1
-fi
-
-"$container_cli" run --detach --name "$scheduler_name" "${common[@]}" "$image_ref" \
-    uv run python scripts/schedule_market_data_collection.py \
-    --api-base-url "http://${app_ip}:${app_port}/api" --backend-managed-externally
 
 echo "health check passed: http://127.0.0.1:${host_port}/api/health"
 "$container_cli" list 2>/dev/null || true

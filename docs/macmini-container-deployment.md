@@ -1,9 +1,10 @@
 # Mac mini · Apple Container 部署
 
-Urus 参考相邻 Anomalo 工程，使用 Apple `container` CLI 构建 Linux ARM64 OCI 镜像、通过 SSH 复制到 Mac mini，再运行两个容器：
+Urus 参考相邻 Anomalo 工程，使用 Apple `container` CLI 构建 Linux ARM64 OCI 镜像、通过 SSH 复制到 Mac mini，再运行一个容器：
 
-- `urus`：FastAPI、内置 Vue 生产前端、Alembic 和 SQLite；
-- `urus-scheduler`：东京时间调度器，仅调用 `urus` API，共享持久化 `/data`。Apple Container 当前不会为同一自定义网络自动提供可用的容器名 DNS，因此部署脚本从 `container inspect` 读取 backend IPv4 后注入调度器 URL。
+- `urus`：FastAPI、内置 Vue 生产前端、Alembic、SQLite，以及受监督的东京时间调度器进程。调度器调用容器内 `127.0.0.1:8000` API，共享同一个 `/data` 生命周期。
+
+容器入口会先执行 Alembic，再启动 API；API 健康检查通过后启动 scheduler。任一进程异常退出，入口会停止另一个进程并让容器退出，避免页面正常但定时器已经静默死亡。部署脚本仍会删除旧版本遗留的 `urus-scheduler` 容器，防止重复执行。
 
 ## 构建
 
@@ -31,6 +32,9 @@ scripts/deploy_apple_container.sh \
   artifacts/container-images/urus-<tag>-linux-arm64.env
 ```
 
+默认给合并后的主容器分配 4 CPU、2 GiB 内存；可用 `CONTAINER_CPUS` 和
+`CONTAINER_MEMORY` 覆盖。
+
 需要把当前开发数据库一并迁移时，显式增加：
 
 ```bash
@@ -51,13 +55,13 @@ DATABASE_FILE=backend/urus.db
 
 ## 今晚上线前必须通过
 
-1. `container list` 同时看到 `urus` 与 `urus-scheduler`。
+1. `container list` 看到 `urus` 运行中，且不再有旧的 `urus-scheduler`。
 2. 在 Mac mini 上执行 `curl http://127.0.0.1:7777/api/health` 返回 `status=ok`。
 3. `/api/settings` 显示 `ai_decision_enabled=true`、`openrouter_configured=true`。
 4. 运行设置为盘前 AI、尾盘只采集、收盘复盘 AI。
 5. Universe 标的、CTA、期权和 AI 候选范围正确。
 6. 在 Mac mini 手动触发一轮分析，确认 OpenD、期权、OpenRouter 均成功且 AI 报告不是占位。
-7. 查看 `container logs urus` 与 `container logs urus-scheduler`，确认无迁移、SQLite lock、OpenD 或模型错误。
+7. 查看 `container logs urus`，确认 API 与 scheduler 均已启动且无迁移、SQLite lock、OpenD 或模型错误。
 
 ## 当前边界
 
