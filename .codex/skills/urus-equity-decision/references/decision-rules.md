@@ -7,6 +7,7 @@ Use the broad ETFs when present:
 - SPY for broad US equities.
 - QQQ for growth and large technology.
 - SMH for semiconductors.
+- SOXX as a second semiconductor breadth proxy; agreement with SMH is stronger evidence than either alone.
 - IGV for software.
 
 Evaluate trend, price versus moving averages, MACD, volatility, and event risk. Match a symbol to its theme regime instead of applying only QQQ to every candidate.

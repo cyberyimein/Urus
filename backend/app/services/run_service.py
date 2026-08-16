@@ -30,6 +30,7 @@ from app.integrations.yahoo import YahooDailyAdapter
 from app.models import RunModel, RunStatus, StepStatus
 from app.repositories import EventRepository, InstrumentUniverseRepository, RunRepository
 from app.repositories.agent import AIDecisionRepository
+from app.repositories.capital_flows import CapitalFlowRepository
 from app.repositories.report_display import ReportDisplayRepository
 from app.schemas.enums import StepCodeValue
 from app.schemas.read_model import (
@@ -63,6 +64,7 @@ from app.workflows import (
 )
 from app.workflows.base import data_state_for
 from app.workflows.cta import build_systematic_flows
+from app.services.capital_flow import CapitalFlowService
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +157,18 @@ class RunService:
         session_context = self._session_context(cutoff_time) if is_manual else request.run_type.value
 
         market_adapter = self._build_market_adapter(scopes.market_symbols)
+        capital_flow_service = (
+            CapitalFlowService(
+                CapitalFlowRepository(self.repository.session),
+                market_adapter,
+                symbols=self.settings.capital_flow_symbol_list,
+                calendar_name=self.settings.market_calendar,
+                cache_days=self.settings.capital_flow_cache_days,
+                projection_days=self.settings.capital_flow_projection_days,
+            )
+            if self.settings.moomoo_enabled
+            else None
+        )
         options_adapter = self._build_options_adapter(scopes.option_symbols)
         macro_adapter = self._build_macro_adapter()
         anomalo_adapter = self._build_anomalo_adapter(
@@ -179,6 +193,7 @@ class RunService:
             decision_adapter=self._build_decision_adapter(enabled=decision_enabled),
             decision_enabled=decision_enabled,
             event_repository=self.event_repository,
+            capital_flow_service=capital_flow_service,
             expected_events_enabled=self.settings.expected_events_enabled,
             breaking_events_enabled=self.settings.breaking_events_enabled,
             scheduled_event_agent=self.settings.anomalo_scheduled_agent,
@@ -482,6 +497,11 @@ class RunService:
             events=events,
             agent_profile=profile,
         )
+        context.decision_packet["prior_experiences"] = (
+            agent_repository.active_experiences(limit=8)
+            if phase in {"pre_market", "post_close_review"}
+            else []
+        )
         context.decision_packet["decision_context"].update(
             {
                 "trigger_type": context.trigger_type,
@@ -588,6 +608,7 @@ class RunService:
             ],
             "options": options,
             "systematic_flows": systematic_flows,
+            "capital_flows": market.get("capital_flows") or {},
             "data_quality": {
                 "status": "blocked" if errors else "warning" if warnings else "ok",
                 "warnings": warnings,

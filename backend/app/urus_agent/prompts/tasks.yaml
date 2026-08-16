@@ -1,4 +1,4 @@
-version: urus.agent_task_prompts.v3
+version: urus.agent_task_prompts.v8
 task_prompts:
   equity: |
     Analyze only the symbols listed in task.symbols and return every symbol exactly once. Establish
@@ -9,11 +9,10 @@ task_prompts:
   market: |
     This is the Market Agent Invocation. Analyze only the ETF symbols listed in task.symbols and
     return every listed ETF exactly once. Establish the reusable market regime before assigning ETF
-    scores. Before returning JSON, call get_market_regime for every phase in
-    task.metadata.comparison_observations, call get_systematic_flows for every phase,
-    call get_data_quality, call get_events for macro events, and use each ETF's pre_close
-    get_instrument_snapshot, where pre_close means task.metadata.current_observation for this
-    phase-specific workflow. Never apply QQQ technical indicators to another ETF. Evaluate:
+    scores. The controller has already loaded the complete required_evidence projection for every
+    allowed phase, including market regime, systematic flows, quality, macro events and each ETF's
+    current-observation snapshot. Do not request or assume additional tools. Never apply QQQ
+    technical indicators to another ETF. Evaluate:
     SPY/QQQ participation; SMH and IGV leadership or deterioration; paired price
     changes; trend and moving-average alignment; MACD and Bollinger position; realized volatility,
     ATR and VIX when available; volume effort/result; deterministic CTA proxy position and marginal
@@ -28,10 +27,9 @@ task_prompts:
   theme: |
     This is a Theme Agent Invocation. The assigned theme, its members, benchmark symbols, and the
     validated market result are in task.metadata. Return every task.symbol exactly once and do not
-    rank any other symbol. Before returning JSON, use the current-observation
-    get_instrument_snapshot for every task.symbol; call compare_instrument_observations only when
-    task.metadata.comparison_observations contains more than one observation; call get_events for assigned symbols when
-    event records are available. Use benchmark symbols only as context unless explicitly present
+    rank any other symbol. The controller has already loaded every required current-observation
+    snapshot, bounded instrument events and paired comparison into required_evidence.
+    Do not request or assume additional tools. Use benchmark symbols only as context unless explicitly present
     in task.symbols. For each member evaluate paired price confirmation, trend and moving-average
     alignment, 20/60/120/252-day returns, relative strength versus QQQ, MACD momentum, Bollinger
     location and bandwidth, ATR/realized volatility, volume effort/result, the deterministic
@@ -87,6 +85,43 @@ task_prompts:
     observations.current_state.market.technical, observations.current_state.market.cross_asset_quotes[SMH],
     observations.current_state.options.symbols[NBIS] and observations.current_state.systematic_flows.assets[SPY].
     Use [SYMBOL] selectors, never [?symbol=='SYMBOL'] predicates.
+    When task.metadata.scope_kind=premarket_composite, this is the only model invocation in the
+    pre-market workflow. Ignore the legacy market_result and theme_results wording above: the
+    controller has compiled the complete frozen input into task.metadata.premarket_evidence. In one
+    pass, establish the market forecast and compare theme leadership. No data tools are available.
+    `capital_flows` is a deterministic, controller-supplied projection of the latest five completed
+    sessions from a rolling 30-session cache. Treat super/big/mid/small as trade-size buckets, never
+    as proven institutional or retail identities. A large-order absorption candidate or distribution
+    risk is supporting evidence, not confirmation: reconcile it with price, volume, trend and data
+    quality. For semiconductors, agreement between SMH and SOXX raises breadth confidence; divergence
+    must lower confidence and be described as structural disagreement rather than averaged away.
+    Return every task.symbol exactly once in instrument_forecasts; these rows contain only symbol,
+    themes and the scoreable instrument_forecast. Put at most five genuine priorities in
+    attention_rankings, where the richer thesis, evidence, risks, if_cash and if_held decisions live.
+    Do not duplicate instrument_forecast inside attention_rankings. Use only canonical
+    observations.pre_market.* paths in Evidence References. Prefer copying the evidence_paths supplied
+    beside each market or instrument projection, then append only keys that actually exist below that
+    path. volume_effort_result, RSI, MACD, Bollinger and moving averages are all children of
+    `.technical`, never children of the instrument root;
+    task.metadata paths are context locations, not evidence paths. Do not reproduce the evidence
+    bundle, narrate every indicator, or pad quiet symbols. The aim is one falsifiable decision table,
+    not separate market and theme essays.
+    The input field projection_version identifies only the evidence projection and must never be
+    copied into the answer. The answer must use schema_version=urus.premarket_composite_decision.v1
+    and exactly these top-level fields: schema_version, decision_phase, agent_profile,
+    forecast_horizon, as_of, status, market_regime, forecast, instrument_forecasts,
+    attention_rankings, portfolio_warnings, disclaimer. Do not emit market_forecast or review.
+  review: |
+    This is the single completed-session Review Agent Invocation. The controller has already
+    computed the objective forecast evaluation and supplied a compact review_evidence projection in
+    task.metadata. No data tools are available. Answer only: what materially happened today, which
+    explicit pre-market claims were hit, partial, missed or unscorable, why they diverged, and what
+    falsifiable lessons may be carried forward. Treat the deterministic verdicts and prices as
+    authoritative; never rescore them. Do not produce a watchlist, symbol ranking, same-day trade
+    proposal or option structure. Mention an individual instrument only when it was an explicit
+    forecast claim, changed a predicted theme outcome, or triggered a confirmation/invalidation
+    condition. Experience candidates are hypotheses, not permanent rules: give each a stable
+    lowercase pattern_key, applicability tags, confidence and resolvable frozen Evidence References.
   options: |
     This is a single-symbol Options Agent Invocation. Analyze only task.target_symbol. Market and
     equity outputs in task.metadata are validated context. Before returning JSON, call option overview

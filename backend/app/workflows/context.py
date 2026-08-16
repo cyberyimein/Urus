@@ -13,6 +13,7 @@ from app.workflows.base import StepResult
 
 if TYPE_CHECKING:
     from app.repositories.events import EventRepository
+    from app.services.capital_flow import CapitalFlowService
 
 
 @dataclass
@@ -34,6 +35,7 @@ class RunContext:
     decision_adapter: DecisionAdapter | None = None
     decision_enabled: bool = False
     event_repository: "EventRepository | None" = None
+    capital_flow_service: "CapitalFlowService | None" = None
     expected_events_enabled: bool = False
     breaking_events_enabled: bool = False
     scheduled_event_agent: str = "scheduled-event-investigator"

@@ -43,6 +43,14 @@ def _daily_cycle_repair_constraints(task: AgentTask) -> str:
         f'decision_phase="{task.decision_phase}"; '
         f'agent_profile="{profiles[task.decision_phase]}"; '
     )
+    if task.task_type == "post_close_review":
+        return 'Required completed-session constants: schema_version="urus.post_close_review.v1".'
+    if task.task_type == "premarket_decision":
+        return (
+            'Required pre-market constants: schema_version="urus.premarket_composite_decision.v1"; '
+            'decision_phase="pre_market"; agent_profile="urus-premarket-strategist"; '
+            'forecast_horizon="regular_session".'
+        )
     if task.task_type == "options_structure":
         expiration = task.metadata.get("required_expiration")
         expiration_rule = (
@@ -152,7 +160,15 @@ class UrusAgentRuntime:
             response_format = {
                 "type": "json_schema",
                 "json_schema": {
-                    "name": "urus_equity_decision" if task.task_type == "equity_ranking" else "urus_options_decision",
+                    "name": (
+                        "urus_equity_decision"
+                        if task.task_type == "equity_ranking"
+                        else "urus_premarket_composite_decision"
+                        if task.task_type == "premarket_decision"
+                        else "urus_post_close_review"
+                        if task.task_type == "post_close_review"
+                        else "urus_options_decision"
+                    ),
                     "strict": True,
                     "schema": schema,
                 },
@@ -164,18 +180,29 @@ class UrusAgentRuntime:
                 f"Daily-cycle instructions:\n{phase_instructions}\n\n"
                 f"Current task type: {task.task_type}. Current cutoff time: {task.cutoff_time.isoformat()}. "
                 f"Dataset key: {task.dataset_key}.\n"
-                "For daily-cycle tasks, use urus.equity_decision.v3 or "
-                "urus.options_decision.v2 as selected by task type.\n"
+                "For daily-cycle tasks, use the response schema selected by task type.\n"
                 f"Current invocation stage: {task.stage}.\n"
                 f"Task instructions:\n{task_prompt}\n\n"
                 f"Activated Skill: {skill.name}\n{skill.instructions}"
             )
-            allowed_tools = self.registry.openai_tools(task.requested_skill, task=task)
             seen_calls: set[tuple[str, str]] = set()
             required_evidence: list[dict[str, Any]] = []
+            prefetch_plan = (
+                _stage_prefetch_plan(task, evidence)
+                if self.enforce_stage_tool_requirements
+                else []
+            )
+            # A deterministic evidence projection and an open-ended tool loop
+            # are competing interfaces. Once the controller has compiled all
+            # required evidence, the model receives a read-only projection.
+            allowed_tools = (
+                []
+                if prefetch_plan
+                else self.registry.openai_tools(task.requested_skill, task=task)
+            )
             if self.enforce_stage_tool_requirements:
                 for prefetch_sequence, (name, arguments) in enumerate(
-                    _stage_prefetch_plan(task, evidence), start=1
+                    prefetch_plan, start=1
                 ):
                     key = (name, json.dumps(arguments, sort_keys=True, default=str))
                     seen_calls.add(key)
@@ -540,7 +567,8 @@ class UrusAgentRuntime:
                 )
                 duration = int((time.monotonic() - started) * 1000)
                 estimated_cost = _estimated_cost(self.provider, prompt_tokens, completion_tokens)
-                return DecisionResult(status="succeeded", output=normalized, raw_output=raw_output, provider=self.provider.provider_name, model=self.provider.model, skill_name=skill.name, skill_hash=skill.content_hash, tool_call_count=len(tool_calls), tool_calls=tool_calls, model_turns=model_turns, duration_ms=duration, input_hash=input_hash, prompt_tokens=prompt_tokens or None, completion_tokens=completion_tokens or None, temperature=getattr(self.provider, "temperature", None), estimated_cost=estimated_cost)
+                prefetched_count = sum(bool(call.get("prefetched")) for call in tool_calls)
+                return DecisionResult(status="succeeded", output=normalized, raw_output=raw_output, provider=self.provider.provider_name, model=self.provider.model, skill_name=skill.name, skill_hash=skill.content_hash, tool_call_count=len(tool_calls), prefetched_tool_count=prefetched_count, model_requested_tool_count=len(tool_calls) - prefetched_count, tool_calls=tool_calls, model_turns=model_turns, duration_ms=duration, input_hash=input_hash, prompt_tokens=prompt_tokens or None, completion_tokens=completion_tokens or None, temperature=getattr(self.provider, "temperature", None), estimated_cost=estimated_cost)
             raise RuntimeError("max_tool_iterations: tool loop exceeded the configured limit")
         except BusinessValidationError as exc:
             return self._failure("failed", "business_validation_failed", str(exc), started, input_hash, tool_calls, model_turns, prompt_tokens, completion_tokens)
@@ -564,7 +592,8 @@ class UrusAgentRuntime:
             return self._failure("failed", code, message, started, input_hash, tool_calls, model_turns, prompt_tokens, completion_tokens)
 
     def _failure(self, status: str, code: str, message: str, started: float, input_hash: str, tool_calls: list[dict[str, Any]], model_turns: list[dict[str, Any]], prompt_tokens: int, completion_tokens: int) -> DecisionResult:
-        return DecisionResult(status=status, provider=self.provider.provider_name, model=self.provider.model, error_code=code, error_message=message, tool_calls=tool_calls, model_turns=model_turns, tool_call_count=len(tool_calls), duration_ms=int((time.monotonic() - started) * 1000), input_hash=input_hash, prompt_tokens=prompt_tokens or None, completion_tokens=completion_tokens or None, temperature=getattr(self.provider, "temperature", None), estimated_cost=_estimated_cost(self.provider, prompt_tokens, completion_tokens))
+        prefetched_count = sum(bool(call.get("prefetched")) for call in tool_calls)
+        return DecisionResult(status=status, provider=self.provider.provider_name, model=self.provider.model, error_code=code, error_message=message, tool_calls=tool_calls, model_turns=model_turns, tool_call_count=len(tool_calls), prefetched_tool_count=prefetched_count, model_requested_tool_count=len(tool_calls) - prefetched_count, duration_ms=int((time.monotonic() - started) * 1000), input_hash=input_hash, prompt_tokens=prompt_tokens or None, completion_tokens=completion_tokens or None, temperature=getattr(self.provider, "temperature", None), estimated_cost=_estimated_cost(self.provider, prompt_tokens, completion_tokens))
 
 
 def _preview(value: Any, limit: int = 500) -> str | None:
@@ -580,6 +609,7 @@ def _task_lane(task: AgentTask) -> str:
         "theme": "Themes",
         "synthesis": "Synthesis",
         "options": "Options",
+        "review": "Review",
     }.get(task.stage, "Equity")
 
 
@@ -600,10 +630,19 @@ def _decision_rationale(task_type: str, output: dict[str, Any]) -> str:
                 f"{_preview(top.get('thesis'), 240) or 'no thesis'}"
             )
         return " · ".join(parts)
+    if task_type == "post_close_review":
+        return _preview(
+            output.get("pre_market_explanation")
+            or output.get("market_outcome")
+            or output.get("status"),
+            400,
+        ) or "No structured rationale."
     return _preview(output.get("thesis") or output.get("status") or "No structured rationale.", 400) or "No structured rationale."
 
 
 def _validate_task_scope(task: AgentTask, evidence: EvidenceStore) -> None:
+    if task.task_type == "post_close_review":
+        return
     overview = evidence.overview()
     if task.task_type == "options_structure":
         target = str(task.target_symbol or "").upper()
@@ -795,6 +834,18 @@ def _stage_prefetch_plan(
                             "symbol": symbol,
                             "phase": current_phase,
                             "sections": ["quote", "technical", "relative_strength", "theme", "quality"],
+                        },
+                    ),
+                    (
+                        "get_events",
+                        {
+                            "category": "instrument",
+                            "subject": symbol,
+                            "status": [],
+                            "result_state": "any",
+                            "from_time": None,
+                            "to_time": None,
+                            "limit": 5,
                         },
                     ),
                     *(

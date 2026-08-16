@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+from functools import lru_cache
 import json
 import logging
 from logging.handlers import RotatingFileHandler
@@ -17,11 +18,13 @@ from pathlib import Path
 import subprocess
 import sys
 import time
-from datetime import datetime, time as wall_time, timedelta
+from datetime import UTC, date, datetime, time as wall_time, timedelta
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
+
+import exchange_calendars as xcals
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -34,6 +37,7 @@ DATA_DIR = Path(
     )
 ).expanduser()
 TOKYO = ZoneInfo("Asia/Tokyo")
+DEFAULT_MARKET_CALENDAR = "XNYS"
 SLOTS = (
     (wall_time(4, 0), "pre_close", "尾盘前"),
     (wall_time(5, 30), "post_close_review", "盘后"),
@@ -47,6 +51,70 @@ from app.core.config import Settings  # noqa: E402
 
 
 logger = logging.getLogger("urus.scheduled_collection")
+
+
+@lru_cache(maxsize=4)
+def exchange_calendar(name: str) -> Any:
+    """Return a cached exchange calendar for the scheduler process.
+
+    The calendar is deliberately resolved once per name. ``exchange-calendars``
+    keeps a full holiday and early-close schedule in memory, so recreating it
+    on every 20-second polling cycle would add unnecessary work and could make
+    a transient provider error look like a scheduling decision.
+    """
+
+    return xcals.get_calendar(name)
+
+
+def _session_close(calendar: Any, market_date: date) -> datetime | None:
+    """Return a session close as an aware UTC datetime, or ``None`` if closed."""
+
+    if not calendar.is_session(market_date):
+        return None
+    row = calendar.schedule.loc[market_date.isoformat()]
+    close = row.get("close")
+    if close is None or str(close) == "NaT":
+        return None
+    close_at = close.to_pydatetime()
+    if close_at.tzinfo is None:
+        close_at = close_at.replace(tzinfo=UTC)
+    return close_at.astimezone(UTC)
+
+
+def effective_slot_time(
+    nominal_at: datetime,
+    run_type: str,
+    market_timezone: ZoneInfo,
+    include_weekends: bool,
+    calendar: Any,
+) -> datetime | None:
+    """Apply the exchange session gate and early-close adjustments.
+
+    The configured slots remain the normal-day defaults. On an early-close
+    session, ``pre_close`` moves to one hour before the actual close rather
+    than collecting after the market has shut; ``post_close_review`` moves to
+    30 minutes after the actual close when its nominal JST time would still be
+    inside the regular session. This keeps the persisted schedule readable
+    while making the runtime safe across US daylight-saving and half-day rules.
+    """
+
+    market_date = nominal_at.astimezone(market_timezone).date()
+    market_weekday = market_date.weekday()
+    if market_weekday >= 5:
+        # Preserve the explicit validation escape hatch. A normal scheduler
+        # invocation still excludes weekends before reaching this branch.
+        return nominal_at if include_weekends else None
+
+    close_at = _session_close(calendar, market_date)
+    if close_at is None:
+        return None
+
+    nominal_utc = nominal_at.astimezone(UTC)
+    if run_type == "pre_close" and nominal_utc >= close_at:
+        return (close_at - timedelta(hours=1)).astimezone(TOKYO)
+    if run_type == "post_close_review" and nominal_utc <= close_at:
+        return (close_at + timedelta(minutes=30)).astimezone(TOKYO)
+    return nominal_at
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -285,18 +353,27 @@ def due_slots(
     market_timezone: ZoneInfo,
     include_weekends: bool,
     schedule: dict[str, dict[str, Any]] | None = None,
+    calendar: Any | None = None,
 ) -> list[tuple[datetime, str, str]]:
     candidates: list[tuple[datetime, str, str]] = []
+    calendar = calendar or exchange_calendar(DEFAULT_MARKET_CALENDAR)
     for day_offset in (-1, 0):
         date = (now + timedelta(days=day_offset)).date()
         for scheduled_time, run_type, label in SLOTS:
             if schedule is not None and not slot_policy(schedule, run_type)[0]:
                 continue
-            scheduled_at = datetime.combine(date, scheduled_time, tzinfo=TOKYO)
+            nominal_at = datetime.combine(date, scheduled_time, tzinfo=TOKYO)
+            scheduled_at = effective_slot_time(
+                nominal_at,
+                run_type,
+                market_timezone,
+                include_weekends,
+                calendar,
+            )
+            if scheduled_at is None:
+                continue
             age = now - scheduled_at
             if age < timedelta(0) or age > catch_up:
-                continue
-            if not include_weekends and scheduled_at.astimezone(market_timezone).weekday() >= 5:
                 continue
             if slot_key(scheduled_at, run_type) not in completed:
                 candidates.append((scheduled_at, run_type, label))
@@ -342,8 +419,12 @@ def main(argv: list[str] | None = None) -> int:
     completed = state["completed"]
     retry_after: dict[str, float] = {}
     market_timezone = ZoneInfo(settings.market_timezone)
+    calendar = exchange_calendar(settings.market_calendar)
     logger.info(
-        "调度器已启动 timezone=Asia/Tokyo slots=21:30/pre_market,04:00/pre_close,05:30/post_close_review"
+        "调度器已启动 timezone=Asia/Tokyo market_timezone=%s calendar=%s "
+        "slots=21:30/pre_market,04:00/pre_close,05:30/post_close_review",
+        settings.market_timezone,
+        settings.market_calendar,
     )
     try:
         while True:
@@ -355,6 +436,7 @@ def main(argv: list[str] | None = None) -> int:
                 market_timezone,
                 args.include_weekends,
                 schedule,
+                calendar,
             ):
                 key = slot_key(scheduled_at, run_type)
                 if time.monotonic() < retry_after.get(key, 0):

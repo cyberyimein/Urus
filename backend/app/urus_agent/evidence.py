@@ -459,7 +459,11 @@ class EvidenceStore:
         reports = self.packet.get("prior_reports") or {}
         return self._result(
             "get_prior_stage_reports",
-            {"reports": reports, "decision_context": self.packet.get("decision_context") or {}},
+            {
+                "reports": reports,
+                "experiences": list(self.packet.get("prior_experiences") or [])[:8],
+                "decision_context": self.packet.get("decision_context") or {},
+            },
             self.current_phase,
             "prior_reports",
         )

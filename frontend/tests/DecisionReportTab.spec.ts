@@ -126,4 +126,77 @@ describe('DecisionReportTab', () => {
     expect(wrapper.text()).toContain('synthesis rankings must cover every task symbol')
     expect(wrapper.find('.attention-section').exists()).toBe(false)
   })
+
+  it('renders a focused post-close forecast review without stock rankings', () => {
+    const wrapper = mount(DecisionReportTab, {
+      props: {
+        report: {
+          ...report,
+          decision_phase: 'post_close_review',
+          analysis_mode: 'official_cycle',
+          trigger_type: 'scheduled',
+          trading_date: '2026-08-14',
+          review: {
+            session_summary: '成长股上涨，但市场宽度一般。',
+            market_outcome: 'QQQ 强于 SPY。',
+            pre_market_evaluation: { verdict: 'partial', explanation: '方向正确，主题强度估计过高。' },
+            forecast_errors: ['高估了半导体扩散'],
+            lessons: ['宽度不确认时降低置信度'],
+            next_session_carry: ['观察 SMH 能否重获相对强度'],
+          },
+          objective_evaluation: { phase_evaluations: [{ phase: 'pre_market', verdict: 'partial' }] },
+        },
+      },
+    })
+
+    expect(wrapper.text()).toContain('正式 · 收盘复盘')
+    expect(wrapper.text()).toContain('高估了半导体扩散')
+    expect(wrapper.text()).toContain('宽度不确认时降低置信度')
+    expect(wrapper.text()).toContain('观察 SMH 能否重获相对强度')
+    expect(wrapper.find('.attention-section').exists()).toBe(false)
+  })
+
+  it('renders only the bounded pre-market attention projection', () => {
+    const rankings = Array.from({ length: 6 }, (_, index) => ({
+      rank: index + 1,
+      symbol: `S${index + 1}`,
+      action: 'watch',
+      score: 0.5,
+      confidence: 0.5,
+      thesis: 'Bounded forecast.',
+    }))
+    const wrapper = mount(DecisionReportTab, {
+      props: {
+        report: {
+          ...report,
+          decision_phase: 'pre_market',
+          analysis_mode: 'official_cycle',
+          trigger_type: 'scheduled',
+          rankings,
+          attention_rankings: rankings.slice(0, 5),
+        },
+      },
+    })
+
+    expect(wrapper.findAll('.attention-table tbody tr')).toHaveLength(5)
+    expect(wrapper.text()).toContain('S5')
+    expect(wrapper.text()).not.toContain('S6')
+  })
+
+  it('does not invent attention rows when the composite decision selected none', () => {
+    const wrapper = mount(DecisionReportTab, {
+      props: {
+        report: {
+          ...report,
+          decision_phase: 'pre_market',
+          analysis_mode: 'official_cycle',
+          rankings: [{ rank: 1, symbol: 'QQQ' }],
+          attention_rankings: [],
+        },
+      },
+    })
+
+    expect(wrapper.findAll('.attention-table tbody tr')).toHaveLength(0)
+    expect(wrapper.text()).toContain('本次输出没有关注标的')
+  })
 })

@@ -54,6 +54,8 @@ onUnmounted(() => window.removeEventListener('keydown', closeOnEscape))
             <div><dt>Model</dt><dd>{{ runSummary?.models?.join(', ') || '—' }}</dd></div>
             <div><dt>耗时</dt><dd>{{ formatNumber(runSummary?.duration_ms ?? 0) }} ms</dd></div>
             <div><dt>Tool calls</dt><dd>{{ formatNumber(runSummary?.tool_call_count ?? 0) }}</dd></div>
+            <div><dt>Prefetched</dt><dd>{{ formatNumber(runSummary?.prefetched_tool_count ?? 0) }}</dd></div>
+            <div><dt>Model tools</dt><dd>{{ formatNumber(runSummary?.model_requested_tool_count ?? 0) }}</dd></div>
             <div><dt>Tokens</dt><dd>{{ formatNumber(runSummary?.prompt_tokens ?? 0) }} prompt / {{ formatNumber(runSummary?.completion_tokens ?? 0) }} completion</dd></div>
             <div v-if="runSummary?.estimated_cost != null"><dt>估算成本</dt><dd>{{ runSummary.estimated_cost }}</dd></div>
           </dl>

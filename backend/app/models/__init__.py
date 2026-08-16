@@ -14,12 +14,14 @@ from app.models.agent import (
     AIModelTurnModel,
     AITraceNodeModel,
     AIToolCallModel,
+    ForecastExperienceModel,
 )
 from app.models.instruments import (
     InstrumentAnalysisBatchModel,
     InstrumentDailyBarModel,
     InstrumentSnapshotModel,
 )
+from app.models.capital_flows import CapitalFlowDailyModel
 from app.models.options import (
     OptionAnalysisBatchModel,
     OptionContractSnapshotModel,
@@ -66,5 +68,7 @@ __all__ = [
     "AIModelTurnModel",
     "AITraceNodeModel",
     "AIToolCallModel",
+    "ForecastExperienceModel",
+    "CapitalFlowDailyModel",
     "ReportDisplayProjectionModel",
 ]

@@ -52,6 +52,42 @@ const report: TechnicalReport = {
 }
 
 describe('TechnicalReportTab instruments', () => {
+  it('shows deterministic order-size capital-flow signals in the human technical report', () => {
+    const flowReport: TechnicalReport = {
+      ...report,
+      decision_phase: 'pre_market',
+      capital_flows: {
+        current_phase: 'pre_market',
+        pre_market: {
+          as_of_date: '2026-07-31',
+          quality_status: 'ok',
+          symbols: [{
+            symbol: 'SOXX', cached_trading_days: 5,
+            signal_projection: {
+              signal: 'large_order_absorption_candidate',
+              signal_label: '大额单连续流出后转为流入，而中小额单仍流出：吸收候选',
+              confidence: 0.8,
+              features: {
+                prior_block_outflow_streak_30d: 4,
+                latest_block_flow: 15,
+                latest_mid_small_flow: -7,
+              },
+              recent_5d: [{ trading_date: '2026-07-31', block_flow: 15 }],
+            },
+          }],
+        },
+      },
+    }
+
+    const wrapper = mount(TechnicalReportTab, { props: { report: flowReport, activeSection: 'overview' } })
+
+    expect(wrapper.text()).toContain('订单金额分档资金流信号')
+    expect(wrapper.text()).toContain('SOXX')
+    expect(wrapper.text()).toContain('吸收候选')
+    expect(wrapper.text()).toContain('80.00%')
+    expect(wrapper.text()).toContain('不代表已识别的机构')
+  })
+
   it('renders the real relative-strength schema, RSI14 and grouped technical detail', async () => {
     const wrapper = mount(TechnicalReportTab, { props: { report, activeSection: 'instruments' } })
 

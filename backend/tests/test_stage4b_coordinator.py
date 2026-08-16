@@ -10,7 +10,15 @@ from app.core.config import Settings
 from app.core.database import Base, create_database
 from app.integrations.decision import DecisionRequest, UrusDecisionAdapter
 from app.main import create_app
-from app.models import AIDecisionSessionModel, AIDecisionRunModel, AIModelTurnModel, AITraceNodeModel, RunModel
+from app.models import (
+    AIDecisionSessionModel,
+    AIDecisionRunModel,
+    AIModelTurnModel,
+    AITraceNodeModel,
+    AIToolCallModel,
+    ForecastExperienceModel,
+    RunModel,
+)
 from app.urus_agent.providers import FakeLLMProvider
 from app.urus_agent.providers.openrouter import ProviderResponse
 from app.urus_agent.coordinator import (
@@ -193,6 +201,59 @@ def _current_state_output() -> dict[str, Any]:
     return output
 
 
+def _premarket_output() -> dict[str, Any]:
+    legacy = _equity_output()
+    ranking = legacy["rankings"][0]
+    forecast = dict(ranking["instrument_forecast"])
+    forecast["horizon"] = "regular_session"
+    return {
+        "schema_version": "urus.premarket_composite_decision.v1",
+        "decision_phase": "pre_market",
+        "agent_profile": "urus-premarket-strategist",
+        "forecast_horizon": "regular_session",
+        "as_of": None,
+        "status": "decision",
+        "market_regime": legacy["market_regime"],
+        "forecast": legacy["forecast"],
+        "instrument_forecasts": [
+            {"symbol": "QQQ", "themes": ["ETF"], "instrument_forecast": forecast}
+        ],
+        "attention_rankings": [
+            {
+                key: value
+                for key, value in ranking.items()
+                if key != "instrument_forecast"
+            }
+        ],
+        "portfolio_warnings": [],
+        "disclaimer": "Research output only; no order was placed.",
+    }
+
+
+def _post_close_review_output() -> dict[str, Any]:
+    return {
+        "schema_version": "urus.post_close_review.v1",
+        "status": "completed",
+        "session_summary": "The session finished modestly higher.",
+        "market_outcome": "The bullish pre-market direction was confirmed.",
+        "material_changes": ["QQQ held its pre-market direction into the official close."],
+        "pre_market_explanation": "The direction call was correct and leadership remained stable.",
+        "forecast_errors": [],
+        "lessons": ["Require official-close confirmation before promoting an intraday move."],
+        "next_session_carry": ["Watch whether participation confirms the close."],
+        "experience_candidates": [{
+            "pattern_key": "direction.official_close_confirmation",
+            "category": "confirmation",
+            "statement": "Official-close confirmation is required before carrying an intraday direction forward.",
+            "applicability_tags": ["market-direction"],
+            "confidence": 0.6,
+            "evidence": [],
+        }],
+        "portfolio_warnings": [],
+        "disclaimer": "Research output only; no order was placed.",
+    }
+
+
 def test_manual_current_state_uses_one_model_invocation_and_is_not_scoreable(tmp_path) -> None:
     engine, factory = create_database(f"sqlite:///{tmp_path / 'manual-current.db'}")
     Base.metadata.create_all(bind=engine)
@@ -282,10 +343,227 @@ def test_manual_current_state_uses_one_model_invocation_and_is_not_scoreable(tmp
 
         assert session.query(AIDecisionRunModel).count() == 1
         assert session.query(AIModelTurnModel).count() == 1
+        assert session.query(AIToolCallModel).count() == 0
+        assert provider.requests[0]["tools"] == []
         assert result.decision_report["trigger_type"] == "manual"
         assert result.decision_report["eligible_for_scoring"] is False
         assert result.decision_report["updates_official_cta_state"] is False
         assert result.decision_report["objective_evaluation"]["status"] == "not_applicable"
+    engine.dispose()
+
+
+def test_premarket_uses_one_tool_free_composite_invocation(tmp_path) -> None:
+    engine, factory = create_database(f"sqlite:///{tmp_path / 'premarket-composite.db'}")
+    Base.metadata.create_all(bind=engine)
+    cutoff = datetime(2026, 8, 3, 12, tzinfo=UTC)
+    provider = FakeLLMProvider(
+        [{"message": {"role": "assistant", "content": json.dumps(_premarket_output())}}]
+    )
+    payload = {
+        "schema_version": "1.0",
+        "run_id": "premarket-run-1",
+        "snapshot_id": "premarket-snapshot-1",
+        "run_type": "pre_market",
+        "cutoff_time": cutoff.isoformat(),
+        "is_mock": False,
+        "market": _evidence()["1a"],
+        "instrument_cards": _evidence()["3a"]["instruments"],
+        "options": _evidence()["2"],
+        "systematic_flows": {},
+        "capital_flows": {
+            "schema_version": "urus.capital_flow_cache.v1",
+            "as_of_date": "2026-07-31",
+            "symbols": [
+                {
+                    "symbol": "SOXX",
+                    "cached_trading_days": 5,
+                    "signal_projection": {
+                        "signal": "large_order_absorption_candidate",
+                        "confidence": 0.8,
+                        "recent_5d": [{"trading_date": "2026-07-31", "block_flow": 10}],
+                    },
+                }
+            ],
+        },
+        "data_quality": {"status": "ok", "warnings": [], "errors": []},
+    }
+    observation = {
+        "run": {
+            "id": "premarket-run-1",
+            "run_type": "pre_market",
+            "status": "succeeded",
+            "cutoff_time": cutoff.isoformat(),
+        },
+        "snapshot": {
+            "id": "premarket-snapshot-1",
+            "schema_version": "1.0",
+            "cutoff_time": cutoff.isoformat(),
+            "created_at": cutoff.isoformat(),
+            "quality_status": "ok",
+            "payload": payload,
+        },
+    }
+    packet = build_stage_decision_packet(
+        dataset_key="daily-decision:2026-08-03:pre_market:premarket-run-1",
+        label="pre-market decision",
+        captured_at=cutoff,
+        decision_phase="pre_market",
+        trading_date="2026-08-03",
+        observations={"pre_market": observation},
+        prior_reports={"previous_post_close": None},
+        events=[],
+        agent_profile=load_agent_profile("pre_market"),
+    )
+    with factory() as session:
+        session.add(
+            RunModel(
+                id="premarket-run-1",
+                run_type="pre_market",
+                status="succeeded",
+                cutoff_time=cutoff,
+            )
+        )
+        session.commit()
+        result = DecisionCoordinator(
+            session,
+            Settings(urus_agent_enforce_stage_tools=True),
+            provider=provider,
+        ).execute(
+            CoordinatorRequest(
+                workflow_run_id="premarket-run-1",
+                cutoff_time=cutoff,
+                evidence={},
+                symbols=["QQQ"],
+                dataset_key=str(packet["source"]["dataset_key"]),
+                source_snapshot_ids=["premarket-snapshot-1"],
+                source_run_ids=["premarket-run-1"],
+                decision_packet=packet,
+                decision_phase="pre_market",
+                trading_date="2026-08-03",
+            )
+        )
+
+        runs = session.query(AIDecisionRunModel).all()
+        assert [(run.stage, run.sequence) for run in runs] == [("synthesis", 1)]
+        assert session.query(AIModelTurnModel).count() == 1
+        assert session.query(AIToolCallModel).count() == 0
+        assert provider.requests[0]["tools"] == []
+        request_payload = json.loads(provider.requests[0]["messages"][1]["content"])
+        assert request_payload["task"]["task_type"] == "premarket_decision"
+        assert request_payload["task"]["metadata"]["scope_kind"] == "premarket_composite"
+        assert request_payload["task"]["metadata"]["premarket_evidence"]["phase"] == "pre_market"
+        flow_evidence = request_payload["task"]["metadata"]["premarket_evidence"]["capital_flows"]
+        assert flow_evidence["symbols"][0]["symbol"] == "SOXX"
+        assert flow_evidence["symbols"][0]["signal_projection"]["signal"] == (
+            "large_order_absorption_candidate"
+        )
+        instrument = request_payload["task"]["metadata"]["premarket_evidence"]["instruments"][0]
+        assert instrument["evidence_paths"]["technical"].endswith(
+            "instruments[QQQ].technical"
+        )
+        assert request_payload["required_evidence"] == []
+        assert result.decision_report["status"] == "succeeded"
+        assert result.technical_report["capital_flows"]["pre_market"]["symbols"][0][
+            "symbol"
+        ] == "SOXX"
+        assert result.decision_report["theme_analyses"] == []
+        assert len(result.decision_report["rankings"]) == 1
+        assert len(result.decision_report["attention_rankings"]) == 1
+        assert result.decision_report["attention_rankings"][0]["instrument_forecast"]
+    engine.dispose()
+
+
+def test_post_close_uses_one_tool_free_review_after_objective_evaluation(tmp_path) -> None:
+    engine, factory = create_database(f"sqlite:///{tmp_path / 'post-close.db'}")
+    Base.metadata.create_all(bind=engine)
+    cutoff = datetime(2026, 8, 3, 21, tzinfo=UTC)
+    provider = FakeLLMProvider([
+        {"message": {"role": "assistant", "content": json.dumps(_post_close_review_output())}}
+    ])
+
+    def observation(run_id: str, snapshot_id: str, price: float) -> dict[str, Any]:
+        payload = {
+            "schema_version": "1.0",
+            "run_id": run_id,
+            "snapshot_id": snapshot_id,
+            "run_type": "post_close_review",
+            "cutoff_time": cutoff.isoformat(),
+            "is_mock": False,
+            "market": {"symbol": "QQQ", "regular_price": price, "is_mock": False},
+            "instrument_cards": [{"symbol": "QQQ", "asset_type": "etf", "theme": "ETF", "quote": {"regular_price": price}}],
+            "options": {"available": False, "symbols": []},
+            "systematic_flows": {},
+            "data_quality": {"status": "ok", "warnings": [], "errors": []},
+        }
+        return {
+            "run": {"id": run_id, "run_type": "post_close_review", "status": "succeeded", "cutoff_time": cutoff.isoformat()},
+            "snapshot": {
+                "id": snapshot_id,
+                "schema_version": "1.0",
+                "cutoff_time": cutoff.isoformat(),
+                "created_at": cutoff.isoformat(),
+                "quality_status": "ok",
+                "payload": payload,
+            },
+        }
+
+    pre_market = observation("pre-run", "pre-snapshot", 100.0)
+    post_close = observation("post-run", "post-snapshot", 101.0)
+    packet = build_stage_decision_packet(
+        dataset_key="daily-decision:2026-08-03:post_close_review:post-run",
+        label="post close review",
+        captured_at=cutoff,
+        decision_phase="post_close_review",
+        trading_date="2026-08-03",
+        observations={"pre_market": pre_market, "post_close_review": post_close},
+        prior_reports={
+            "previous_post_close": None,
+            "same_day_pre_market": {
+                "report_id": "pre-report",
+                "status": "succeeded",
+                "forecast": {"direction": "bullish", "confidence": 0.7, "expected_path": "Higher."},
+                "rankings": [],
+            },
+        },
+        events=[],
+        agent_profile=load_agent_profile("post_close_review"),
+    )
+    with factory() as session:
+        session.add(RunModel(id="post-run", run_type="post_close_review", status="succeeded", cutoff_time=cutoff))
+        session.commit()
+        result = DecisionCoordinator(
+            session,
+            Settings(urus_agent_enforce_stage_tools=True),
+            provider=provider,
+        ).execute(
+            CoordinatorRequest(
+                workflow_run_id="post-run",
+                cutoff_time=cutoff,
+                evidence={},
+                symbols=["QQQ"],
+                dataset_key=str(packet["source"]["dataset_key"]),
+                source_snapshot_ids=["pre-snapshot", "post-snapshot"],
+                source_run_ids=["pre-run", "post-run"],
+                decision_packet=packet,
+                decision_phase="post_close_review",
+                trading_date="2026-08-03",
+                parent_session_id="pre-report",
+            )
+        )
+
+        runs = session.query(AIDecisionRunModel).all()
+        assert [run.stage for run in runs] == ["review"]
+        assert session.query(AIToolCallModel).count() == 0
+        assert session.query(AIModelTurnModel).count() == 1
+        assert session.query(ForecastExperienceModel).count() == 1
+        assert provider.requests[0]["tools"] == []
+        assert provider.requests[0]["messages"][1]["content"].find("review_evidence") >= 0
+        assert result.decision_report["rankings"] == []
+        assert result.decision_report["theme_analyses"] == []
+        assert result.decision_report["review"]["pre_market_evaluation"]["verdict"] == "hit"
+        assert result.decision_report["review"]["lessons"] == [
+            _post_close_review_output()["experience_candidates"][0]["statement"]
+        ]
     engine.dispose()
 
 

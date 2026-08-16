@@ -68,6 +68,7 @@ def get_decision(decision_id: str, db: Session = Depends(get_db)) -> dict[str, o
             "error_code": item.error_code,
             "duration_ms": item.duration_ms,
             "result_bytes": item.result_bytes,
+            "prefetched": item.prefetched,
             "started_at": item.started_at,
             "completed_at": item.completed_at,
         }

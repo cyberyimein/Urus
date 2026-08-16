@@ -30,7 +30,7 @@ class ToolRegistry:
         self._tools = self._build_tools()
 
     def list_specs(self, skill_name: str, *, task: AgentTask | None = None) -> list[ToolSpec]:
-        if task is not None and task.stage == "synthesis":
+        if task is not None and task.stage in {"synthesis", "review"}:
             return []
         return [item.spec for item in self._tools.values() if skill_name in item.skills]
 
@@ -190,8 +190,28 @@ def _market_symbols(task: AgentTask, requested: list[str]) -> list[str]:
 
 
 def _tool_scope_error(name: str, arguments: dict[str, Any], task: AgentTask) -> str | None:
-    if task.stage == "synthesis":
-        return "Equity synthesis cannot call data tools."
+    if task.stage in {"synthesis", "review"}:
+        return f"{task.stage} cannot call data tools."
+    metadata = task.metadata if isinstance(task.metadata, dict) else {}
+    configured_phases = metadata.get("comparison_observations")
+    allowed_phases = {
+        str(value)
+        for value in configured_phases
+        if value
+    } if isinstance(configured_phases, list) else set()
+    allowed_phases.add(
+        str(metadata.get("current_observation") or task.decision_phase)
+    )
+    requested_phases = {
+        str(arguments[key])
+        for key in ("phase", "from_phase", "to_phase")
+        if arguments.get(key)
+    }
+    outside_phases = requested_phases - allowed_phases
+    if outside_phases:
+        return "Observation phase is outside the task scope: " + ", ".join(
+            sorted(outside_phases)
+        )
     allowed = _allowed_symbols(task)
     if allowed is None:
         return None

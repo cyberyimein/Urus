@@ -14,7 +14,22 @@ def test_empty_database_can_migrate(tmp_path: Path) -> None:
     command.upgrade(config, "head")
 
     engine = create_engine(database_url)
-    assert {"runs", "step_runs", "snapshots", "alembic_version"}.issubset(
-        set(inspect(engine).get_table_names())
+    inspector = inspect(engine)
+    assert {
+        "runs",
+        "step_runs",
+        "snapshots",
+        "alembic_version",
+        "forecast_experiences",
+        "capital_flow_daily",
+    }.issubset(
+        set(inspector.get_table_names())
     )
-
+    assert "prefetched" in {
+        column["name"] for column in inspector.get_columns("ai_tool_calls")
+    }
+    experience_columns = {
+        column["name"]: column
+        for column in inspector.get_columns("forecast_experiences")
+    }
+    assert experience_columns["source_report_id"]["nullable"] is True

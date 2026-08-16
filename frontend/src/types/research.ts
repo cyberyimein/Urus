@@ -69,6 +69,8 @@ export interface ReportDisplayOptionPayload {
 export interface ReportRunSummary {
   run_count: number
   tool_call_count: number
+  prefetched_tool_count?: number
+  model_requested_tool_count?: number
   prompt_tokens: number
   completion_tokens: number
   estimated_cost?: number | null
@@ -90,6 +92,7 @@ export interface TechnicalReport extends Record<string, unknown> {
   instruments?: Record<string, unknown>
   options?: Record<string, unknown>
   systematic_flows?: Record<string, unknown>
+  capital_flows?: Record<string, unknown>
   events?: Record<string, unknown>
   omissions?: Array<Record<string, unknown>>
   execution_ready?: boolean
@@ -109,6 +112,7 @@ export interface DecisionReport extends Record<string, unknown> {
   forecast_horizon?: 'regular_session' | 'final_hour' | 'completed_session' | 'current_state'
   forecast?: Record<string, unknown> | null
   review?: Record<string, unknown> | null
+  experience_candidates?: Array<Record<string, unknown>>
   objective_evaluation?: Record<string, unknown>
   equity?: Record<string, unknown>
   equity_decision_run_id?: string | null
@@ -117,6 +121,7 @@ export interface DecisionReport extends Record<string, unknown> {
   theme_analyses?: Array<Record<string, unknown>>
   market_regime?: Record<string, unknown>
   rankings?: Array<Record<string, unknown>>
+  attention_rankings?: Array<Record<string, unknown>>
   candidate_gate?: Array<Record<string, unknown>>
   option_decisions?: Array<Record<string, unknown>>
   equity_option_context?: Array<Record<string, unknown>>
@@ -169,6 +174,8 @@ export interface TraceNodeDetail extends TraceNode {
     provider: string
     model: string | null
     tool_call_count: number
+    prefetched_tool_count?: number
+    model_requested_tool_count?: number
     temperature?: number | null
     prompt_tokens?: number | null
     completion_tokens?: number | null

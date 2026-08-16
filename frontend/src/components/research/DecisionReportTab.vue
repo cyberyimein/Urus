@@ -24,7 +24,14 @@ const emit = defineEmits<{
   (event: 'close-symbol'): void
 }>()
 
-const rankings = computed(() => records(props.report?.rankings))
+const allRankings = computed(() => records(props.report?.rankings))
+const rankings = computed(() => (
+  props.report?.decision_phase === 'pre_market'
+    ? Array.isArray(props.report?.attention_rankings)
+      ? records(props.report?.attention_rankings)
+      : allRankings.value.slice(0, 5)
+    : allRankings.value
+))
 const optionContext = computed(() => records(props.report?.equity_option_context))
 const forecast = computed(() => record(props.report?.forecast))
 const review = computed(() => record(props.report?.review))
@@ -55,11 +62,12 @@ function listText(value: unknown): string {
       <span class="subtle">结构化输出 · 程序组装</span>
     </div>
 
-    <DecisionSummaryHero :report="report" :rankings="rankings" :option-context="optionContext" />
+    <DecisionSummaryHero v-if="!isReview" :report="report" :rankings="rankings" :option-context="optionContext" />
 
-    <DecisionSupportMatrix :report="report" @focus-evidence="emit('focus-evidence', $event)" />
+    <DecisionSupportMatrix v-if="!isReview" :report="report" @focus-evidence="emit('focus-evidence', $event)" />
 
     <AttentionTable
+      v-if="!isReview"
       :rankings="rankings"
       :option-context="optionContext"
       :manual="isManual"
@@ -68,7 +76,7 @@ function listText(value: unknown): string {
     />
 
     <section v-if="hasForecast || hasReview" class="decision-context-section">
-      <details class="report-disclosure">
+      <details class="report-disclosure" :open="hasReview">
         <summary>{{ hasReview ? '查看复盘与预测对照' : '查看预测路径与条件' }}</summary>
 
         <div v-if="hasForecast" class="decision-disclosure-content">
@@ -96,6 +104,11 @@ function listText(value: unknown): string {
           <p class="report-note">{{ text(review.market_outcome, '未提供市场结果') }}</p>
           <div v-if="Object.keys(record(review.pre_market_evaluation)).length" class="decision-review-fact"><span>盘前预测</span><strong>{{ text(record(review.pre_market_evaluation).verdict) }}</strong><p>{{ text(record(review.pre_market_evaluation).explanation) }}</p></div>
           <div v-if="phaseEvaluations.length" class="decision-review-fact"><span>程序评估</span><strong>{{ phaseEvaluations.length }} 个阶段</strong><p>{{ phaseEvaluations.map((item) => `${text(item.phase)} · ${text(item.verdict)}`).join('；') }}</p></div>
+          <div class="decision-condition-grid">
+            <div><span>预测错误</span><p>{{ listText(review.forecast_errors) }}</p></div>
+            <div><span>当日教训</span><p>{{ listText(review.lessons) }}</p></div>
+            <div><span>下次延续观察</span><p>{{ listText(review.next_session_carry) }}</p></div>
+          </div>
         </div>
       </details>
     </section>

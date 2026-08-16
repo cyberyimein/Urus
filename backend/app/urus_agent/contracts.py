@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 from datetime import datetime
+import hashlib
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
-TaskType = Literal["equity_ranking", "options_structure"]
+TaskType = Literal[
+    "equity_ranking",
+    "options_structure",
+    "post_close_review",
+    "premarket_decision",
+]
 DecisionPhase = Literal["pre_market", "pre_close", "post_close_review", "current_state"]
 Phase = DecisionPhase
 AgentRunStatus = Literal["pending", "running", "succeeded", "failed", "timed_out"]
@@ -31,7 +38,7 @@ class AgentTask(BaseModel):
     decision_run_id: str | None = None
     parent_decision_run_id: str | None = None
     decision_phase: DecisionPhase = "pre_close"
-    stage: Literal["equity", "market", "theme", "synthesis", "options"] = "equity"
+    stage: Literal["equity", "market", "theme", "synthesis", "options", "review"] = "equity"
     sequence: int = 1
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -133,6 +140,8 @@ class DecisionResult(BaseModel):
     skill_name: str | None = None
     skill_hash: str | None = None
     tool_call_count: int = 0
+    prefetched_tool_count: int = 0
+    model_requested_tool_count: int = 0
     tool_calls: list[dict[str, Any]] = Field(default_factory=list)
     model_turns: list[dict[str, Any]] = Field(default_factory=list)
     duration_ms: int | None = None
@@ -272,6 +281,86 @@ class DailyReview(BaseModel):
     next_session_carry: list[str] = Field(default_factory=list)
 
 
+class ExperienceCandidate(BaseModel):
+    """One falsifiable lesson proposed by a completed-session review."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pattern_key: str = Field(min_length=3, max_length=96, pattern=r"^[a-z0-9][a-z0-9._-]+$")
+    category: Literal[
+        "forecast_error",
+        "confirmation",
+        "risk_rule",
+        "regime_pattern",
+    ]
+    statement: str = Field(min_length=1, max_length=600)
+    applicability_tags: list[str] = Field(default_factory=list, max_length=8)
+    confidence: float = Field(ge=0, le=1)
+    evidence: list[EquityEvidence] = Field(default_factory=list, max_length=6)
+
+
+class PostCloseReviewOutput(BaseModel):
+    """Focused explanation produced after deterministic forecast evaluation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["urus.post_close_review.v1"]
+    status: Literal["completed", "insufficient_data"]
+    session_summary: str = Field(min_length=1, max_length=2400)
+    market_outcome: str = Field(min_length=1, max_length=2400)
+    material_changes: list[str] = Field(default_factory=list, max_length=12)
+    pre_market_explanation: str = Field(min_length=1, max_length=2400)
+    forecast_errors: list[str] = Field(default_factory=list, max_length=10)
+    lessons: list[str] = Field(default_factory=list, max_length=10)
+    next_session_carry: list[str] = Field(default_factory=list, max_length=10)
+    experience_candidates: list[ExperienceCandidate] = Field(default_factory=list, max_length=8)
+    portfolio_warnings: list[str] = Field(default_factory=list, max_length=10)
+    disclaimer: str
+
+    @model_validator(mode="after")
+    def validate_review_consistency(self) -> "PostCloseReviewOutput":
+        if self.status == "completed" and self.lessons and not self.experience_candidates:
+            raise ValueError(
+                "completed reviews with lessons must provide structured experience_candidates"
+            )
+        if any(
+            re.search(r"\bconfirmed\s+(?:risk\s+)?rule\b", statement, re.IGNORECASE)
+            for statement in self.next_session_carry
+        ):
+            raise ValueError(
+                "experience candidates must not be described as confirmed rules"
+            )
+        pattern_keys = [candidate.pattern_key for candidate in self.experience_candidates]
+        if len(pattern_keys) != len(set(pattern_keys)):
+            raise ValueError("experience_candidates must not contain duplicate pattern_key values")
+        relationship_pattern = re.compile(
+            r"\b(above|below)\b[^()]{0,100}\(\s*(-?\d+(?:\.\d+)?)\s*"
+            r"(?:vs\.?|versus)\s*(-?\d+(?:\.\d+)?)\s*\)",
+            re.IGNORECASE,
+        )
+        for statement in (
+            self.session_summary,
+            self.market_outcome,
+            self.pre_market_explanation,
+            *self.material_changes,
+            *self.forecast_errors,
+            *self.lessons,
+            *self.next_session_carry,
+        ):
+            for relation, left_text, right_text in relationship_pattern.findall(statement):
+                left, right = float(left_text), float(right_text)
+                invalid = (
+                    relation.lower() == "above" and left <= right
+                ) or (
+                    relation.lower() == "below" and left >= right
+                )
+                if invalid:
+                    raise ValueError(
+                        f"numeric relationship is inconsistent: {relation} ({left} vs {right})"
+                    )
+        return self
+
+
 class EquityDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -297,6 +386,58 @@ class EquityDecision(BaseModel):
     market_regime: MarketRegime
     rankings: list[EquityRanking] = Field(default_factory=list)
     portfolio_warnings: list[str] = Field(default_factory=list)
+    disclaimer: str
+
+
+class PremarketInstrumentDecision(BaseModel):
+    """Minimal scoreable forecast retained for every requested symbol."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    symbol: str
+    themes: list[str] = Field(default_factory=list, max_length=4)
+    instrument_forecast: InstrumentForecast
+
+
+class PremarketAttentionDecision(BaseModel):
+    """Rich decision detail reserved for the bounded attention list."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    rank: int = Field(ge=1)
+    symbol: str
+    themes: list[str] = Field(default_factory=list, max_length=4)
+    action: Literal["setup_ready", "watch", "observe", "avoid", "insufficient_data"]
+    strict_sepa_completeness: Literal["complete", "partial", "not_evaluable"]
+    score: float = Field(ge=0, le=1)
+    confidence: float = Field(ge=0, le=1)
+    thesis: str = Field(max_length=600)
+    evidence: list[EquityEvidence] = Field(default_factory=list, max_length=4)
+    risks: list[str] = Field(default_factory=list, max_length=4)
+    missing_fields: list[str] = Field(default_factory=list, max_length=4)
+    invalidation_conditions: list[str] = Field(default_factory=list, max_length=4)
+    if_cash: CashScenarioDecision
+    if_held: HeldScenarioDecision
+
+
+class PremarketCompositeDecision(BaseModel):
+    """Single-pass market, theme and instrument decision output."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["urus.premarket_composite_decision.v1"]
+    decision_phase: Literal["pre_market"]
+    agent_profile: Literal["urus-premarket-strategist"]
+    forecast_horizon: Literal["regular_session"]
+    as_of: str | None = None
+    status: Literal["decision", "insufficient_data"]
+    market_regime: MarketRegime
+    forecast: PhaseForecast
+    instrument_forecasts: list[PremarketInstrumentDecision]
+    attention_rankings: list[PremarketAttentionDecision] = Field(
+        default_factory=list, max_length=5
+    )
+    portfolio_warnings: list[str] = Field(default_factory=list, max_length=8)
     disclaimer: str
 
 
@@ -385,7 +526,13 @@ class OptionDecision(BaseModel):
 
 
 def output_model_for(task_type: TaskType) -> type[BaseModel]:
-    return EquityDecision if task_type == "equity_ranking" else OptionDecision
+    if task_type == "equity_ranking":
+        return EquityDecision
+    if task_type == "post_close_review":
+        return PostCloseReviewOutput
+    if task_type == "premarket_decision":
+        return PremarketCompositeDecision
+    return OptionDecision
 
 
 def response_schema_for(task: AgentTask) -> dict[str, Any]:
@@ -397,6 +544,8 @@ def response_schema_for(task: AgentTask) -> dict[str, Any]:
     """
 
     schema = output_model_for(task.task_type).model_json_schema()
+    if task.task_type in {"post_close_review", "premarket_decision"}:
+        return schema
     if (
         task.task_type == "equity_ranking"
         and task.decision_phase == "current_state"
@@ -446,6 +595,41 @@ def response_schema_for(task: AgentTask) -> dict[str, Any]:
             ranking["properties"][name]["items"]["maxLength"] = 300
         ranking["required"] = list(ranking_fields)
         return schema
+    if (
+        task.task_type == "equity_ranking"
+        and task.decision_phase == "pre_market"
+        and task.metadata.get("scope_kind") == "premarket_composite"
+    ):
+        # One composite invocation replaces the old Market -> Theme ->
+        # Synthesis fan-out. Bound narrative fields so full-universe forecast
+        # coverage does not recreate that fan-out as an oversized response.
+        schema["properties"]["rankings"]["maxItems"] = max(1, len(task.symbols))
+        schema["properties"]["portfolio_warnings"]["maxItems"] = 8
+        schema["properties"]["portfolio_warnings"]["items"]["maxLength"] = 300
+        evidence = schema["$defs"]["EquityEvidence"]
+        evidence["properties"]["path"]["maxLength"] = 240
+        evidence["properties"]["observation"]["maxLength"] = 400
+        market_regime = schema["$defs"]["MarketRegime"]
+        market_regime["properties"]["evidence"]["maxItems"] = 6
+        ranking = schema["$defs"]["EquityRanking"]
+        ranking["properties"]["themes"]["maxItems"] = 4
+        ranking["properties"]["thesis"]["maxLength"] = 600
+        ranking["properties"]["evidence"]["maxItems"] = 4
+        for name in ("risks", "missing_fields", "invalidation_conditions"):
+            ranking["properties"][name]["maxItems"] = 4
+            ranking["properties"][name]["items"]["maxLength"] = 240
+        forecast = schema["$defs"]["PhaseForecast"]
+        forecast["properties"]["expected_path"]["maxLength"] = 800
+        for name in (
+            "leading_themes",
+            "lagging_themes",
+            "catalysts",
+            "confirmation_conditions",
+            "invalidation_conditions",
+        ):
+            forecast["properties"][name]["maxItems"] = 6
+            forecast["properties"][name]["items"]["maxLength"] = 300
+        forecast["properties"]["scenarios"]["maxItems"] = 3
     if task.metadata.get("daily_cycle") is not True:
         return schema
 
@@ -551,6 +735,105 @@ def response_schema_for(task: AgentTask) -> dict[str, Any]:
 def validate_business_output(task: AgentTask, output: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(output, dict):
         raise BusinessValidationError("structured output must be one JSON object")
+    if task.task_type == "post_close_review":
+        if task.decision_phase != "post_close_review" or task.stage != "review":
+            raise BusinessValidationError(
+                "post_close_review output requires the completed-session review task"
+            )
+        normalized_review = dict(output)
+        lessons = [
+            str(value).strip()
+            for value in normalized_review.get("lessons") or []
+            if str(value).strip()
+        ]
+        if (
+            normalized_review.get("status") == "completed"
+            and lessons
+            and not normalized_review.get("experience_candidates")
+        ):
+            candidates_by_key: dict[str, dict[str, Any]] = {}
+            carry = [str(value).strip() for value in normalized_review.get("next_session_carry") or []]
+            for index, lesson in enumerate(lessons[:8]):
+                prefix, separator, remainder = lesson.partition(":")
+                if (
+                    prefix == "pattern_key"
+                    and separator
+                    and re.fullmatch(r"[a-z0-9][a-z0-9._-]{2,95}", remainder.strip())
+                ):
+                    pattern_key = remainder.strip()
+                    statement = carry[index] if index < len(carry) and carry[index] else lesson
+                elif separator and re.fullmatch(r"[a-z0-9][a-z0-9._-]{2,95}", prefix):
+                    pattern_key = prefix
+                    statement = remainder.strip() or lesson
+                else:
+                    digest = hashlib.sha256(lesson.encode("utf-8")).hexdigest()[:16]
+                    pattern_key = f"lesson.{digest}"
+                    statement = lesson
+                candidates_by_key.setdefault(
+                    pattern_key,
+                    {
+                        "pattern_key": pattern_key,
+                        "category": "risk_rule",
+                        "statement": statement,
+                        "applicability_tags": [],
+                        "confidence": 0.5,
+                        "evidence": [],
+                    }
+                )
+            normalized_review["experience_candidates"] = list(candidates_by_key.values())
+        return PostCloseReviewOutput.model_validate(normalized_review).model_dump(mode="json")
+    if task.task_type == "premarket_decision":
+        if (
+            task.decision_phase != "pre_market"
+            or task.stage != "synthesis"
+            or task.metadata.get("scope_kind") != "premarket_composite"
+        ):
+            raise BusinessValidationError(
+                "premarket_decision requires the pre-market composite synthesis task"
+            )
+        normalized = PremarketCompositeDecision.model_validate(output).model_dump(mode="json")
+        expected = set(task.symbols)
+        forecast_symbols = [
+            str(item.get("symbol") or "").upper()
+            for item in normalized.get("instrument_forecasts") or []
+        ]
+        if len(forecast_symbols) != len(set(forecast_symbols)):
+            raise BusinessValidationError(
+                "instrument_forecasts must not contain duplicate symbols"
+            )
+        if set(forecast_symbols) != expected:
+            missing = sorted(expected - set(forecast_symbols))
+            extra = sorted(set(forecast_symbols) - expected)
+            raise BusinessValidationError(
+                f"instrument_forecasts must cover the task universe; missing={missing}; extra={extra}"
+            )
+        forecast_by_symbol = {
+            str(item["symbol"]).upper(): item["instrument_forecast"]
+            for item in normalized["instrument_forecasts"]
+        }
+        attention_symbols = [
+            str(item.get("symbol") or "").upper()
+            for item in normalized.get("attention_rankings") or []
+        ]
+        if len(attention_symbols) != len(set(attention_symbols)):
+            raise BusinessValidationError(
+                "attention_rankings must not contain duplicate symbols"
+            )
+        if not set(attention_symbols).issubset(expected):
+            raise BusinessValidationError(
+                "attention_rankings contains a symbol outside the task universe"
+            )
+        for index, item in enumerate(normalized.get("attention_rankings") or [], start=1):
+            item["rank"] = index
+            symbol = str(item["symbol"]).upper()
+            if (
+                item["if_cash"]["action"] == "buy"
+                and forecast_by_symbol[symbol]["direction"] != "up"
+            ):
+                raise BusinessValidationError(
+                    "cash buy decisions require an up instrument forecast"
+                )
+        return normalized
     if task.metadata.get("daily_cycle") is True:
         required_fields = {"schema_version", "decision_phase", "agent_profile"}
         if task.task_type == "equity_ranking":
@@ -749,10 +1032,18 @@ def validate_evidence_references(
     """
 
     references: list[dict[str, Any]] = []
-    if task.task_type == "equity_ranking":
+    if task.task_type in {"equity_ranking", "premarket_decision"}:
         references.extend((output.get("market_regime") or {}).get("evidence") or [])
-        for ranking in output.get("rankings") or []:
+        ranking_key = (
+            "attention_rankings"
+            if task.task_type == "premarket_decision"
+            else "rankings"
+        )
+        for ranking in output.get(ranking_key) or []:
             references.extend(ranking.get("evidence") or [])
+    elif task.task_type == "post_close_review":
+        for candidate in output.get("experience_candidates") or []:
+            references.extend(candidate.get("evidence") or [])
     else:
         references.extend(output.get("evidence") or [])
     observed = {str(path) for path in (observed_tool_paths or set()) if path}
@@ -772,6 +1063,35 @@ def validate_evidence_references(
             # subsequent validators do not retain the model's metadata alias.
             reference["path"] = resolved_path
             continue
+        if _task_metadata_path_exists(task, path):
+            # Market/theme/review projections are immutable, controller-built
+            # task inputs. Accept only an exact path that resolves inside the
+            # current task metadata; a plausible-looking prefix is not enough.
+            continue
         if path in observed:
             continue
         raise BusinessValidationError(f"evidence path does not resolve in frozen evidence: {path}")
+
+
+def _task_metadata_path_exists(task: AgentTask, path: str) -> bool:
+    prefix = "task.metadata."
+    if not path.startswith(prefix):
+        return False
+    current: Any = task.metadata
+    remainder = path.removeprefix(prefix)
+    tokens = re.findall(r"([^\.\[\]]+)|\[([^\]]+)\]", remainder)
+    if not tokens:
+        return False
+    for key_token, index_token in tokens:
+        if key_token:
+            if not isinstance(current, dict) or key_token not in current:
+                return False
+            current = current[key_token]
+            continue
+        if not isinstance(current, list) or not index_token.isdigit():
+            return False
+        index = int(index_token)
+        if index < 0 or index >= len(current):
+            return False
+        current = current[index]
+    return True

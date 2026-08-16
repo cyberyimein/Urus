@@ -61,6 +61,8 @@ INSTRUMENT_THEMES_BY_SYMBOL = {
 class MarketCollectorAdapter(Protocol):
     def market_card(self, symbol: str) -> dict[str, object]: ...
 
+    def capital_flow_day(self, symbol: str, trading_date: date) -> dict[str, Any]: ...
+
 
 class MoomooAdapter(Protocol):
     """Future full Moomoo boundary; stage 1A only uses market_card."""
@@ -68,6 +70,8 @@ class MoomooAdapter(Protocol):
     def market_card(self, symbol: str) -> dict[str, object]: ...
 
     def instrument_card(self, symbol: str) -> dict[str, object]: ...
+
+    def capital_flow_day(self, symbol: str, trading_date: date) -> dict[str, Any]: ...
 
     def options_placeholder(self, symbol: str) -> dict[str, object]: ...
 
@@ -348,6 +352,71 @@ class OpenDMarketAdapter:
                 "VIX 等美国指数按策略不通过 Moomoo 请求，使用 Yahoo/FRED 宏观日频源；"
                 "技术判断和其他流程仍未实现。"
             ),
+        }
+
+    def capital_flow_day(self, symbol: str, trading_date: date) -> dict[str, Any]:
+        """Read one completed regular-session daily capital-flow row."""
+
+        quote_code = _normalise_quote_code(symbol)
+        sdk = self._ensure_sdk()
+        period_type = (
+            sdk.PeriodType.DAY
+            if hasattr(sdk, "PeriodType")
+            else "DAY"
+        )
+        rows = _iter_rows(
+            self._call(
+                "get_capital_flow",
+                quote_code,
+                period_type=period_type,
+                start=trading_date.isoformat(),
+                end=trading_date.isoformat(),
+            )
+        )
+        matching = [
+            row
+            for row in rows
+            if _capital_flow_date(row) == trading_date
+        ]
+        if not matching:
+            raise RuntimeError(
+                f"OpenD 未返回 {quote_code} {trading_date.isoformat()} 的日资金流"
+            )
+        row = matching[-1]
+        super_flow = _optional_number(row, ["super_in_flow", "superInFlow"])
+        big_flow = _optional_number(row, ["big_in_flow", "bigInFlow"])
+        main_flow = _optional_number(row, ["main_in_flow", "mainInFlow"])
+        warnings: list[str] = []
+        if (
+            main_flow is not None
+            and super_flow is not None
+            and big_flow is not None
+            and not math.isclose(main_flow, super_flow + big_flow, rel_tol=1e-6, abs_tol=1.0)
+        ):
+            warnings.append("main_in_flow 与 super_in_flow + big_in_flow 不一致")
+        normalized = {
+            "in_flow": _optional_number(row, ["in_flow", "inFlow"]),
+            "main_in_flow": main_flow,
+            "super_in_flow": super_flow,
+            "big_in_flow": big_flow,
+            "mid_in_flow": _optional_number(row, ["mid_in_flow", "midInFlow"]),
+            "sml_in_flow": _optional_number(row, ["sml_in_flow", "smlInFlow"]),
+            "source_time": str(
+                _value(
+                    row,
+                    ["capital_flow_item_time", "time"],
+                    default=trading_date.isoformat(),
+                )
+            ),
+            "quality_status": "ok" if not warnings else "partial",
+            "quality_warnings": warnings,
+        }
+        return {
+            **normalized,
+            "raw_payload": {
+                "trading_date": trading_date.isoformat(),
+                **normalized,
+            },
         }
 
     def instrument_card(self, symbol: str) -> dict[str, object]:
@@ -898,6 +967,19 @@ def _date(value: Any) -> date:
     if isinstance(value, date):
         return value
     return date.fromisoformat(str(value)[:10])
+
+
+def _capital_flow_date(row: object) -> date | None:
+    try:
+        value = _value(row, ["capital_flow_item_time", "time"])
+    except KeyError:
+        return None
+    if value in {None, ""}:
+        return None
+    try:
+        return _date(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _average(values: list[float], window: int) -> float | None:

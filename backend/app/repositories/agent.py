@@ -5,7 +5,7 @@ from datetime import datetime
 from uuid import uuid4
 
 from sqlalchemy.orm import Session
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 
 from app.core.time import utc_now
 from app.models import (
@@ -14,6 +14,7 @@ from app.models import (
     AIModelTurnModel,
     AITraceNodeModel,
     AIToolCallModel,
+    ForecastExperienceModel,
     ReportDisplayProjectionModel,
 )
 from app.urus_agent.contracts import AgentTask, DecisionResult
@@ -22,6 +23,22 @@ from app.urus_agent.trace import TraceNodeRecord
 
 class ReportDeletionConflict(RuntimeError):
     """Raised when a report is still being produced and cannot be removed."""
+
+
+def _is_official_scoreable_session(model: AIDecisionSessionModel) -> bool:
+    policy = model.policy_json if isinstance(model.policy_json, dict) else {}
+    report = model.decision_report_json if isinstance(model.decision_report_json, dict) else {}
+    return (
+        policy.get("official_cycle", True) is not False
+        and policy.get("eligible_for_scoring", True) is not False
+        and policy.get("trigger_type", "scheduled") != "manual"
+        and policy.get("analysis_mode", "official_cycle") == "official_cycle"
+        and report.get("official_cycle", True) is not False
+        and report.get("eligible_for_scoring", True) is not False
+        and report.get("trigger_type", "scheduled") != "manual"
+        and report.get("analysis_mode", "official_cycle") == "official_cycle"
+        and report.get("status", model.status) == "succeeded"
+    )
 
 
 class AIDecisionRepository:
@@ -141,6 +158,7 @@ class AIDecisionRepository:
                     error_code=(result_payload.get("error") or {}).get("code") if isinstance(result_payload.get("error"), dict) else None,
                     duration_ms=call.get("duration_ms"),
                     result_bytes=len(json.dumps(result_payload, ensure_ascii=False, default=str).encode("utf-8")),
+                    prefetched=bool(call.get("prefetched", False)),
                     started_at=model.started_at,
                     completed_at=now,
                 )
@@ -325,6 +343,19 @@ class AIDecisionRepository:
 
         decision_runs = self.runs_for_session(session_id)
         decision_run_ids = [run.id for run in decision_runs]
+        # Experiences are durable aggregate knowledge, not report-owned rows.
+        # Clear both provenance pointers explicitly because SQLite deployments
+        # do not universally enable foreign-key actions.
+        self.session.execute(
+            update(ForecastExperienceModel)
+            .where(ForecastExperienceModel.source_report_id == session_id)
+            .values(source_report_id=None)
+        )
+        self.session.execute(
+            update(ForecastExperienceModel)
+            .where(ForecastExperienceModel.source_pre_market_report_id == session_id)
+            .values(source_pre_market_report_id=None)
+        )
         # The chart projection is report-owned, but source runs and snapshots
         # remain available for operations/history inspection.
         self.session.execute(
@@ -364,6 +395,7 @@ class AIDecisionRepository:
             AIDecisionSessionModel.trading_date == trading_date,
             AIDecisionSessionModel.decision_phase == decision_phase,
             AIDecisionSessionModel.decision_report_json.is_not(None),
+            AIDecisionSessionModel.status == "succeeded",
         ]
         if before is not None:
             conditions.append(AIDecisionSessionModel.cutoff_time < before)
@@ -371,9 +403,16 @@ class AIDecisionRepository:
             select(AIDecisionSessionModel)
             .where(*conditions)
             .order_by(AIDecisionSessionModel.created_at.desc())
-            .limit(1)
+            .limit(20)
         )
-        return self.session.scalar(statement)
+        return next(
+            (
+                model
+                for model in self.session.scalars(statement)
+                if _is_official_scoreable_session(model)
+            ),
+            None,
+        )
 
     def latest_session_before(
         self, trading_date: str, decision_phase: str
@@ -384,14 +423,121 @@ class AIDecisionRepository:
                 AIDecisionSessionModel.trading_date < trading_date,
                 AIDecisionSessionModel.decision_phase == decision_phase,
                 AIDecisionSessionModel.decision_report_json.is_not(None),
+                AIDecisionSessionModel.status == "succeeded",
             )
             .order_by(
                 AIDecisionSessionModel.trading_date.desc(),
                 AIDecisionSessionModel.created_at.desc(),
             )
-            .limit(1)
+            .limit(20)
         )
-        return self.session.scalar(statement)
+        return next(
+            (
+                model
+                for model in self.session.scalars(statement)
+                if _is_official_scoreable_session(model)
+            ),
+            None,
+        )
+
+    def upsert_experience_candidates(
+        self,
+        *,
+        source_report_id: str,
+        source_pre_market_report_id: str | None,
+        trading_date: str,
+        candidates: list[dict[str, object]],
+    ) -> None:
+        now = utc_now()
+        candidates_by_key = {
+            str(candidate.get("pattern_key") or "").strip().lower(): candidate
+            for candidate in candidates
+            if str(candidate.get("pattern_key") or "").strip()
+        }
+        for pattern_key, candidate in candidates_by_key.items():
+            existing = self.session.scalar(
+                select(ForecastExperienceModel).where(
+                    ForecastExperienceModel.pattern_key == pattern_key
+                )
+            )
+            if existing is None:
+                self.session.add(
+                    ForecastExperienceModel(
+                        id=str(uuid4()),
+                        pattern_key=pattern_key,
+                        category=str(candidate.get("category") or "forecast_error"),
+                        statement=str(candidate.get("statement") or ""),
+                        applicability_tags=list(candidate.get("applicability_tags") or []),
+                        evidence_refs=list(candidate.get("evidence") or []),
+                        status="candidate",
+                        confidence=float(candidate.get("confidence") or 0.0),
+                        occurrence_count=1,
+                        support_count=1,
+                        contradiction_count=0,
+                        source_report_id=source_report_id,
+                        source_pre_market_report_id=source_pre_market_report_id,
+                        first_seen_trading_date=trading_date,
+                        last_seen_trading_date=trading_date,
+                        first_seen_at=now,
+                        last_seen_at=now,
+                    )
+                )
+                continue
+            same_observation = existing.last_seen_trading_date == trading_date
+            existing.statement = str(candidate.get("statement") or existing.statement)
+            existing.category = str(candidate.get("category") or existing.category)
+            existing.applicability_tags = list(
+                dict.fromkeys(
+                    [
+                        *list(existing.applicability_tags or []),
+                        *list(candidate.get("applicability_tags") or []),
+                    ]
+                )
+            )[:12]
+            existing.evidence_refs = list(candidate.get("evidence") or existing.evidence_refs)
+            existing.confidence = max(
+                float(existing.confidence or 0.0),
+                float(candidate.get("confidence") or 0.0),
+            )
+            existing.source_report_id = source_report_id
+            existing.source_pre_market_report_id = source_pre_market_report_id
+            existing.last_seen_at = now
+            # Same-day retries may enrich evidence, tags and confidence, but
+            # must not promote a lesson. Recurrence means another trading day
+            # observed the falsifiable pattern again.
+            if same_observation:
+                continue
+            existing.occurrence_count += 1
+            existing.support_count += 1
+            existing.status = "recurring" if existing.occurrence_count >= 2 else existing.status
+            existing.last_seen_trading_date = trading_date
+        self.session.commit()
+
+    def active_experiences(self, limit: int = 8) -> list[dict[str, object]]:
+        statement = (
+            select(ForecastExperienceModel)
+            .where(ForecastExperienceModel.status.in_(("candidate", "recurring", "validated")))
+            .order_by(
+                ForecastExperienceModel.status.desc(),
+                ForecastExperienceModel.last_seen_at.desc(),
+            )
+            .limit(max(1, min(limit, 20)))
+        )
+        return [
+            {
+                "pattern_key": model.pattern_key,
+                "category": model.category,
+                "statement": model.statement,
+                "applicability_tags": list(model.applicability_tags or []),
+                "status": model.status,
+                "confidence": model.confidence,
+                "occurrence_count": model.occurrence_count,
+                "support_count": model.support_count,
+                "contradiction_count": model.contradiction_count,
+                "last_seen_trading_date": model.last_seen_trading_date,
+            }
+            for model in self.session.scalars(statement)
+        ]
 
     def list_sessions(self, limit: int = 50) -> list[AIDecisionSessionModel]:
         statement = (
@@ -446,14 +592,19 @@ class AIDecisionRepository:
             if run.completed_at is not None and run.started_at is not None
         ]
         tool_count = 0
+        prefetched_tool_count = 0
         for run in runs:
-            tool_count += len(self.tool_calls(run.id))
+            calls = self.tool_calls(run.id)
+            tool_count += len(calls)
+            prefetched_tool_count += sum(bool(call.prefetched) for call in calls)
         providers = sorted({str(run.provider) for run in runs if run.provider and run.provider != "pending"})
         models = sorted({str(run.model) for run in runs if run.model})
         skill_hashes = sorted({str(run.skill_hash) for run in runs if run.skill_hash and run.skill_hash != "pending"})
         return {
             "run_count": len(runs),
             "tool_call_count": tool_count,
+            "prefetched_tool_count": prefetched_tool_count,
+            "model_requested_tool_count": tool_count - prefetched_tool_count,
             "prompt_tokens": sum(int(run.prompt_tokens or 0) for run in runs),
             "completion_tokens": sum(int(run.completion_tokens or 0) for run in runs),
             "estimated_cost": round(sum(float(run.estimated_cost or 0) for run in runs), 8) or None,

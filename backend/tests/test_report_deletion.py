@@ -11,6 +11,7 @@ from app.models import (
     AIModelTurnModel,
     AITraceNodeModel,
     AIToolCallModel,
+    ForecastExperienceModel,
     RunModel,
 )
 from app.repositories.agent import AIDecisionRepository, ReportDeletionConflict
@@ -143,6 +144,27 @@ def _seed_report(session, *, with_child: bool = False) -> None:
             completed_at=now,
         )
     )
+    session.add(
+        ForecastExperienceModel(
+            id="experience-1",
+            pattern_key="test.durable_experience",
+            category="risk_rule",
+            statement="Keep this aggregate lesson after deleting its latest report.",
+            applicability_tags=[],
+            evidence_refs=[],
+            status="recurring",
+            confidence=0.7,
+            occurrence_count=2,
+            support_count=2,
+            contradiction_count=0,
+            source_report_id="report-1",
+            source_pre_market_report_id="report-1",
+            first_seen_trading_date="2026-08-12",
+            last_seen_trading_date="2026-08-13",
+            first_seen_at=now,
+            last_seen_at=now,
+        )
+    )
     session.commit()
 
 
@@ -160,6 +182,10 @@ def test_delete_report_removes_agent_audit_but_preserves_workflow_run(tmp_path) 
         assert session.get(AIToolCallModel, "tool-call-1") is None
         assert session.get(AIModelTurnModel, "model-turn-1") is None
         assert session.get(AITraceNodeModel, "trace-1") is None
+        experience = session.get(ForecastExperienceModel, "experience-1")
+        assert experience is not None
+        assert experience.source_report_id is None
+        assert experience.source_pre_market_report_id is None
         assert session.get(RunModel, "workflow-1") is not None
         assert repository.delete_session("missing-report") is False
     engine.dispose()

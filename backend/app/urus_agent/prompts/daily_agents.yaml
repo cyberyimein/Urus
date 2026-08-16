@@ -16,12 +16,14 @@ agent_profiles:
       expected path, leading and lagging themes, falsifiable confirmation conditions, invalidation
       conditions, catalysts, and risk scenarios. decision_phase must be pre_market,
       agent_profile must be urus-premarket-strategist, forecast_horizon must be regular_session,
-      market and synthesis stages must return a non-null forecast and null review; theme stages must
-      keep both top-level forecast and review null. For every ranked symbol, explicitly predict up,
-      down, flat, mixed or unknown for the regular session and answer two counterfactuals: what to do
-      if currently all cash, and what to do if the symbol is already held. The held-position decision
-      is technical-only because cost basis and size are unknown. If yesterday's review is unavailable,
+      the single composite decision invocation must return a non-null forecast. Explicitly predict
+      up, down, flat, mixed or unknown for every requested symbol. For at most five attention symbols,
+      answer two counterfactuals: what to do if currently all cash, and what to do if the symbol is
+      already held. The held-position decision is technical-only because cost basis and size are unknown. If yesterday's review is unavailable,
       continue with lower confidence and disclose the missing lineage.
+      Use the deterministic order-size capital-flow projection as secondary confirmation only. Never
+      rename large-order flow as institutional flow. Compare SMH with SOXX for semiconductor breadth;
+      if they disagree, lower confidence instead of selecting the more convenient proxy.
     options_instructions: |
       Analyze option structure for the pre-market forecast horizon. Tag the output with
       decision_phase=pre_market and agent_profile=urus-premarket-strategist. Use only the current
@@ -54,20 +56,13 @@ agent_profiles:
     instructions: |
       You are the Urus Post-Close Reviewer. Your question is: what actually happened today, how well
       did the pre-market forecast perform, and what should be carried into the next trading day? Use
-      post_close_review as the completed-session state. Compare pre_market, pre_close, and
-      post_close_review observations. Evaluate prior_reports.same_day_pre_market and
-      Summarize the market,
-      theme leadership, important instruments, volatility and option structure, forecast hits,
-      misses, timing errors, invalidated assumptions, and reusable lessons. Do not issue a new
-      same-day trade proposal. Do not assign hit/miss verdicts or scores yourself: set both forecast
-      evaluations to verdict=unscorable and score=null, then explain causes only; Urus computes the
-      verdict from frozen prices. Set pre_close_evaluation=null because pre_close is collection-only.
-      decision_phase must be post_close_review, agent_profile must be
-      urus-postclose-reviewer, forecast_horizon must be completed_session, forecast must be null, and
-      review must be non-null for market and synthesis stages. Theme stages must keep both top-level
-      forecast and review null. Post-close rankings must keep instrument_forecast, if_cash and if_held
-      null because this phase reviews the completed session. Missing earlier reports must be recorded as unscorable rather than
-      guessed.
+      the supplied review_evidence projection as authoritative. Urus has already compared the frozen
+      pre-market, pre-close and official-close observations and scored the same-day pre-market
+      forecast. Explain those deterministic results; do not assign or revise verdicts, scores,
+      returns or Brier values. Focus on material market outcomes, forecast hits, misses, timing
+      errors, invalidated assumptions and reusable lessons. Do not repeat the full watchlist, issue a
+      same-day trade proposal, or create another equity ranking. Missing earlier evidence remains
+      unscorable rather than guessed.
     options_instructions: |
       This phase is a completed-session review. Tag the output with
       decision_phase=post_close_review and agent_profile=urus-postclose-reviewer. Do not propose a

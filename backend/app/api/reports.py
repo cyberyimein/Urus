@@ -349,13 +349,20 @@ def get_trace_node(report_id: str, node_id: str, db: Session = Depends(get_db)) 
     if node.decision_run_id:
         run = repository.get(node.decision_run_id)
         if run is not None:
+            run_tool_calls = repository.tool_calls(run.id)
             payload["decision_run"] = {
                 "id": run.id,
                 "stage": run.stage,
                 "status": run.status,
                 "provider": run.provider,
                 "model": run.model,
-                "tool_call_count": len(repository.tool_calls(run.id)),
+                "tool_call_count": len(run_tool_calls),
+                "prefetched_tool_count": sum(
+                    bool(call.prefetched) for call in run_tool_calls
+                ),
+                "model_requested_tool_count": sum(
+                    not bool(call.prefetched) for call in run_tool_calls
+                ),
                 "temperature": run.temperature,
                 "prompt_tokens": run.prompt_tokens,
                 "completion_tokens": run.completion_tokens,
@@ -370,10 +377,11 @@ def get_trace_node(report_id: str, node_id: str, db: Session = Depends(get_db)) 
                     "arguments": call.arguments,
                     "ok": call.ok,
                     "error_code": call.error_code,
+                    "prefetched": call.prefetched,
                     "duration_ms": call.duration_ms,
                     "result_bytes": call.result_bytes,
                 }
-                for call in repository.tool_calls(run.id)
+                for call in run_tool_calls
             ]
     return payload
 

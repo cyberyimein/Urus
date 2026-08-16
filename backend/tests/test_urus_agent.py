@@ -4,6 +4,7 @@ import json
 from app.urus_agent.contracts import (
     AgentTask,
     BusinessValidationError,
+    PostCloseReviewOutput,
     response_schema_for,
     validate_business_output,
     validate_task_output_scope,
@@ -23,7 +24,12 @@ from app.urus_agent.reports import build_objective_evaluation, select_option_can
 from app.integrations.decision import DecisionRequest, UrusDecisionAdapter
 from app.core.config import Settings
 from app.core.database import Base, create_database
-from app.models import AIDecisionRunModel
+from app.models import (
+    AIDecisionRunModel,
+    AIDecisionSessionModel,
+    ForecastExperienceModel,
+    RunModel,
+)
 from app.repositories.agent import AIDecisionRepository
 from app.urus_agent.prompts import load_task_prompt
 from app.urus_agent.packet import build_stage_decision_packet
@@ -95,6 +101,83 @@ def test_daily_cycle_response_schema_requires_exact_phase_contract() -> None:
         "forecast",
         "review",
     }.issubset(schema["required"])
+
+
+def test_post_close_review_has_a_focused_response_contract() -> None:
+    task = _daily_task().model_copy(
+        update={"task_type": "post_close_review", "stage": "review", "symbols": []}
+    )
+
+    schema = response_schema_for(task)
+
+    assert schema["properties"]["schema_version"]["const"] == "urus.post_close_review.v1"
+    assert "rankings" not in schema["properties"]
+    assert "experience_candidates" in schema["properties"]
+
+
+def test_post_close_review_requires_structured_lessons_and_valid_numeric_relations() -> None:
+    valid = {
+        "schema_version": "urus.post_close_review.v1",
+        "status": "completed",
+        "session_summary": "The session closed lower.",
+        "market_outcome": "Software lagged.",
+        "material_changes": [],
+        "pre_market_explanation": "The leadership forecast missed.",
+        "forecast_errors": [],
+        "lessons": ["Thin-volume breakouts need confirmation."],
+        "next_session_carry": ["SMH closed below MA50 (587.82 vs 592.49)."],
+        "experience_candidates": [{
+            "pattern_key": "breakout.thin_volume",
+            "category": "risk_rule",
+            "statement": "Thin-volume breakouts need confirmation.",
+            "applicability_tags": ["breakout"],
+            "confidence": 0.7,
+            "evidence": [],
+        }],
+        "portfolio_warnings": [],
+        "disclaimer": "Research only.",
+    }
+    assert PostCloseReviewOutput.model_validate(valid).status == "completed"
+
+    missing_candidate = json.loads(json.dumps(valid))
+    missing_candidate["experience_candidates"] = []
+    with pytest.raises(ValueError, match="structured experience_candidates"):
+        PostCloseReviewOutput.model_validate(missing_candidate)
+
+    inverted = json.loads(json.dumps(valid))
+    inverted["next_session_carry"] = ["IGV closed below MA20 (104.08 vs 96.29)."]
+    with pytest.raises(ValueError, match="numeric relationship is inconsistent"):
+        PostCloseReviewOutput.model_validate(inverted)
+
+    premature = json.loads(json.dumps(valid))
+    premature["next_session_carry"] = [
+        "Carry this candidate forward as a confirmed risk rule."
+    ]
+    with pytest.raises(ValueError, match="must not be described as confirmed"):
+        PostCloseReviewOutput.model_validate(premature)
+
+    review_task = _daily_task().model_copy(
+        update={"task_type": "post_close_review", "stage": "review", "symbols": []}
+    )
+    normalized = validate_business_output(review_task, missing_candidate)
+    candidate = normalized["experience_candidates"][0]
+    assert candidate["pattern_key"].startswith("lesson.")
+    assert candidate["statement"] == "Thin-volume breakouts need confirmation."
+    assert candidate["confidence"] == 0.5
+
+    patterned = json.loads(json.dumps(missing_candidate))
+    patterned["lessons"] = ["pattern_key: thin_volume_advance_fades"]
+    patterned["next_session_carry"] = ["Require volume expansion before confirmation."]
+    normalized = validate_business_output(review_task, patterned)
+    assert normalized["experience_candidates"][0]["pattern_key"] == "thin_volume_advance_fades"
+    assert normalized["experience_candidates"][0]["statement"] == (
+        "Require volume expansion before confirmation."
+    )
+
+    duplicate = json.loads(json.dumps(valid))
+    duplicate["experience_candidates"].append(duplicate["experience_candidates"][0])
+    with pytest.raises(ValueError, match="duplicate pattern_key"):
+        PostCloseReviewOutput.model_validate(duplicate)
 
     pre_close_schema = response_schema_for(_daily_task("pre_close"))
     assert pre_close_schema["properties"]["forecast"] == {"$ref": "#/$defs/PhaseForecast"}
@@ -190,6 +273,7 @@ def test_post_close_objective_evaluation_is_computed_from_prices() -> None:
                         "maximum_percent": -4.0,
                     },
                     "relative_to": "QQQ",
+                    "relative_direction": "underperform",
                 },
             }],
         },
@@ -201,6 +285,7 @@ def test_post_close_objective_evaluation_is_computed_from_prices() -> None:
     )
 
     assert result["status"] == "completed"
+    assert result["method"] == "programmatic_session_multidimensional_v4"
     assert result["phase_evaluations"][0]["verdict"] == "hit"
     assert result["phase_evaluations"][0]["actual_return_percent"] == 1.0
     assert len(result["phase_evaluations"]) == 1
@@ -209,6 +294,113 @@ def test_post_close_objective_evaluation_is_computed_from_prices() -> None:
     assert instrument["actual_return_percent"] == -5.0
     assert instrument["expected_range_hit"] is True
     assert instrument["relative_return_percent"] == -6.0
+    assert instrument["dimension_results"]["relative_performance"]["verdict"] == "hit"
+
+
+def test_instrument_score_does_not_hide_range_and_relative_misses() -> None:
+    packet = _packet()
+    baseline = packet["observations"]["pre_market"]
+    baseline["market"]["primary"].update({"symbol": "QQQ", "regular_price": 100.0})
+    baseline["instruments"] = [{"symbol": "INTC", "quote": {"regular_price": 20.0}}]
+    close = json.loads(json.dumps(baseline))
+    close["market"]["primary"]["regular_price"] = 101.0
+    close["instruments"][0]["quote"]["regular_price"] = 21.0
+    packet["observations"]["post_close_review"] = close
+    packet["decision_context"] = {"current_observation": "post_close_review"}
+    packet["prior_reports"] = {
+        "same_day_pre_market": {
+            "report_id": "report-pre",
+            "forecast": {"direction": "bullish", "confidence": 0.8},
+            "rankings": [{
+                "symbol": "INTC",
+                "instrument_forecast": {
+                    "direction": "up",
+                    "probability": 0.8,
+                    "expected_return_range_percent": {
+                        "minimum_percent": 1.0,
+                        "maximum_percent": 2.0,
+                    },
+                    "relative_to": "QQQ",
+                    "relative_direction": "underperform",
+                },
+            }],
+        }
+    }
+
+    result = build_objective_evaluation(
+        EvidenceStore(packet), decision_phase="post_close_review"
+    )
+
+    instrument = result["instrument_results"][0]
+    assert instrument["dimension_results"]["direction"]["verdict"] == "hit"
+    assert instrument["dimension_results"]["expected_return_range"]["verdict"] == "miss"
+    assert instrument["dimension_results"]["relative_performance"]["verdict"] == "miss"
+    assert instrument["score"] == pytest.approx(1 / 3)
+    assert instrument["verdict"] == "miss"
+
+
+def test_post_close_objective_evaluation_scores_mixed_market_forecast() -> None:
+    packet = _packet()
+    baseline = packet["observations"]["pre_market"]
+    baseline["market"]["primary"].update({"symbol": "QQQ", "premarket_price": 100.0})
+    baseline["instruments"] = [
+        {"symbol": symbol, "quote": {"premarket_price": 100.0}}
+        for symbol in ("SPY", "QQQ", "SMH", "SOXX", "IGV")
+    ]
+    close = json.loads(json.dumps(baseline))
+    close["market"]["primary"].update({"symbol": "QQQ", "regular_price": 99.8})
+    closing_prices = {
+        "SPY": 100.4,
+        "QQQ": 99.8,
+        "SMH": 98.5,
+        "SOXX": 98.7,
+        "IGV": 101.5,
+    }
+    for item in close["instruments"]:
+        item["quote"]["regular_price"] = closing_prices[item["symbol"]]
+    packet["observations"]["post_close_review"] = close
+    packet["decision_context"] = {"current_observation": "post_close_review"}
+    packet["prior_reports"] = {
+        "same_day_pre_market": {
+            "report_id": "report-mixed",
+            "forecast": {
+                "direction": "mixed",
+                "confidence": 0.6,
+                "expected_path": "Rotating leadership.",
+                "leading_themes": ["software"],
+                "lagging_themes": ["semiconductors"],
+            },
+            "rankings": [],
+        }
+    }
+
+    result = build_objective_evaluation(
+        EvidenceStore(packet), decision_phase="post_close_review"
+    )
+
+    evaluation = result["phase_evaluations"][0]
+    assert evaluation["predicted_direction"] == "mixed"
+    assert evaluation["actual_direction"] == "mixed"
+    assert evaluation["verdict"] == "hit"
+    assert evaluation["dimension_results"]["theme_leadership"]["verdict"] == "hit"
+    theme = evaluation["dimension_results"]["theme_leadership"]
+    assert {"SMH", "SOXX"}.issubset(set(theme["expected_laggards"]))
+    assert theme["returns"]["SOXX"] == pytest.approx(-1.3)
+
+    soxx = next(
+        item
+        for item in packet["observations"]["post_close_review"]["instruments"]
+        if item["symbol"] == "SOXX"
+    )
+    soxx["quote"]["regular_price"] = 100.8
+    divergent = build_objective_evaluation(
+        EvidenceStore(packet), decision_phase="post_close_review"
+    )
+    divergent_theme = divergent["phase_evaluations"][0]["dimension_results"][
+        "theme_leadership"
+    ]
+    assert divergent_theme["verdict"] == "partial"
+    assert divergent_theme["score"] == pytest.approx(2 / 3)
 
 
 def test_post_close_objective_evaluation_uses_phase_specific_prices() -> None:
@@ -405,8 +597,126 @@ def test_stage_prompts_define_distinct_analysis_responsibilities() -> None:
     assert "SPY/QQQ participation" in market
     assert "relative strength versus QQQ" in theme
     assert "no data tools are available" in synthesis
+    assert "Do not request or assume additional tools" in market
+    assert "Do not request or assume additional" in theme
     assert "do not mix DEX, GEX" in options
     assert len({market, theme, synthesis, options}) == 4
+
+
+def test_prefetched_market_projection_closes_model_tools() -> None:
+    output = {
+        "schema_version": "urus.equity_decision.v3",
+        "decision_phase": "pre_market",
+        "agent_profile": "urus-premarket-strategist",
+        "forecast_horizon": "regular_session",
+        "forecast": {
+            "direction": "range",
+            "confidence": 0.5,
+            "expected_path": "Bounded fixture.",
+        },
+        "review": None,
+        "as_of": None,
+        "status": "decision",
+        "market_regime": {"classification": "neutral", "confidence": 0.5, "evidence": []},
+        "rankings": [{
+            "rank": 1,
+            "symbol": "QQQ",
+            "themes": ["ETF"],
+            "action": "observe",
+            "strict_sepa_completeness": "not_evaluable",
+            "score": 0.5,
+            "confidence": 0.5,
+            "thesis": "Bounded fixture.",
+            "evidence": [],
+            "risks": [],
+            "missing_fields": [],
+            "invalidation_conditions": [],
+            "instrument_forecast": {
+                "direction": "flat",
+                "probability": 0.5,
+                "expected_return_range_percent": {"minimum_percent": -0.2, "maximum_percent": 0.2},
+                "relative_to": "QQQ",
+                "relative_direction": "inline",
+                "horizon": "regular_session",
+            },
+            "if_cash": {
+                "action": "wait",
+                "conviction": "low",
+                "reason": "No edge.",
+                "entry_condition": "Wait.",
+            },
+            "if_held": {
+                "action": "hold",
+                "conviction": "low",
+                "reason": "No exit trigger.",
+                "take_profit_condition": None,
+                "stop_loss_condition": "Break support.",
+            },
+        }],
+        "portfolio_warnings": [],
+        "disclaimer": "Research output only; no order was placed.",
+    }
+    provider = FakeLLMProvider([
+        {"message": {"role": "assistant", "content": json.dumps(output)}}
+    ])
+    task = _daily_task("pre_market").model_copy(
+        update={
+            "metadata": {
+                "daily_cycle": True,
+                "current_observation": "pre_market",
+                "comparison_observations": ["pre_market"],
+            }
+        }
+    )
+
+    result = UrusAgentRuntime(provider, enforce_stage_tool_requirements=True).decide(
+        task, EvidenceStore(_packet())
+    )
+
+    assert result.status == "succeeded"
+    assert provider.requests[0]["tools"] == []
+    assert result.prefetched_tool_count == result.tool_call_count
+    assert result.model_requested_tool_count == 0
+    assert result.tool_call_count > 0
+
+
+def test_tool_scope_rejects_future_phase_and_composite_event_subject() -> None:
+    task = _daily_task("pre_market").model_copy(
+        update={
+            "metadata": {
+                "daily_cycle": True,
+                "current_observation": "pre_market",
+                "comparison_observations": ["pre_market"],
+            }
+        }
+    )
+    context = ToolContext(task=task, evidence=EvidenceStore(_packet()))
+    registry = ToolRegistry()
+
+    future = registry.call(
+        "get_market_regime",
+        {"phase": "post_close_review", "symbols": ["QQQ"]},
+        context,
+    )
+    composite = registry.call(
+        "get_events",
+        {
+            "category": "instrument",
+            "subject": "QQQ,SPY",
+            "status": [],
+            "result_state": "any",
+            "from_time": None,
+            "to_time": None,
+            "limit": 10,
+        },
+        context,
+    )
+
+    assert future.error is not None
+    assert future.error.code == "tool_scope_violation"
+    assert "post_close_review" in future.error.message
+    assert composite.error is not None
+    assert composite.error.code == "tool_scope_violation"
 
 
 def test_market_stage_requires_two_phases_quality_and_macro_events() -> None:
@@ -485,6 +795,26 @@ def test_options_prefetch_selects_nearest_positive_dte_structure() -> None:
         ("get_option_expiration_structure", {"symbol": "QQQ", "phase": "pre_market", "expiration": "2026-08-10"}),
         ("compare_option_observations", {"symbol": "QQQ", "expiration": "2026-08-10"}),
     ]
+
+
+def test_theme_prefetch_includes_bounded_events_for_assigned_symbols() -> None:
+    task = _daily_task("pre_market").model_copy(
+        update={
+            "stage": "theme",
+            "symbols": ["NVDA", "AMD"],
+            "metadata": {
+                "daily_cycle": True,
+                "current_observation": "pre_market",
+                "comparison_observations": ["pre_market"],
+            },
+        }
+    )
+
+    plan = _stage_prefetch_plan(task)
+    event_calls = [arguments for name, arguments in plan if name == "get_events"]
+
+    assert [call["subject"] for call in event_calls] == ["NVDA", "AMD"]
+    assert all(call["category"] == "instrument" and call["limit"] == 5 for call in event_calls)
 
 
 def test_available_option_expiration_rejects_empty_insufficient_data() -> None:
@@ -717,6 +1047,33 @@ def test_evidence_reference_normalizes_current_state_metadata_alias() -> None:
     assert output["market_regime"]["evidence"][0]["path"] == (
         "observations.current_state.market.technical"
     )
+
+
+def test_evidence_reference_accepts_only_existing_controller_metadata_path() -> None:
+    task = _task().model_copy(
+        update={
+            "metadata": {
+                "market_result": {
+                    "output": {"market_regime": {"classification": "selective_risk_on"}}
+                }
+            }
+        }
+    )
+    output = {
+        "market_regime": {
+            "evidence": [{
+                "path": "task.metadata.market_result.output.market_regime.classification",
+                "observation": "Validated upstream market classification",
+            }]
+        },
+        "rankings": [],
+    }
+
+    validate_evidence_references(task, output, EvidenceStore(_packet()))
+
+    output["market_regime"]["evidence"][0]["path"] += ".invented"
+    with pytest.raises(BusinessValidationError, match="does not resolve"):
+        validate_evidence_references(task, output, EvidenceStore(_packet()))
 
 
 def test_business_validation_gets_one_bounded_correction_turn() -> None:
@@ -1012,4 +1369,99 @@ def test_urus_decision_adapter_records_a_real_fake_decision(tmp_path) -> None:
         assert response.is_mock is False
         assert response.result.status == "succeeded"
         assert session.query(AIDecisionRunModel).count() == 3
+    engine.dispose()
+
+
+def test_official_forecast_selection_and_experience_accumulation(tmp_path) -> None:
+    engine, factory = create_database(f"sqlite:///{tmp_path / 'experience.db'}")
+    Base.metadata.create_all(bind=engine)
+    cutoff = datetime(2026, 8, 3, 12, tzinfo=UTC)
+    with factory() as session:
+        session.add(RunModel(id="forecast-run", run_type="pre_market", status="succeeded", cutoff_time=cutoff))
+        session.flush()
+        common = {
+            "workflow_run_id": "forecast-run",
+            "dataset_key": "dataset",
+            "decision_phase": "pre_market",
+            "trading_date": "2026-08-03",
+            "status": "succeeded",
+            "technical_report_schema_version": "urus.technical_report.v1",
+            "technical_report_json": {},
+            "decision_report_schema_version": "urus.ai_decision_report.v5",
+            "started_at": cutoff,
+            "completed_at": cutoff,
+        }
+        session.add_all([
+            AIDecisionSessionModel(
+                id="official-report",
+                cutoff_time=cutoff,
+                created_at=cutoff,
+                parent_session_id=None,
+                policy_json={"official_cycle": True, "eligible_for_scoring": True, "trigger_type": "scheduled"},
+                decision_report_json={"status": "succeeded", "official_cycle": True, "eligible_for_scoring": True},
+                **common,
+            ),
+            AIDecisionSessionModel(
+                id="manual-report",
+                cutoff_time=cutoff,
+                created_at=datetime(2026, 8, 3, 12, 5, tzinfo=UTC),
+                parent_session_id=None,
+                policy_json={"official_cycle": False, "eligible_for_scoring": False, "trigger_type": "manual"},
+                decision_report_json={"status": "succeeded", "official_cycle": False, "eligible_for_scoring": False},
+                **common,
+            ),
+        ])
+        session.commit()
+        repository = AIDecisionRepository(session)
+
+        selected = repository.session_for_trading_phase(
+            "2026-08-03", "pre_market", before=datetime(2026, 8, 3, 13, tzinfo=UTC)
+        )
+
+        assert selected is not None
+        assert selected.id == "official-report"
+        candidate = {
+            "pattern_key": "software.breakout.flow_divergence",
+            "category": "risk_rule",
+            "statement": "Breakout continuation weakens when systematic pressure reverses.",
+            "applicability_tags": ["software", "breakout"],
+            "confidence": 0.6,
+            "evidence": [],
+        }
+        repository.upsert_experience_candidates(
+            source_report_id="official-report",
+            source_pre_market_report_id="official-report",
+            trading_date="2026-08-03",
+            candidates=[candidate, candidate],
+        )
+        repository.upsert_experience_candidates(
+            source_report_id="official-report",
+            source_pre_market_report_id="official-report",
+            trading_date="2026-08-03",
+            candidates=[candidate],
+        )
+
+        experience = session.query(ForecastExperienceModel).one()
+        assert experience.status == "candidate"
+        assert experience.occurrence_count == 1
+
+        repository.upsert_experience_candidates(
+            source_report_id="manual-report",
+            source_pre_market_report_id="official-report",
+            trading_date="2026-08-03",
+            candidates=[candidate],
+        )
+        assert session.query(ForecastExperienceModel).one().occurrence_count == 1
+
+        repository.upsert_experience_candidates(
+            source_report_id="manual-report",
+            source_pre_market_report_id="official-report",
+            trading_date="2026-08-04",
+            candidates=[candidate],
+        )
+
+        experience = session.query(ForecastExperienceModel).one()
+        assert experience.status == "recurring"
+        assert experience.occurrence_count == 2
+        assert repository.active_experiences()[0]["pattern_key"] == candidate["pattern_key"]
     engine.dispose()

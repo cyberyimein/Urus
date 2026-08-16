@@ -59,7 +59,14 @@ class Settings(BaseSettings):
     moomoo_market_symbols: str = (
         "QQQ,SPY,IWM,DIA,RSP,SMH,SOXX,IGV,HYG,LQD,TLT,IEF,UUP,GLD,USO"
     )
+    capital_flow_symbols: str = "SPY,QQQ,SMH,SOXX,IGV"
+    capital_flow_cache_days: int = 30
+    capital_flow_projection_days: int = 5
     market_timezone: str = "America/New_York"
+    # Exchange-calendars identifier used by the in-process scheduler. XNYS
+    # covers the NYSE/Nasdaq US equity session and its holiday/early-close
+    # rules; deployments can override this for another supported exchange.
+    market_calendar: str = "XNYS"
     fred_enabled: bool = False
     fred_base_url: str = "https://fred.stlouisfed.org/graph/fredgraph.csv"
     fred_timeout_seconds: float = 10.0
@@ -141,6 +148,14 @@ class Settings(BaseSettings):
         return [
             item.strip().upper()
             for item in self.instrument_validation_symbols.split(",")
+            if item.strip()
+        ]
+
+    @property
+    def capital_flow_symbol_list(self) -> list[str]:
+        return [
+            item.strip().upper()
+            for item in self.capital_flow_symbols.split(",")
             if item.strip()
         ]
 

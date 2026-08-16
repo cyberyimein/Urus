@@ -6,6 +6,7 @@ from app.integrations.moomoo import OpenDMarketAdapter
 from app.models import StepStatus
 from app.workflows.context import RunContext
 from app.workflows.market import MarketCollectorStep
+from app.services.run_service import RunService
 
 
 class FakeSdk:
@@ -17,12 +18,16 @@ class FakeSdk:
     class AuType:
         QFQ = "QFQ"
 
+    class PeriodType:
+        DAY = "DAY"
+
 
 class FakeQuoteContext:
     def __init__(self) -> None:
         self.closed = False
         self.snapshot_calls: list[list[str]] = []
         self.history_kwargs: dict[str, object] = {}
+        self.capital_flow_calls: list[dict[str, object]] = []
 
     def get_market_snapshot(self, codes: list[str]):
         self.snapshot_calls.append(codes)
@@ -59,6 +64,20 @@ class FakeQuoteContext:
                 }
             )
         return 0, rows
+
+    def get_capital_flow(self, code: str, **kwargs):
+        self.capital_flow_calls.append({"code": code, **kwargs})
+        return 0, [
+            {
+                "capital_flow_item_time": "2026-07-29 16:00:00",
+                "in_flow": -12.0,
+                "main_in_flow": 8.0,
+                "super_in_flow": 5.0,
+                "big_in_flow": 3.0,
+                "mid_in_flow": -9.0,
+                "sml_in_flow": -11.0,
+            }
+        ]
 
     def close(self) -> None:
         self.closed = True
@@ -108,6 +127,27 @@ def test_opend_adapter_accepts_a_configured_primary_proxy() -> None:
     adapter.close()
     assert card["symbol"] == "INTC"
     assert card["quote_code"] == "US.INTC"
+
+
+def test_opend_adapter_normalises_one_daily_capital_flow_row() -> None:
+    quote_context = FakeQuoteContext()
+    adapter = OpenDMarketAdapter(
+        "test", 11111, sdk=FakeSdk(), quote_context=quote_context
+    )
+
+    result = adapter.capital_flow_day("SOXX", date(2026, 7, 29))
+
+    assert result["main_in_flow"] == 8.0
+    assert result["mid_in_flow"] == -9.0
+    assert result["quality_status"] == "ok"
+    assert quote_context.capital_flow_calls == [
+        {
+            "code": "US.SOXX",
+            "period_type": "DAY",
+            "start": "2026-07-29",
+            "end": "2026-07-29",
+        }
+    ]
 
 
 def test_opend_adapter_collects_intc_smh_and_qqq_relative_strength() -> None:
@@ -200,6 +240,39 @@ def test_market_step_preserves_live_marker() -> None:
     assert result.status == StepStatus.SUCCEEDED
     assert result.payload["is_mock"] is False
     assert "OpenD" in result.summary
+
+
+def test_market_step_attaches_bounded_capital_flow_evidence() -> None:
+    class FakeCapitalFlowService:
+        def collect(self, cutoff_time: datetime) -> dict[str, object]:
+            return {
+                "schema_version": "urus.capital_flow_cache.v1",
+                "as_of_date": "2026-07-31",
+                "symbols": [{"symbol": "SOXX", "signal_projection": {"recent_5d": []}}],
+                "quality_status": "ok",
+                "quality_warnings": [],
+            }
+
+    adapter = OpenDMarketAdapter(
+        "test", 11111, history_days=20, sdk=FakeSdk(), quote_context=FakeQuoteContext()
+    )
+    context = RunContext(
+        run_id="run-capital-flow",
+        run_type="pre_market",
+        cutoff_time=datetime(2026, 8, 3, 12, tzinfo=UTC),
+        symbols=["QQQ"],
+        market_adapter=adapter,
+        capital_flow_service=FakeCapitalFlowService(),
+    )
+
+    result = MarketCollectorStep().execute(context)
+    adapter.close()
+
+    assert result.status == StepStatus.SUCCEEDED
+    assert result.payload["capital_flows"]["symbols"][0]["symbol"] == "SOXX"
+    context.results["1a"] = result
+    decision_payload = RunService._current_decision_snapshot_payload(context)
+    assert decision_payload["capital_flows"]["symbols"][0]["symbol"] == "SOXX"
 
 
 def test_opend_adapter_reports_unreachable_endpoint_without_sdk_retry(monkeypatch) -> None:

@@ -235,6 +235,7 @@ class FrontendReadModel(BaseModel):
     options: Annotated[OptionsPlaceholder | OptionsAnalysis, Field(discriminator="is_mock")]
     instrument_event: EventSummary
     systematic_flows: dict[str, Any] = Field(default_factory=dict)
+    capital_flows: dict[str, Any] = Field(default_factory=dict)
     decision: Annotated[DecisionPlaceholder | DecisionAnalysis, Field(discriminator="is_mock")]
     technical_report: dict[str, Any] = Field(default_factory=dict)
     steps: list[ReadModelStep]

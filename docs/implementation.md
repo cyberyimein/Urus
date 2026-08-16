@@ -37,7 +37,7 @@
 - 动态利率/股息率、VEX/Vanna、做市商真实持仓方向、开平仓识别、组合腿识别和逐笔期权历史不属于本阶段。期权范围包含 SPY、QQQ、SMH、IGV 与配置的 15 个上市个股关注标的；SPCX 是私募标的，明确不发起期权链请求。正负 Gamma 与 Spot Gamma Profile 都基于 Call 正、Put 负的持仓方向假设，不代表已知做市商净仓位。
 - MACD 与 Effort vs Result 是收盘日线完成后的描述性信号：放量/缩量阈值、宽幅阈值和单日涨跌阈值均记录在指标 payload 中；`volume_effort_result.combination` 保留放量/正常量/缩量 × 上涨/下跌/横盘的完整组合，前端不再把中性组合隐去。不构成交易建议；成交量缺失时单独标记为 `unavailable`，不伪造信号。
 - RSI 复合状态只使用已完成日线，突破/跌破比较区间显式排除当前 K 线，避免把当天自身计入此前高低点。AI 数据包保留 `rsi_context` 的分类、延续/反转分及触发 flags，同时提示词要求结合相对 QQQ 强弱、市场/题材环境、事件风险和质量，禁止把单一分类直接映射为交易动作。
-- FRED 日频宏观源需要 `FRED_ENABLED=true` 才会请求；Yahoo 每次运行请求需要 `YAHOO_ENABLED=true`。市场广度、5 分钟历史、5 年日线归档、行业热力图和实时订阅、逐笔、盘口、期货属于延期项；交易日历和提前收盘在启用自动调度前必须补齐。
+- FRED 日频宏观源需要 `FRED_ENABLED=true` 才会请求；Yahoo 每次运行请求需要 `YAHOO_ENABLED=true`。市场广度、5 分钟历史、5 年日线归档、行业热力图和实时订阅、逐笔、盘口、期货属于延期项；自动调度使用 `exchange-calendars` 的 `XNYS` 交易日历，并处理日历定义的提前收盘。
 - 本地启动时会 `create_all` 以降低首次运行摩擦；部署和版本演进仍应执行 Alembic migration。
 - 没有登录、权限、多租户、Sentry、Prometheus、容器编排或移动端完整适配。
 - `MOOMOO_ENABLED=true` 才会启用阶段 1A OpenD；Anomalo 即使配置为 enabled 也没有真实 HTTP wiring。
@@ -62,4 +62,4 @@
 
 ## 下一阶段接入点
 
-阶段 1A、阶段 2 与阶段 3A 已在同一工作流和 Dashboard 中合流。下一步为 3B 个股事件/财务摘要、更多关注列表标的和行业基准；交易日历与提前收盘应在启用每天两次自动调度前补齐。
+阶段 1A、阶段 2 与阶段 3A 已在同一工作流和 Dashboard 中合流。下一步为 3B 个股事件/财务摘要、更多关注列表标的和行业基准；自动调度的交易日历与提前收盘边界已补齐。

@@ -28,6 +28,30 @@ def test_due_slots_skip_us_weekend_and_completed_slot() -> None:
     assert due_slots(now, completed, timedelta(minutes=180), NEW_YORK, False) == []
 
 
+def test_due_slots_skip_nyse_holiday_even_when_jst_slot_is_a_weekday() -> None:
+    # 2026-07-03 is the observed Independence Day holiday. Its 04:00/05:30
+    # JST candidates map to Friday afternoon ET, so a weekend-only filter
+    # would incorrectly run them.
+    now = datetime(2026, 7, 4, 5, 31, tzinfo=TOKYO)
+
+    assert due_slots(now, {}, timedelta(minutes=180), NEW_YORK, False) == []
+    assert due_slots(now, {}, timedelta(minutes=180), NEW_YORK, True) == []
+
+
+def test_due_slots_adjust_nyse_early_close_slots() -> None:
+    # The Friday after Thanksgiving closes at 13:00 ET. The nominal 04:00
+    # JST tail slot is therefore moved to one hour before close, while the
+    # post-close review remains after the actual close.
+    now = datetime(2026, 11, 28, 5, 31, tzinfo=TOKYO)
+
+    due = due_slots(now, {}, timedelta(hours=4), NEW_YORK, False)
+
+    assert [(item[0].strftime("%Y-%m-%d %H:%M"), item[1]) for item in due] == [
+        ("2026-11-28 02:00", "pre_close"),
+        ("2026-11-28 05:30", "post_close_review"),
+    ]
+
+
 def test_due_slots_only_catch_up_inside_configured_window() -> None:
     now = datetime(2026, 8, 4, 23, 0, tzinfo=TOKYO)
 

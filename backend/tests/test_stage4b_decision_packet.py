@@ -77,6 +77,10 @@ def _observation(run_type: str, price: float, max_pain: float) -> dict:
                         "unweighted_gross_exposure": 0.8 if run_type == "pre_close" else 0.6,
                     },
                 },
+                "capital_flows": {
+                    "schema_version": "urus.capital_flow_cache.v1",
+                    "symbols": [{"symbol": "SOXX", "signal_projection": {"recent_5d": []}}],
+                },
                 "data_quality": {"status": "ok"},
             },
         },
@@ -113,6 +117,7 @@ def test_build_decision_packet_compacts_and_pairs_observations() -> None:
     change = packet["paired_changes"]["options"][0]["expirations"][0]
     assert change["max_pain"]["absolute"] == 5.0
     assert packet["observations"]["pre_close"]["systematic_flows"]["assets"][0]["symbol"] == "QQQ"
+    assert packet["observations"]["pre_close"]["capital_flows"]["symbols"][0]["symbol"] == "SOXX"
     assert packet["paired_changes"]["systematic_flows"]["assets"][0]["target_exposure"]["absolute"] == 0.2
     assert packet["execution_ready"] is False
 

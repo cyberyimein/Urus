@@ -108,8 +108,39 @@ class AIToolCallModel(Base):
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     result_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    prefetched: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ForecastExperienceModel(Base):
+    """A reusable, falsifiable lesson derived from completed forecast reviews."""
+
+    __tablename__ = "forecast_experiences"
+    __table_args__ = (
+        UniqueConstraint("pattern_key", name="uq_forecast_experiences_pattern_key"),
+        Index("ix_forecast_experiences_status_last_seen", "status", "last_seen_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    pattern_key: Mapped[str] = mapped_column(String(96), nullable=False)
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
+    statement: Mapped[str] = mapped_column(Text, nullable=False)
+    applicability_tags: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
+    evidence_refs: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="candidate")
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    occurrence_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    support_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    contradiction_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    source_report_id: Mapped[str | None] = mapped_column(
+        ForeignKey("ai_decision_sessions.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    source_pre_market_report_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    first_seen_trading_date: Mapped[str] = mapped_column(String(10), nullable=False)
+    last_seen_trading_date: Mapped[str] = mapped_column(String(10), nullable=False)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class AITraceNodeModel(Base):

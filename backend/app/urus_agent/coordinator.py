@@ -17,6 +17,9 @@ from app.urus_agent.providers.openrouter import LLMProvider, OpenRouterProvider
 from app.urus_agent.reports import (
     build_ai_decision_report,
     build_equity_option_context,
+    build_objective_evaluation,
+    build_premarket_decision_projection,
+    build_post_close_review_projection,
     build_technical_report,
 )
 from app.urus_agent.runtime import UrusAgentRuntime
@@ -24,11 +27,11 @@ from app.urus_agent.tools.registry import ToolRegistry
 from app.urus_agent.trace import InMemoryTraceSink, TraceNodeRecord
 
 
-MARKET_SYMBOLS = ("SPY", "QQQ", "SMH", "IGV")
+MARKET_SYMBOLS = ("SPY", "QQQ", "SMH", "SOXX", "IGV")
 THEME_ORDER = ("半导体", "光概念", "SaaS", "大科技", "航天与新兴", "其他关注")
 THEME_BENCHMARKS = {
-    "半导体": ["SMH", "QQQ"],
-    "光概念": ["SMH", "QQQ"],
+    "半导体": ["SMH", "SOXX", "QQQ"],
+    "光概念": ["SMH", "SOXX", "QQQ"],
     "SaaS": ["IGV", "QQQ"],
     "大科技": ["QQQ", "SPY"],
     "航天与新兴": ["SPY", "QQQ"],
@@ -37,6 +40,10 @@ THEME_BENCHMARKS = {
 MAX_THEME_TASKS = 12
 MANUAL_CURRENT_STATE_MAX_COMPLETION_TOKENS = 8_000
 MANUAL_CURRENT_STATE_TIMEOUT_SECONDS = 240.0
+POST_CLOSE_REVIEW_MAX_COMPLETION_TOKENS = 12_000
+POST_CLOSE_REVIEW_TIMEOUT_SECONDS = 360.0
+PREMARKET_COMPOSITE_MAX_COMPLETION_TOKENS = 12_000
+PREMARKET_COMPOSITE_TIMEOUT_SECONDS = 360.0
 
 
 @dataclass(frozen=True)
@@ -257,6 +264,215 @@ class DecisionCoordinator:
                     equity_result=equity_result,
                     option_results=[],
                 )
+            if request.decision_phase == "post_close_review":
+                objective_evaluation = build_objective_evaluation(
+                    evidence,
+                    decision_phase=request.decision_phase,
+                )
+                review_projection = build_post_close_review_projection(
+                    evidence,
+                    objective_evaluation,
+                )
+                review_task = self._task(
+                    request,
+                    decision_session.id,
+                    symbols=[],
+                    stage="review",
+                    sequence=1,
+                    metadata={
+                        "scope_kind": "post_close_review",
+                        "review_evidence": review_projection,
+                    },
+                ).model_copy(update={"task_type": "post_close_review"})
+                review_job = self._begin_job(
+                    review_task,
+                    trace,
+                    label=f"{agent_profile['agent_name']} · Forecast Review",
+                    lane="Review",
+                    parent_node_id=evidence_node,
+                    depends_on_node_ids=[evidence_node],
+                )
+                review_outcome = self._run_job(review_job, evidence)
+                self._persist_outcome(review_outcome, trace)
+                equity_result = review_outcome.result
+                synthesis_run_id = review_job.run_id
+                report = build_ai_decision_report(
+                    session_id=decision_session.id,
+                    run_id=request.workflow_run_id,
+                    cutoff_time=request.cutoff_time,
+                    equity_run_id=synthesis_run_id
+                    if equity_result.status == "succeeded"
+                    else None,
+                    equity_output=equity_result.output
+                    if equity_result.status == "succeeded"
+                    else None,
+                    market_analysis=_result_summary(review_outcome),
+                    theme_analyses=[],
+                    candidate_gate=[],
+                    option_decisions=[],
+                    equity_option_context=[],
+                    quality=technical_report.get("quality") or {},
+                    decision_phase=request.decision_phase,
+                    agent_profile=str(agent_profile["agent_name"]),
+                    trading_date=request.trading_date,
+                    parent_report_id=request.parent_session_id,
+                    evidence=evidence,
+                    analysis_metadata=request.analysis_metadata or {},
+                )
+                assembly_node = trace.start_node(
+                    node_type="assembly",
+                    label="Post-Close Review Assembly",
+                    lane="Assembly",
+                    parent_node_id=review_job.node_id,
+                    depends_on_node_ids=[review_job.node_id],
+                    input_summary={
+                        "objective_evaluation_status": objective_evaluation.get("status"),
+                        "experience_candidate_count": len(
+                            report.get("experience_candidates") or []
+                        ),
+                    },
+                )
+                trace.finish_node(
+                    assembly_node,
+                    output_summary={
+                        "schema_version": report["schema_version"],
+                        "status": report["status"],
+                    },
+                )
+                self.repository.save_trace_nodes(decision_session.id, trace.nodes)
+                self.repository.update_session(
+                    decision_session.id,
+                    status=report["status"],
+                    decision_report_schema_version=report["schema_version"],
+                    decision_report_json=report,
+                    equity_decision_run_id=synthesis_run_id,
+                    completed_at=utc_now(),
+                )
+                self.repository.upsert_experience_candidates(
+                    source_report_id=decision_session.id,
+                    source_pre_market_report_id=request.parent_session_id,
+                    trading_date=request.trading_date,
+                    candidates=report.get("experience_candidates") or [],
+                )
+                return CoordinatorResult(
+                    session_id=decision_session.id,
+                    technical_report=technical_report,
+                    decision_report=report,
+                    equity_result=equity_result,
+                    option_results=[],
+                )
+            if request.decision_phase == "pre_market":
+                equity_option_context = build_equity_option_context(
+                    evidence, requested_symbols
+                )
+                projection = build_premarket_decision_projection(
+                    evidence,
+                    requested_symbols,
+                    equity_option_context=equity_option_context,
+                )
+                projection_node = trace.start_node(
+                    node_type="evidence",
+                    label="Pre-Market Composite Evidence Projection",
+                    lane="Preparation",
+                    parent_node_id=evidence_node,
+                    depends_on_node_ids=[evidence_node],
+                    input_summary={
+                        "symbol_count": len(requested_symbols),
+                        "source": "frozen_decision_dataset",
+                    },
+                )
+                trace.finish_node(
+                    projection_node,
+                    output_summary={
+                        "symbol_count": len(projection.get("instruments") or []),
+                        "event_count": len(projection.get("events") or []),
+                        "prior_experience_count": len(
+                            projection.get("prior_experiences") or []
+                        ),
+                    },
+                )
+                composite_task = self._task(
+                    request,
+                    decision_session.id,
+                    symbols=requested_symbols,
+                    stage="synthesis",
+                    sequence=1,
+                    metadata={
+                        "scope_kind": "premarket_composite",
+                        "premarket_evidence": projection,
+                        "attention_limit": 5,
+                    },
+                ).model_copy(update={"task_type": "premarket_decision"})
+                composite_job = self._begin_job(
+                    composite_task,
+                    trace,
+                    label=f"{agent_profile['agent_name']} · Composite Decision",
+                    lane="Pre-Market Decision",
+                    parent_node_id=projection_node,
+                    depends_on_node_ids=[projection_node],
+                )
+                composite_outcome = self._run_job(composite_job, evidence)
+                self._persist_outcome(composite_outcome, trace)
+                equity_result = composite_outcome.result
+                synthesis_run_id = composite_job.run_id
+                market_summary = _result_summary(composite_outcome)
+                report = build_ai_decision_report(
+                    session_id=decision_session.id,
+                    run_id=request.workflow_run_id,
+                    cutoff_time=request.cutoff_time,
+                    equity_run_id=synthesis_run_id
+                    if equity_result.status == "succeeded"
+                    else None,
+                    equity_output=equity_result.output
+                    if equity_result.status == "succeeded"
+                    else None,
+                    market_analysis=market_summary,
+                    theme_analyses=[],
+                    candidate_gate=[],
+                    option_decisions=[],
+                    equity_option_context=equity_option_context,
+                    quality=technical_report.get("quality") or {},
+                    decision_phase=request.decision_phase,
+                    agent_profile=str(agent_profile["agent_name"]),
+                    trading_date=request.trading_date,
+                    parent_report_id=request.parent_session_id,
+                    evidence=evidence,
+                    analysis_metadata=request.analysis_metadata or {},
+                )
+                assembly_node = trace.start_node(
+                    node_type="assembly",
+                    label="Pre-Market Decision Report Assembly",
+                    lane="Assembly",
+                    parent_node_id=composite_job.node_id,
+                    depends_on_node_ids=[composite_job.node_id],
+                    input_summary={
+                        "model_invocation_count": 1,
+                        "ranked_symbol_count": len(report.get("rankings") or []),
+                    },
+                )
+                trace.finish_node(
+                    assembly_node,
+                    output_summary={
+                        "schema_version": report["schema_version"],
+                        "status": report["status"],
+                    },
+                )
+                self.repository.save_trace_nodes(decision_session.id, trace.nodes)
+                self.repository.update_session(
+                    decision_session.id,
+                    status=report["status"],
+                    decision_report_schema_version=report["schema_version"],
+                    decision_report_json=report,
+                    equity_decision_run_id=synthesis_run_id,
+                    completed_at=utc_now(),
+                )
+                return CoordinatorResult(
+                    session_id=decision_session.id,
+                    technical_report=technical_report,
+                    decision_report=report,
+                    equity_result=equity_result,
+                    option_results=[],
+                )
             market_symbols = [symbol for symbol in MARKET_SYMBOLS if symbol in available_symbols]
 
             market_task = self._task(
@@ -338,7 +554,12 @@ class DecisionCoordinator:
                     "theme_results": theme_summaries,
                     "equity_option_context": equity_option_context,
                     "systematic_flow_context": systematic_flow_context,
-                    "prior_reports": evidence.packet.get("prior_reports") or {},
+                    "prior_reports": _compact_prior_reports(
+                        evidence.packet.get("prior_reports") or {}
+                    ),
+                    "prior_experiences": list(
+                        evidence.packet.get("prior_experiences") or []
+                    )[:8],
                 },
             )
             synthesis_job = self._begin_job(
@@ -407,6 +628,7 @@ class DecisionCoordinator:
                 option_results=option_results,
             )
         except Exception as exc:
+            self.session.rollback()
             self.repository.save_trace_nodes(decision_session.id, trace.nodes)
             self.repository.update_session(
                 decision_session.id,
@@ -492,9 +714,18 @@ class DecisionCoordinator:
 
     def _run_job(self, job: _InvocationJob, evidence: EvidenceStore) -> _InvocationOutcome:
         worker_trace = InMemoryTraceSink()
+        is_current_state = job.task.decision_phase == "current_state"
+        is_post_close_review = job.task.task_type == "post_close_review"
+        is_premarket_composite = (
+            job.task.metadata.get("scope_kind") == "premarket_composite"
+        )
         max_completion_tokens = (
             MANUAL_CURRENT_STATE_MAX_COMPLETION_TOKENS
-            if job.task.decision_phase == "current_state"
+            if is_current_state
+            else POST_CLOSE_REVIEW_MAX_COMPLETION_TOKENS
+            if is_post_close_review
+            else PREMARKET_COMPOSITE_MAX_COMPLETION_TOKENS
+            if is_premarket_composite
             else None
         )
         result = self._runtime(
@@ -502,19 +733,29 @@ class DecisionCoordinator:
             max_completion_tokens_override=max_completion_tokens,
             timeout_seconds_override=(
                 MANUAL_CURRENT_STATE_TIMEOUT_SECONDS
-                if job.task.decision_phase == "current_state"
+                if is_current_state
+                else POST_CLOSE_REVIEW_TIMEOUT_SECONDS
+                if is_post_close_review
+                else PREMARKET_COMPOSITE_TIMEOUT_SECONDS
+                if is_premarket_composite
                 else None
             ),
             provider_max_retries_override=(
-                0 if job.task.decision_phase == "current_state" else None
+                0
+                if is_current_state or is_post_close_review or is_premarket_composite
+                else None
             ),
             reasoning_override=(
                 {"enabled": False, "exclude": True}
-                if job.task.decision_phase == "current_state"
+                if is_current_state or is_post_close_review or is_premarket_composite
                 else None
             ),
             max_tool_iterations_override=(
-                2 if job.task.decision_phase == "current_state" else None
+                2
+                if is_current_state
+                else 1
+                if is_post_close_review or is_premarket_composite
+                else None
             ),
         ).decide(
             job.task,

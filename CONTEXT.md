@@ -32,9 +32,16 @@ _Avoid_: Run detail, latest mutable dashboard
 _Avoid_: Agent, prompt, turn
 
 **Market Context**:
-一次大盘 **Agent Invocation** 对 SPY、QQQ、SMH、IGV、宏观事件和质量状态形成的结构化市场判断；
+一次大盘 **Agent Invocation** 对 SPY、QQQ、SMH、SOXX、IGV、宏观事件和质量状态形成的结构化市场判断；
 它是题材分析的已校验上游输入。
 _Avoid_: Market chat, global raw dump
+
+**Order-Size Capital Flow**:
+Moomoo 按成交订单金额分档提供的日度主动净流量。Urus 只补最近已完整收盘且尚未缓存的一个交易日，
+数据库长期保留观测，以最近 30 个交易日计算规则信号，只向盘前 **Pre-Market Composite Decision**
+投影最近 5 日。大额单连续流出后转正且中小额单仍流出只能称为吸收候选；中小额单流入但大额单
+流出只能称为派发风险。订单金额档位不等同于机构、散户或账户身份。
+_Avoid_: Institutional flow, retail identity, confirmed smart money
 
 **Theme Decision**:
 一次题材 **Agent Invocation** 对明确 symbol 范围进行的局部排名；多个题材调用可以并发执行，但只能读取
@@ -45,6 +52,29 @@ _Avoid_: Sector summary text, unrestricted watchlist scan
 在全部 **Theme Decision** 完成后，对 **Market Context** 和已校验题材输出进行跨题材排序的
 **Agent Invocation**；不再读取原始数据工具。
 _Avoid_: Report rewrite, second fact investigation
+
+**Pre-Market Composite Decision**:
+由确定性程序先把市场、题材、标的、事件、期权入场上下文和有效 **Forecast Experience** 编译成紧凑
+只读投影，再由单次无工具 **Agent Invocation** 同时形成大盘预测、题材判断和全标的可评分预测；前五名是
+详细关注清单，其余标的保持简洁但必须保留可评分字段。旧的 Market Context → Theme Decision → Equity
+Synthesis 多模型链路仅作为历史实现，不再用于正式盘前运行。
+_Avoid_: Multi-agent debate, per-theme model fan-out
+
+**Forecast Evaluation**:
+由确定性程序把正式盘前预测与同日官方收盘事实逐项对照形成的可审计评分；至少区分市场方向、
+主题领先/落后、标的方向、预期区间、相对表现和置信度校准。模型只能解释评分，不能修改 verdict、
+score、实际收益或 Brier 值。
+_Avoid_: AI self-score, hindsight opinion
+
+**Post-Close Review**:
+在 **Forecast Evaluation** 完成后，由单次无工具 **Agent Invocation** 解释当日关键结果、预测偏差和
+可验证经验的正式复盘。它不重新运行 **Theme Decision**、不产生全市场排名，也不提出同日交易。
+_Avoid_: Closing stock recap, second Equity Synthesis
+
+**Forecast Experience**:
+由 **Post-Close Review** 提出的可证伪经验假设，保存稳定 pattern key、适用市场标签、证据、支持与
+反例次数及状态。盘前只继承数量受控且仍有效的经验，不继承整份历史复盘作为长期记忆。
+_Avoid_: Free-form lesson, prompt memory
 
 **AI Decision Report**:
 由确定性代码合并一个 **Decision Session** 中已通过校验的股票和期权输出形成的只读报告。
@@ -81,8 +111,10 @@ _Avoid_: Citation text, source note
 - 两个配对的 **Workflow Run** 形成一个 **Decision Dataset**，并产生一个 **Technical Report**。
 - 一个 **Research Report** 始终引用一个 **Decision Dataset**；AI 尚未运行时其 Decision Session 可以为空。
 - 一个 **Decision Dataset** 可以产生多个重跑版本的 **Decision Session**。
-- 一个 **Decision Session** 包含一个大盘 **Agent Invocation**、零到多个并发题材 **Agent Invocation**、
-  一个股票综合 **Agent Invocation** 和零到多个期权 **Agent Invocation**。
+- 盘前 **Decision Session** 先生成一个确定性证据投影，再运行一个无工具的 **Pre-Market Composite
+  Decision**；评分所需的全标的预测与前五名详细关注清单来自同一次 **Agent Invocation**。
+- 盘后 **Decision Session** 先生成 **Forecast Evaluation**，再运行一个无工具的 **Post-Close Review**；
+  它可以产生零到多个候选 **Forecast Experience**。
 - 一个 **Decision Session** 产生一个 **AI Decision Report** 和一个 **Decision Trace**。
 - 一个 **AI Decision Report** 包含多个 **Evidence Reference**，每个引用定位到同一 **Decision Dataset** 的 **Technical Report**。
 

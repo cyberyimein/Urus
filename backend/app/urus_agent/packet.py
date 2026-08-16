@@ -254,6 +254,7 @@ def _observation(
             "symbols": [_option_symbol(item) for item in options.get("symbols") or []],
         },
         "systematic_flows": payload.get("systematic_flows") or {},
+        "capital_flows": payload.get("capital_flows") or {},
         "data_quality": payload.get("data_quality") or {},
     }
 
@@ -637,7 +638,7 @@ def build_stage_decision_packet(
 
 
 def _compact_prior_report(report: dict[str, Any]) -> dict[str, Any]:
-    return {
+    compact = {
         key: report.get(key)
         for key in (
             "report_id",
@@ -648,13 +649,29 @@ def _compact_prior_report(report: dict[str, Any]) -> dict[str, Any]:
             "cutoff_time",
             "status",
             "market_regime",
-            "rankings",
             "forecast",
             "review",
             "portfolio_warnings",
             "quality",
         )
     }
+    compact["rankings"] = [
+        {
+            key: ranking.get(key)
+            for key in (
+                "rank",
+                "symbol",
+                "themes",
+                "thesis",
+                "instrument_forecast",
+                "invalidation_conditions",
+            )
+            if key in ranking
+        }
+        for ranking in report.get("rankings") or []
+        if isinstance(ranking, dict)
+    ]
+    return compact
 
 
 def project_decision_packet(

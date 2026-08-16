@@ -37,6 +37,19 @@ class MarketCollectorStep:
                 }
             )
             payload["macro_context"] = macro_context
+            if context.capital_flow_service is not None:
+                try:
+                    payload["capital_flows"] = context.capital_flow_service.collect(
+                        context.cutoff_time
+                    )
+                except Exception as exc:
+                    payload["capital_flows"] = {
+                        "schema_version": "urus.capital_flow_cache.v1",
+                        "quality_status": "unavailable",
+                        "quality_warnings": [f"订单金额分档资金流采集失败：{exc}"],
+                        "symbols": [],
+                    }
+                    payload["quality_status"] = "partial"
             if macro_context.get("quality_status") != "ok":
                 payload["quality_status"] = "partial"
             is_mock = bool(payload.get("is_mock", True))

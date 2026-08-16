@@ -239,7 +239,7 @@ const marketCards = computed(() => {
   const afterQuote = quote(after.primary)
   const crossAsset = Array.isArray(after.cross_asset_quotes) ? after.cross_asset_quotes.map(dict) : []
   const all = [afterQuote, ...crossAsset].filter((item, index, values) => item.symbol && values.findIndex((candidate) => candidate.symbol === item.symbol) === index)
-  const preferred = ['SPY', 'QQQ', 'SMH', 'IGV']
+  const preferred = ['SPY', 'QQQ', 'SMH', 'SOXX', 'IGV']
   const core = preferred.map((symbol) => all.find((item) => String(item.symbol).toUpperCase() === symbol)).filter((item): item is Dict => Boolean(item))
   const display = core.length ? core : all.slice(0, 4)
   return display.map((item) => {
@@ -263,6 +263,13 @@ const systematicFlows = computed(() => {
   return dict(flows[phase] ?? flows.pre_close ?? flows.pre_market)
 })
 const systematicAssets = computed(() => Array.isArray(systematicFlows.value.assets) ? systematicFlows.value.assets.map(dict) : [])
+
+const capitalFlows = computed(() => {
+  const flows = dict(props.report?.capital_flows)
+  const phase = String(flows.current_phase ?? props.report?.decision_phase ?? 'pre_close')
+  return dict(flows[phase] ?? flows.pre_close ?? flows.pre_market)
+})
+const capitalFlowSymbols = computed(() => Array.isArray(capitalFlows.value.symbols) ? capitalFlows.value.symbols.map(dict) : [])
 
 const instrumentRows = computed(() => activeThemeRows.value.map(dict).slice(0, 80).map((card) => {
   const q = quote(card)
@@ -446,6 +453,13 @@ const profileGammaFlipMarkers = computed(() => profileGammaFlips.value
       </div>
       <div class="report-table-wrap"><table class="report-table"><thead><tr><th>代理</th><th>资产组</th><th>模型仓位</th><th>边际变化</th><th>压力</th><th>机械动作</th><th>截至</th></tr></thead><tbody><tr v-for="item in systematicAssets" :key="String(item.symbol)"><td><strong>{{ text(item.symbol) }}</strong><small>{{ text(item.proxy_for, '') }}</small></td><td>{{ text(item.asset_class) }}</td><td :class="signedClass(item.target_exposure)">{{ text(item.target_exposure) }}</td><td :class="signedClass(item.exposure_change)">{{ text(item.exposure_change) }}</td><td :class="signedClass(item.pressure_index)">{{ text(item.pressure_index) }}</td><td>{{ text(item.mechanical_action) }}</td><td>{{ text(item.as_of) }}</td></tr></tbody></table></div>
       <p class="report-note quality-note">ETF 日线代理估算，不是已观察到的 CTA 持仓或真实资金流；跨资产 Gross/Net 尚未做相关性调整。</p>
+    </section>
+
+    <section v-if="capitalFlowSymbols.length" :id="evidenceId('capital_flows')" class="report-section">
+      <div class="report-section-heading"><div><p class="eyebrow">ORDER-SIZE CAPITAL FLOW</p><h2>订单金额分档资金流信号</h2></div><span class="status-badge" :data-status="qualityStatus(capitalFlows.quality_status)">截至 {{ text(capitalFlows.as_of_date) }}</span></div>
+      <div class="report-table-wrap"><table class="report-table"><thead><tr><th>ETF</th><th>确定性信号</th><th>置信度</th><th>连续大额流出</th><th>最新大额单</th><th>最新中小额单</th><th>样本</th></tr></thead><tbody><tr v-for="item in capitalFlowSymbols" :key="String(item.symbol)"><td><strong>{{ text(item.symbol) }}</strong></td><td>{{ text(dict(item.signal_projection).signal_label ?? dict(item.signal_projection).signal) }}</td><td>{{ number(dict(item.signal_projection).confidence) === null ? '不可用' : `${formatNumber(number(dict(item.signal_projection).confidence)! * 100)}%` }}</td><td>{{ text(dict(dict(item.signal_projection).features).prior_block_outflow_streak_30d) }}</td><td :class="signedClass(dict(dict(item.signal_projection).features).latest_block_flow)">{{ text(dict(dict(item.signal_projection).features).latest_block_flow) }}</td><td :class="signedClass(dict(dict(item.signal_projection).features).latest_mid_small_flow)">{{ text(dict(dict(item.signal_projection).features).latest_mid_small_flow) }}</td><td>{{ text(item.cached_trading_days) }} 日</td></tr></tbody></table></div>
+      <p class="report-note quality-note">按成交订单金额分档的主动净流量，不代表已识别的机构、散户或账户身份；信号只作价格、量能和趋势的辅助确认。展开原始数据可查看最近 5 个交易日。</p>
+      <details class="report-card"><summary>查看最近 5 日精简资金流</summary><pre class="compact-json">{{ json(capitalFlowSymbols.map((item) => ({ symbol: item.symbol, ...dict(item.signal_projection) }))) }}</pre></details>
     </section>
 
     <section :id="evidenceId('market')" class="report-section">

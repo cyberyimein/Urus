@@ -176,6 +176,11 @@ class OutputStep:
                 macro_errors = macro_context.get("quality_errors", [])
                 if isinstance(macro_errors, list):
                     errors.extend(f"macro: {item}" for item in macro_errors)
+            capital_flows = market.get("capital_flows", {})
+            if isinstance(capital_flows, dict):
+                flow_warnings = capital_flows.get("quality_warnings", [])
+                if isinstance(flow_warnings, list):
+                    warnings.extend(f"capital_flow: {item}" for item in flow_warnings)
         if instrument:
             instrument_warnings = instrument.get("quality_warnings", [])
             if isinstance(instrument_warnings, list):
@@ -281,6 +286,7 @@ class OutputStep:
             "data_state": data_state,
             "is_mock": contains_mock,
             "market": market,
+            "capital_flows": (market or {}).get("capital_flows") or {},
             "instrument": instrument,
             "instrument_cards": instrument_cards,
             "macro_event": _event_payload(context.results.get("1b"), "macro"),
