@@ -8,9 +8,16 @@ import socket
 from time import monotonic, sleep
 from typing import Any, Protocol
 
-import pandas as pd
-
 from app.analytics.options import OptionContract, summarize_expiration, trim_exposure_display
+
+
+def _pandas():
+    # Pandas/numpy belong to the short-lived workflow worker. Importing them at
+    # API startup permanently raised the web process baseline even when no
+    # option collection was running.
+    import pandas
+
+    return pandas
 
 
 class OptionsCollectorAdapter(Protocol):
@@ -166,7 +173,7 @@ class MoomooOptionsAdapter:
             result = self._context().get_option_chain(underlying, start=start, end=end)
         return self._require_ok(label, result)
 
-    def _select_expirations(self, frame: pd.DataFrame) -> list[tuple[str, int]]:
+    def _select_expirations(self, frame: Any) -> list[tuple[str, int]]:
         eligible = frame[
             (frame["option_expiry_date_distance"] >= 0)
             & (frame["option_expiry_date_distance"] <= self.max_dte)
@@ -206,50 +213,51 @@ class MoomooOptionsAdapter:
         underlying: str,
         spot: float,
         expiration: str,
-        chain: pd.DataFrame,
+        chain: Any,
     ) -> list[OptionContract]:
+        pd = _pandas()
         codes = [str(code) for code in chain["code"].tolist()]
-        snapshots: list[pd.DataFrame] = []
+        static_by_code = chain.set_index("code").to_dict("index")
+        contracts: list[OptionContract] = []
         for chunk in self._chunks(codes, self.batch_size):
             frame = self._market_snapshot(
                 chunk,
                 f"get_market_snapshot({underlying} options)",
             )
-            if isinstance(frame, pd.DataFrame):
-                snapshots.append(frame)
-        if not snapshots:
-            return []
-        snapshot = pd.concat(snapshots, ignore_index=True)
-        static_by_code = chain.set_index("code").to_dict("index")
-        contracts: list[OptionContract] = []
-        for row in snapshot.to_dict("records"):
-            code = str(row["code"])
-            static = static_by_code.get(code)
-            if static is None:
+            if not isinstance(frame, pd.DataFrame):
                 continue
-            multiplier = self._number(row.get("option_contract_multiplier"), 100.0) or 100.0
-            contracts.append(
-                OptionContract(
-                    code=code,
-                    option_type=str(static["option_type"]).upper(),
-                    expiration=expiration,
-                    strike=float(static["strike_price"]),
-                    spot=spot,
-                    multiplier=multiplier,
-                    bid=self._number(row.get("bid_price")),
-                    ask=self._number(row.get("ask_price")),
-                    last=self._number(row.get("last_price")),
-                    volume=self._integer(row.get("volume")),
-                    open_interest=self._integer(row.get("option_open_interest")),
-                    implied_volatility=self._number(row.get("option_implied_volatility")),
-                    delta=self._number(row.get("option_delta")),
-                    gamma=self._number(row.get("option_gamma")),
-                    quote_time=str(row.get("update_time") or "") or None,
+            # Convert and release each API chunk independently. Concatenating
+            # all frames created another full DataFrame plus a full records
+            # list at the hottest point of option collection.
+            for row in frame.to_dict("records"):
+                code = str(row["code"])
+                static = static_by_code.get(code)
+                if static is None:
+                    continue
+                multiplier = self._number(row.get("option_contract_multiplier"), 100.0) or 100.0
+                contracts.append(
+                    OptionContract(
+                        code=code,
+                        option_type=str(static["option_type"]).upper(),
+                        expiration=expiration,
+                        strike=float(static["strike_price"]),
+                        spot=spot,
+                        multiplier=multiplier,
+                        bid=self._number(row.get("bid_price")),
+                        ask=self._number(row.get("ask_price")),
+                        last=self._number(row.get("last_price")),
+                        volume=self._integer(row.get("volume")),
+                        open_interest=self._integer(row.get("option_open_interest")),
+                        implied_volatility=self._number(row.get("option_implied_volatility")),
+                        delta=self._number(row.get("option_delta")),
+                        gamma=self._number(row.get("option_gamma")),
+                        quote_time=str(row.get("update_time") or "") or None,
+                    )
                 )
-            )
         return contracts
 
     def options_snapshot(self) -> dict[str, object]:
+        pd = _pandas()
         context = self._context()
         subscription_before = self._require_ok(
             "query_subscription(before)", context.query_subscription()

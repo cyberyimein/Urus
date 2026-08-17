@@ -176,7 +176,35 @@ onMounted(loadSettings)
             <p class="eyebrow">02 · MODEL ROUTING</p>
             <h2 id="model-title">模型入口</h2>
           </div>
-          <p class="settings-section-note">这里只保存模型标识，不保存任何密钥。</p>
+          <p class="settings-section-note">保存模型标识与计费单价，不保存任何密钥。</p>
+        </div>
+
+        <div class="pricing-grid">
+          <label class="model-field pricing-field">
+            <span class="model-field-label">输入价格</span>
+            <div class="price-input"><span>$</span><input v-model.number="draft.models.input_cost_per_million" type="number" min="0" step="0.000001" /><em>/ 1M tokens</em></div>
+            <small>普通 prompt token 的每百万美元价格。</small>
+          </label>
+          <label class="model-field pricing-field">
+            <span class="model-field-label">缓存读取价格</span>
+            <div class="price-input"><span>$</span><input v-model.number="draft.models.cached_input_cost_per_million" type="number" min="0" step="0.000001" /><em>/ 1M tokens</em></div>
+            <small>OpenRouter usage 中 cached_tokens 命中部分的价格。</small>
+          </label>
+          <label class="model-field pricing-field">
+            <span class="model-field-label">缓存写入价格</span>
+            <div class="price-input"><span>$</span><input v-model.number="draft.models.cache_write_cost_per_million" type="number" min="0" step="0.000001" /><em>/ 1M tokens</em></div>
+            <small>写入 prompt cache 的每百万美元价格。</small>
+          </label>
+          <label class="model-field pricing-field">
+            <span class="model-field-label">输出价格</span>
+            <div class="price-input"><span>$</span><input v-model.number="draft.models.output_cost_per_million" type="number" min="0" step="0.000001" /><em>/ 1M tokens</em></div>
+            <small>completion token 的每百万美元价格。</small>
+          </label>
+        </div>
+
+        <div class="settings-callout">
+          <strong>费用口径</strong>
+          <span>估算费用 = 普通输入 × 输入价格 + 缓存读取 × 读取价格 + 缓存写入 × 写入价格 + 输出 × 输出价格。所有价格为 0 时只记录 token。</span>
         </div>
 
         <div class="model-grid">
@@ -253,6 +281,9 @@ onMounted(loadSettings)
 .settings-callout, .model-routing-note { display: flex; gap: 12px; margin-top: 13px; padding: 12px 14px; border: 1px solid var(--line-soft); border-radius: 7px; color: var(--soft-ink); background: rgba(42, 33, 28, .55); font-size: 12px; line-height: 1.5; }
 .settings-callout strong { color: var(--accent); font: 10px "SFMono-Regular", Consolas, monospace; white-space: nowrap; }
 .model-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.pricing-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
+.price-input { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 7px; color: var(--muted); font: 10px "SFMono-Regular", Consolas, monospace; }
+.price-input em { font-style: normal; white-space: nowrap; }
 .model-field { display: grid; gap: 8px; padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
 .model-field-label { color: var(--ink); font-size: 14px; }
 .model-field input { width: 100%; min-height: 39px; padding: 0 10px; border: 1px solid var(--line); border-radius: 5px; color: var(--ink); background: var(--surface-raised); outline: none; font: 11px "SFMono-Regular", Consolas, monospace; }
@@ -276,7 +307,7 @@ onMounted(loadSettings)
   .settings-status { justify-items: start; }
   .settings-section-note { text-align: left; }
   .schedule-card { grid-template-columns: 1fr; gap: 16px; }
-  .model-grid { grid-template-columns: 1fr; }
+  .model-grid, .pricing-grid { grid-template-columns: 1fr; }
   .settings-actions { gap: 12px; }
   .settings-actions > div { width: 100%; }
   .settings-actions button { flex: 1; }

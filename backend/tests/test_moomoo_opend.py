@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import threading
 from datetime import UTC, date, datetime, timedelta
+from time import monotonic
 
 from app.integrations.moomoo import OpenDMarketAdapter
 from app.models import StepStatus
@@ -81,6 +83,30 @@ class FakeQuoteContext:
 
     def close(self) -> None:
         self.closed = True
+
+
+def test_opend_close_returns_when_sdk_close_blocks() -> None:
+    release = threading.Event()
+
+    class BlockingQuoteContext(FakeQuoteContext):
+        def close(self) -> None:
+            release.wait()
+            super().close()
+
+    adapter = OpenDMarketAdapter(
+        "test",
+        11111,
+        sdk=FakeSdk(),
+        quote_context=BlockingQuoteContext(),
+    )
+    adapter._close_timeout_seconds = 0.01
+
+    started = monotonic()
+    adapter.close()
+    elapsed = monotonic() - started
+    release.set()
+
+    assert elapsed < 0.5
 
 
 def test_opend_adapter_normalises_snapshot_and_daily_summary() -> None:

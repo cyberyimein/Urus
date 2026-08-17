@@ -73,6 +73,28 @@ class RunRepository:
         )
         return self.session.scalar(statement)
 
+    def get_run_progress(self, run_id: str) -> RunModel | None:
+        """Load status metadata without deserializing multi-megabyte JSON payloads."""
+
+        statement = (
+            select(RunModel)
+            .options(
+                selectinload(RunModel.steps).load_only(
+                    StepRunModel.id,
+                    StepRunModel.run_id,
+                    StepRunModel.position,
+                    StepRunModel.step_code,
+                    StepRunModel.status,
+                    StepRunModel.started_at,
+                    StepRunModel.completed_at,
+                    StepRunModel.summary,
+                    StepRunModel.error_message,
+                )
+            )
+            .where(RunModel.id == run_id)
+        )
+        return self.session.scalar(statement)
+
     def list_runs(self, limit: int = 50) -> list[RunModel]:
         statement = select(RunModel).order_by(RunModel.cutoff_time.desc()).limit(limit)
         return list(self.session.scalars(statement))
@@ -281,24 +303,26 @@ class RunRepository:
                 relative_payload=dict(public_symbol.get("relative_strength") or {}),
             )
             self.session.add(instrument_snapshot)
+            self.session.flush()
             bars = raw_history.get("bars", [])
-            self.session.add_all(
+            self.session.bulk_insert_mappings(
+                InstrumentDailyBarModel,
                 [
-                    InstrumentDailyBarModel(
-                        instrument_snapshot_id=snapshot_id_for_instrument,
-                        bar_date=date.fromisoformat(str(bar["date"])),
-                        adjustment="QFQ",
-                        open=float(bar["open"]),
-                        high=float(bar["high"]),
-                        low=float(bar["low"]),
-                        close=float(bar["close"]),
-                        volume=float(bar.get("volume") or 0),
-                        turnover=bar.get("turnover"),
-                        turnover_rate=bar.get("turnover_rate"),
-                    )
+                    {
+                        "instrument_snapshot_id": snapshot_id_for_instrument,
+                        "bar_date": date.fromisoformat(str(bar["date"])),
+                        "adjustment": "QFQ",
+                        "open": float(bar["open"]),
+                        "high": float(bar["high"]),
+                        "low": float(bar["low"]),
+                        "close": float(bar["close"]),
+                        "volume": float(bar.get("volume") or 0),
+                        "turnover": bar.get("turnover"),
+                        "turnover_rate": bar.get("turnover_rate"),
+                    }
                     for bar in bars
                     if isinstance(bar, dict) and bar.get("date")
-                ]
+                ],
             )
 
     def _add_option_analysis(
@@ -397,56 +421,60 @@ class RunRepository:
                     profile_metadata=metadata,
                 )
                 self.session.add(expiration_model)
+                self.session.flush()
                 contracts = raw_expirations.get(expiration_text, {}).get("contracts", [])
-                self.session.add_all(
+                self.session.bulk_insert_mappings(
+                    OptionContractSnapshotModel,
                     [
-                        OptionContractSnapshotModel(
-                            expiration_analysis_id=expiration_id,
-                            code=str(contract["code"]),
-                            option_type=str(contract["option_type"]),
-                            strike=float(contract["strike"]),
-                            spot=float(contract["spot"]),
-                            multiplier=float(contract["multiplier"]),
-                            bid=contract.get("bid"),
-                            ask=contract.get("ask"),
-                            last=contract.get("last"),
-                            volume=int(contract.get("volume") or 0),
-                            open_interest=int(contract.get("open_interest") or 0),
-                            implied_volatility=contract.get("implied_volatility"),
-                            delta=contract.get("delta"),
-                            gamma=contract.get("gamma"),
-                            quote_time=contract.get("quote_time"),
-                        )
+                        {
+                            "expiration_analysis_id": expiration_id,
+                            "code": str(contract["code"]),
+                            "option_type": str(contract["option_type"]),
+                            "strike": float(contract["strike"]),
+                            "spot": float(contract["spot"]),
+                            "multiplier": float(contract["multiplier"]),
+                            "bid": contract.get("bid"),
+                            "ask": contract.get("ask"),
+                            "last": contract.get("last"),
+                            "volume": int(contract.get("volume") or 0),
+                            "open_interest": int(contract.get("open_interest") or 0),
+                            "implied_volatility": contract.get("implied_volatility"),
+                            "delta": contract.get("delta"),
+                            "gamma": contract.get("gamma"),
+                            "quote_time": contract.get("quote_time"),
+                        }
                         for contract in contracts
                         if isinstance(contract, dict)
-                    ]
+                    ],
                 )
-                self.session.add_all(
+                self.session.bulk_insert_mappings(
+                    OptionGammaProfilePointModel,
                     [
-                        OptionGammaProfilePointModel(
-                            expiration_analysis_id=expiration_id,
-                            point_index=index,
-                            hypothetical_spot=float(point["spot"]),
-                            call_gex=float(point["call_gex"]),
-                            put_gex=float(point["put_gex"]),
-                            net_gex=float(point["net_gex"]),
-                        )
+                        {
+                            "expiration_analysis_id": expiration_id,
+                            "point_index": index,
+                            "hypothetical_spot": float(point["spot"]),
+                            "call_gex": float(point["call_gex"]),
+                            "put_gex": float(point["put_gex"]),
+                            "net_gex": float(point["net_gex"]),
+                        }
                         for index, point in enumerate(profile.get("points", []))
                         if isinstance(point, dict)
-                    ]
+                    ],
                 )
                 primary = profile.get("primary_gamma_flip")
-                self.session.add_all(
+                self.session.bulk_insert_mappings(
+                    OptionGammaFlipModel,
                     [
-                        OptionGammaFlipModel(
-                            expiration_analysis_id=expiration_id,
-                            position=index,
-                            level=float(level),
-                            is_primary=primary is not None
+                        {
+                            "expiration_analysis_id": expiration_id,
+                            "position": index,
+                            "level": float(level),
+                            "is_primary": primary is not None
                             and abs(float(level) - float(primary)) < 0.0001,
-                        )
+                        }
                         for index, level in enumerate(profile.get("gamma_flip_levels", []))
-                    ]
+                    ],
                 )
 
     @staticmethod

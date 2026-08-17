@@ -1005,8 +1005,26 @@ def test_evidence_reference_must_resolve_to_frozen_packet() -> None:
         "portfolio_warnings": [],
         "disclaimer": "Research output only; no order was placed.",
     }
-    result = UrusAgentRuntime(FakeLLMProvider([{"message": {"role": "assistant", "content": json.dumps(valid)}}])).decide(_task(), _packet())
+    provider = FakeLLMProvider([{
+        "message": {"role": "assistant", "content": json.dumps(valid)},
+        "usage": {
+            "prompt_tokens": 100,
+            "completion_tokens": 20,
+            "prompt_tokens_details": {
+                "cached_tokens": 80,
+                "cache_write_tokens": 10,
+            },
+        },
+    }])
+    provider.input_cost_per_million = 2.0
+    provider.cached_input_cost_per_million = 0.2
+    provider.cache_write_cost_per_million = 3.0
+    provider.output_cost_per_million = 8.0
+    result = UrusAgentRuntime(provider).decide(_task(), _packet())
     assert result.status == "succeeded"
+    assert result.cached_prompt_tokens == 80
+    assert result.cache_write_tokens == 10
+    assert result.estimated_cost == 0.000226
 
     invalid = json.loads(json.dumps(valid))
     invalid["market_regime"]["evidence"][0]["path"] = "observations.pre_close.market.primary.not_a_field"

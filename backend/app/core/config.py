@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     app_host: str = "127.0.0.1"
     app_port: int = 8000
     database_url: str = "sqlite:///./urus.db"
+    workflow_process_isolation: bool = True
+    workflow_process_timeout_seconds: float = 7200.0
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     enabled_symbols: str = "QQQ,INTC"
     # Stage 3A full technical universe: QQQ is added by the collector as the
@@ -104,6 +106,8 @@ class Settings(BaseSettings):
     # the model finish a large synthesis response without Urus truncating it.
     urus_agent_max_completion_tokens: int | None = None
     urus_agent_input_cost_per_million: float = 0.0
+    urus_agent_cached_input_cost_per_million: float = 0.0
+    urus_agent_cache_write_cost_per_million: float = 0.0
     urus_agent_output_cost_per_million: float = 0.0
     urus_agent_max_tool_iterations: int = 8
     urus_agent_max_tool_result_bytes: int = 100000

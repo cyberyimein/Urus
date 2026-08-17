@@ -4,8 +4,6 @@ from datetime import UTC, date, datetime
 from functools import lru_cache
 from typing import Any, Protocol
 
-import exchange_calendars as xcals
-
 from app.repositories.capital_flows import CapitalFlowRepository
 from app.analytics.capital_flow import extract_capital_flow_signal
 
@@ -19,6 +17,10 @@ class CapitalFlowSource(Protocol):
 
 @lru_cache(maxsize=4)
 def _calendar(name: str) -> Any:
+    # exchange_calendars imports pandas/numpy. Keep that allocation inside the
+    # recyclable workflow worker instead of paying it in the API process.
+    import exchange_calendars as xcals
+
     return xcals.get_calendar(name)
 
 

@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from app.urus_agent.providers.openrouter import OpenRouterProvider
+from app.urus_agent.runtime import _cache_usage, _estimated_cost
 
 
 def _response_body() -> dict:
@@ -38,6 +39,32 @@ def test_openrouter_omits_completion_cap_when_unset_and_reads_request_id() -> No
 
     assert result.message["content"] == "{}"
     assert "max_tokens" not in seen[0]
+
+
+def test_cache_usage_and_configured_prices_produce_discounted_estimate() -> None:
+    provider = OpenRouterProvider(
+        api_key="test-key",
+        model="test-model",
+        input_cost_per_million=2.0,
+        cached_input_cost_per_million=0.2,
+        cache_write_cost_per_million=3.0,
+        output_cost_per_million=8.0,
+        http_client=httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(200))),
+    )
+
+    cached, written = _cache_usage(
+        {
+            "prompt_tokens_details": {
+                "cached_tokens": 800,
+                "cache_write_tokens": 100,
+            }
+        }
+    )
+    cost = _estimated_cost(provider, 1000, 200, cached, written)
+    provider._client.close()
+
+    assert (cached, written) == (800, 100)
+    assert cost == 0.00226
 
 
 def test_openrouter_sends_explicit_reasoning_policy() -> None:

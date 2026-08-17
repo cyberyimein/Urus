@@ -4,12 +4,12 @@ import { RouterLink, useRoute } from 'vue-router'
 
 import { api } from '@/api/client'
 import AppShell from '@/components/AppShell.vue'
-import type { RunDetail } from '@/types/api'
+import type { RunProgress } from '@/types/api'
 import type { ResearchReportIndex } from '@/types/research'
 import { formatDate, statusLabel } from '@/utils/format'
 
 const route = useRoute()
-const run = ref<RunDetail | null>(null)
+const run = ref<RunProgress | null>(null)
 const report = ref<ResearchReportIndex | null>(null)
 const error = ref('')
 const retrying = ref(false)
@@ -45,7 +45,7 @@ const stepLabels: Record<string, string> = {
 
 async function refresh() {
   try {
-    run.value = await api.getRun(runId.value)
+    run.value = await api.getRunProgress(runId.value)
     const reports = await api.listResearchReports(runId.value)
     report.value = reports[0] ?? null
     if (!terminal.value) timer = window.setTimeout(refresh, 1800)

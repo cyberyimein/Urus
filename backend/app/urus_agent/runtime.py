@@ -126,6 +126,8 @@ class UrusAgentRuntime:
         observed_tool_paths: set[str] = set()
         prompt_tokens = 0
         completion_tokens = 0
+        cached_prompt_tokens = 0
+        cache_write_tokens = 0
         total_tool_result_bytes = 0
         format_repair_attempted = False
         business_repair_attempted = False
@@ -304,6 +306,9 @@ class UrusAgentRuntime:
                 usage = response.usage or {}
                 prompt_tokens += int(usage.get("prompt_tokens") or 0)
                 completion_tokens += int(usage.get("completion_tokens") or 0)
+                turn_cached_tokens, turn_cache_write_tokens = _cache_usage(usage)
+                cached_prompt_tokens += turn_cached_tokens
+                cache_write_tokens += turn_cache_write_tokens
                 message = response.message
                 raw_provider = _bounded_raw(response.raw, self.max_raw_response_bytes)
                 model_turns.append(
@@ -316,6 +321,8 @@ class UrusAgentRuntime:
                         "raw_response_truncated": raw_provider["truncated"],
                         "prompt_tokens": usage.get("prompt_tokens"),
                         "completion_tokens": usage.get("completion_tokens"),
+                        "cached_prompt_tokens": turn_cached_tokens or None,
+                        "cache_write_tokens": turn_cache_write_tokens or None,
                     }
                 )
                 calls = message.get("tool_calls") or []
@@ -330,6 +337,8 @@ class UrusAgentRuntime:
                         "duration_ms": int((time.monotonic() - model_started) * 1000),
                         "prompt_tokens": usage.get("prompt_tokens"),
                         "completion_tokens": usage.get("completion_tokens"),
+                        "cached_prompt_tokens": turn_cached_tokens,
+                        "cache_write_tokens": turn_cache_write_tokens,
                     },
                 )
                 if calls:
@@ -563,12 +572,20 @@ class UrusAgentRuntime:
                         "duration_ms": int((time.monotonic() - model_started) * 1000),
                         "prompt_tokens": usage.get("prompt_tokens"),
                         "completion_tokens": usage.get("completion_tokens"),
+                        "cached_prompt_tokens": turn_cached_tokens,
+                        "cache_write_tokens": turn_cache_write_tokens,
                     },
                 )
                 duration = int((time.monotonic() - started) * 1000)
-                estimated_cost = _estimated_cost(self.provider, prompt_tokens, completion_tokens)
+                estimated_cost = _estimated_cost(
+                    self.provider,
+                    prompt_tokens,
+                    completion_tokens,
+                    cached_prompt_tokens,
+                    cache_write_tokens,
+                )
                 prefetched_count = sum(bool(call.get("prefetched")) for call in tool_calls)
-                return DecisionResult(status="succeeded", output=normalized, raw_output=raw_output, provider=self.provider.provider_name, model=self.provider.model, skill_name=skill.name, skill_hash=skill.content_hash, tool_call_count=len(tool_calls), prefetched_tool_count=prefetched_count, model_requested_tool_count=len(tool_calls) - prefetched_count, tool_calls=tool_calls, model_turns=model_turns, duration_ms=duration, input_hash=input_hash, prompt_tokens=prompt_tokens or None, completion_tokens=completion_tokens or None, temperature=getattr(self.provider, "temperature", None), estimated_cost=estimated_cost)
+                return DecisionResult(status="succeeded", output=normalized, raw_output=raw_output, provider=self.provider.provider_name, model=self.provider.model, skill_name=skill.name, skill_hash=skill.content_hash, tool_call_count=len(tool_calls), prefetched_tool_count=prefetched_count, model_requested_tool_count=len(tool_calls) - prefetched_count, tool_calls=tool_calls, model_turns=model_turns, duration_ms=duration, input_hash=input_hash, prompt_tokens=prompt_tokens or None, completion_tokens=completion_tokens or None, cached_prompt_tokens=cached_prompt_tokens or None, cache_write_tokens=cache_write_tokens or None, temperature=getattr(self.provider, "temperature", None), estimated_cost=estimated_cost)
             raise RuntimeError("max_tool_iterations: tool loop exceeded the configured limit")
         except BusinessValidationError as exc:
             return self._failure("failed", "business_validation_failed", str(exc), started, input_hash, tool_calls, model_turns, prompt_tokens, completion_tokens)
@@ -593,7 +610,9 @@ class UrusAgentRuntime:
 
     def _failure(self, status: str, code: str, message: str, started: float, input_hash: str, tool_calls: list[dict[str, Any]], model_turns: list[dict[str, Any]], prompt_tokens: int, completion_tokens: int) -> DecisionResult:
         prefetched_count = sum(bool(call.get("prefetched")) for call in tool_calls)
-        return DecisionResult(status=status, provider=self.provider.provider_name, model=self.provider.model, error_code=code, error_message=message, tool_calls=tool_calls, model_turns=model_turns, tool_call_count=len(tool_calls), prefetched_tool_count=prefetched_count, model_requested_tool_count=len(tool_calls) - prefetched_count, duration_ms=int((time.monotonic() - started) * 1000), input_hash=input_hash, prompt_tokens=prompt_tokens or None, completion_tokens=completion_tokens or None, temperature=getattr(self.provider, "temperature", None), estimated_cost=_estimated_cost(self.provider, prompt_tokens, completion_tokens))
+        cached_prompt_tokens = sum(int(turn.get("cached_prompt_tokens") or 0) for turn in model_turns)
+        cache_write_tokens = sum(int(turn.get("cache_write_tokens") or 0) for turn in model_turns)
+        return DecisionResult(status=status, provider=self.provider.provider_name, model=self.provider.model, error_code=code, error_message=message, tool_calls=tool_calls, model_turns=model_turns, tool_call_count=len(tool_calls), prefetched_tool_count=prefetched_count, model_requested_tool_count=len(tool_calls) - prefetched_count, duration_ms=int((time.monotonic() - started) * 1000), input_hash=input_hash, prompt_tokens=prompt_tokens or None, completion_tokens=completion_tokens or None, cached_prompt_tokens=cached_prompt_tokens or None, cache_write_tokens=cache_write_tokens or None, temperature=getattr(self.provider, "temperature", None), estimated_cost=_estimated_cost(self.provider, prompt_tokens, completion_tokens, cached_prompt_tokens, cache_write_tokens))
 
 
 def _preview(value: Any, limit: int = 500) -> str | None:
@@ -674,12 +693,50 @@ def _bounded_raw(value: dict[str, Any], limit: int) -> dict[str, Any]:
     }
 
 
-def _estimated_cost(provider: LLMProvider, prompt_tokens: int, completion_tokens: int) -> float | None:
+def _cache_usage(usage: dict[str, Any]) -> tuple[int, int]:
+    details = usage.get("prompt_tokens_details")
+    if not isinstance(details, dict):
+        return 0, 0
+    return (
+        max(0, int(details.get("cached_tokens") or 0)),
+        max(0, int(details.get("cache_write_tokens") or 0)),
+    )
+
+
+def _estimated_cost(
+    provider: LLMProvider,
+    prompt_tokens: int,
+    completion_tokens: int,
+    cached_prompt_tokens: int = 0,
+    cache_write_tokens: int = 0,
+) -> float | None:
     input_rate = float(getattr(provider, "input_cost_per_million", 0.0) or 0.0)
+    cached_input_rate = float(
+        getattr(provider, "cached_input_cost_per_million", 0.0) or 0.0
+    )
+    cache_write_rate = float(
+        getattr(provider, "cache_write_cost_per_million", 0.0) or 0.0
+    )
     output_rate = float(getattr(provider, "output_cost_per_million", 0.0) or 0.0)
-    if not (input_rate or output_rate) or not (prompt_tokens or completion_tokens):
+    if not (input_rate or cached_input_rate or cache_write_rate or output_rate) or not (
+        prompt_tokens or completion_tokens
+    ):
         return None
-    return round((prompt_tokens * input_rate + completion_tokens * output_rate) / 1_000_000, 8)
+    cached_tokens = min(max(0, cached_prompt_tokens), max(0, prompt_tokens))
+    written_tokens = min(
+        max(0, cache_write_tokens), max(0, prompt_tokens - cached_tokens)
+    )
+    uncached_tokens = max(0, prompt_tokens - cached_tokens - written_tokens)
+    return round(
+        (
+            uncached_tokens * input_rate
+            + cached_tokens * cached_input_rate
+            + written_tokens * cache_write_rate
+            + completion_tokens * output_rate
+        )
+        / 1_000_000,
+        8,
+    )
 
 
 def _missing_stage_tool_requirements(

@@ -31,6 +31,14 @@ def environment_payload(settings: Settings) -> dict[str, Any]:
         "models": {
             "ai_decision_model": settings.urus_agent_model,
             "anomalo_retrieval_agent": settings.anomalo_scheduled_agent,
+            "input_cost_per_million": settings.urus_agent_input_cost_per_million,
+            "cached_input_cost_per_million": (
+                settings.urus_agent_cached_input_cost_per_million
+            ),
+            "cache_write_cost_per_million": (
+                settings.urus_agent_cache_write_cost_per_million
+            ),
+            "output_cost_per_million": settings.urus_agent_output_cost_per_million,
         },
     }
 
@@ -49,6 +57,22 @@ def apply_payload(settings: Settings, payload: dict[str, Any]) -> None:
             settings.urus_agent_model = models["ai_decision_model"]
         if isinstance(models.get("anomalo_retrieval_agent"), str):
             settings.anomalo_scheduled_agent = models["anomalo_retrieval_agent"]
+        # Runtime rows created before model pricing was introduced do not have
+        # these keys. Preserve environment prices until the user explicitly
+        # saves pricing values through Settings.
+        price_fields = {
+            "input_cost_per_million": "urus_agent_input_cost_per_million",
+            "cached_input_cost_per_million": (
+                "urus_agent_cached_input_cost_per_million"
+            ),
+            "cache_write_cost_per_million": (
+                "urus_agent_cache_write_cost_per_million"
+            ),
+            "output_cost_per_million": "urus_agent_output_cost_per_million",
+        }
+        for payload_key, setting_name in price_fields.items():
+            if payload_key in models:
+                setattr(settings, setting_name, float(models[payload_key] or 0.0))
 
 
 class RuntimeSettingsRepository:

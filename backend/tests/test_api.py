@@ -80,6 +80,17 @@ def test_pre_market_run_persists_order_skip_states_and_read_model(client: TestCl
     assert body["steps"][0]["started_at"].endswith("+00:00")
     assert body["steps"][0]["completed_at"].endswith("+00:00")
 
+    progress = client.get(f"/api/runs/{created_body['run_id']}/progress")
+    assert progress.status_code == 200
+    assert all("payload" not in step for step in progress.json()["steps"])
+    output_step = next(step for step in body["steps"] if step["step_code"] == "5")
+    assert set(output_step["payload"]) == {
+        "snapshot_id",
+        "schema_version",
+        "data_quality",
+        "data_state",
+    }
+    assert output_step["payload"]["data_state"] == output_step["data_state"]
     frontend = client.get(f"/api/snapshots/{created_body['snapshot_id']}/frontend")
     assert frontend.status_code == 200
     read_model = frontend.json()
@@ -102,6 +113,37 @@ def test_pre_market_run_persists_order_skip_states_and_read_model(client: TestCl
     assert snapshot.status_code == 200
     assert snapshot.json()["cutoff_time"].endswith("+00:00")
     assert snapshot.json()["created_at"].endswith("+00:00")
+
+
+def test_production_run_executes_in_recyclable_worker_process(tmp_path) -> None:
+    from app.core.config import Settings
+    from app.main import create_app
+
+    settings = Settings(
+        app_env="production",
+        database_url=f"sqlite:///{tmp_path / 'isolated-worker.db'}",
+        cors_origins="http://testserver",
+        enabled_symbols="QQQ,INTC",
+        instrument_validation_symbols="INTC,SMH",
+        moomoo_enabled=False,
+        fred_enabled=False,
+        yahoo_enabled=False,
+        anomalo_enabled=False,
+        expected_events_enabled=False,
+        urus_agent_enabled=False,
+    )
+    with TestClient(create_app(settings)) as isolated_client:
+        created = isolated_client.post(
+            "/api/runs",
+            json={"run_type": "pre_market", "skip_ai_decision": True},
+        )
+
+        assert created.status_code == 201
+        assert created.json()["snapshot_id"]
+        progress = isolated_client.get(
+            f"/api/runs/{created.json()['run_id']}/progress"
+        ).json()
+        assert progress["status"] in {"mixed", "succeeded"}
 
 
 def test_pre_close_can_simulate_both_conditional_events(client: TestClient) -> None:

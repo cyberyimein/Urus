@@ -17,6 +17,10 @@ const payload: RuntimeSettingsResponse = {
   models: {
     ai_decision_model: 'deepseek/deepseek-v4-flash-0731',
     anomalo_retrieval_agent: 'scheduled-event-investigator',
+    input_cost_per_million: 0,
+    cached_input_cost_per_million: 0,
+    cache_write_cost_per_million: 0,
+    output_cost_per_million: 0,
   },
   notes: {
     anomalo_model_control: 'preset_agent',
@@ -41,6 +45,7 @@ describe('SettingsView', () => {
     expect(wrapper.text()).toContain('盘前正式决策')
     expect(wrapper.text()).toContain('收盘复盘')
     expect(wrapper.text()).toContain('尾盘数据采集')
+    expect(wrapper.text()).toContain('缓存读取价格')
     const tailCard = wrapper.findAll('.schedule-card').find((card) => card.text().includes('尾盘数据采集'))
     expect(tailCard?.findAll('input')[1].element.disabled).toBe(true)
     expect(tailCard?.findAll('input')[1].element.checked).toBe(false)
@@ -62,6 +67,11 @@ describe('SettingsView', () => {
     await checkboxes[0].setValue(false)
     const modelInput = wrapper.find('input[type="text"]')
     await modelInput.setValue('openai/gpt-oss-120b')
+    const priceInputs = wrapper.findAll('input[type="number"]')
+    await priceInputs[0].setValue('2.5')
+    await priceInputs[1].setValue('0.25')
+    await priceInputs[2].setValue('10')
+    await priceInputs[3].setValue('12')
     expect(wrapper.text()).toContain('有未保存修改')
 
     await wrapper.get('button.primary-button').trigger('click')
@@ -72,7 +82,13 @@ describe('SettingsView', () => {
       schedule: expect.objectContaining({
         pre_market: { enabled: false, skip_ai_decision: false },
       }),
-      models: expect.objectContaining({ ai_decision_model: 'openai/gpt-oss-120b' }),
+      models: expect.objectContaining({
+        ai_decision_model: 'openai/gpt-oss-120b',
+        input_cost_per_million: 2.5,
+        cached_input_cost_per_million: 0.25,
+        cache_write_cost_per_million: 10,
+        output_cost_per_million: 12,
+      }),
     }))
     expect(wrapper.text()).toContain('设置已保存')
   })

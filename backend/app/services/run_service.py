@@ -39,7 +39,9 @@ from app.schemas.read_model import (
     RunCreateResponse,
     RunDetailResponse,
     RunListItem,
+    RunProgressResponse,
     SnapshotResponse,
+    StepProgressResponse,
     StepRunResponse,
 )
 from app.schemas.universe import InstrumentConfig
@@ -169,6 +171,8 @@ class RunService:
             if self.settings.moomoo_enabled
             else None
         )
+        # Manual and scheduled runs use the same configured option universe.
+        # Request symbols narrow the decision universe, not market-data coverage.
         options_adapter = self._build_options_adapter(scopes.option_symbols)
         macro_adapter = self._build_macro_adapter()
         anomalo_adapter = self._build_anomalo_adapter(
@@ -221,63 +225,76 @@ class RunService:
         option_persistence_payload: dict[str, object] | None = None
         instrument_persistence_payload: dict[str, object] | None = None
 
-        for step in pipeline.steps:
-            if step.code == "4":
-                self._prepare_decision_dataset(context)
-            model = step_by_code[step.code]
-            step_started = utc_now()
-            self.repository.update_step(
-                model,
-                status=StepStatus.RUNNING.value,
-                started_at=step_started,
-            )
-            if step.code == "5" and context.snapshot_id is None:
-                context.snapshot_id = str(uuid4())
-            logger.info(
-                "workflow step started run_id=%s step_code=%s snapshot_id=%s",
-                run_id,
-                step.code,
-                context.snapshot_id,
-            )
-
-            try:
-                result = step.execute(context)
-            except Exception as exc:  # defensive boundary for replaceable steps
-                result = StepResult(
-                    status=StepStatus.FAILED,
-                    summary=f"步骤 {step.code} 未处理异常。",
-                    error_message=str(exc),
+        try:
+            for step in pipeline.steps:
+                if step.code == "4":
+                    self._prepare_decision_dataset(context)
+                model = step_by_code[step.code]
+                step_started = utc_now()
+                self.repository.update_step(
+                    model,
+                    status=StepStatus.RUNNING.value,
+                    started_at=step_started,
                 )
-                logger.exception("workflow step crashed run_id=%s step_code=%s", run_id, step.code)
-            if step.code == "2" and isinstance(result.payload.get("_persistence"), dict):
-                option_persistence_payload = result.payload.pop("_persistence")
-            if step.code == "1a" and isinstance(result.payload.get("_cta_input"), dict):
-                context.cta_market_input = result.payload.pop("_cta_input")
-            if step.code == "3a" and isinstance(result.payload.get("_persistence"), dict):
-                instrument_persistence_payload = result.payload.pop("_persistence")
-                context.instrument_persistence_input = dict(instrument_persistence_payload)
-            context.results[step.code] = result
-            completed_at = utc_now()
-            self.repository.update_step(
-                model,
-                status=result.status.value,
-                completed_at=completed_at,
-                summary=result.summary,
-                error_message=result.error_message,
-                payload=result.payload or None,
-            )
-            logger.info(
-                "workflow step completed run_id=%s step_code=%s status=%s snapshot_id=%s",
-                run_id,
-                step.code,
-                result.status.value,
-                context.snapshot_id,
-            )
+                if step.code == "5" and context.snapshot_id is None:
+                    context.snapshot_id = str(uuid4())
+                logger.info(
+                    "workflow step started run_id=%s step_code=%s snapshot_id=%s",
+                    run_id,
+                    step.code,
+                    context.snapshot_id,
+                )
 
-        for adapter in (market_adapter, macro_adapter, options_adapter, anomalo_adapter):
-            close = getattr(adapter, "close", None)
-            if close:
-                close()
+                try:
+                    result = step.execute(context)
+                except Exception as exc:  # defensive boundary for replaceable steps
+                    result = StepResult(
+                        status=StepStatus.FAILED,
+                        summary=f"步骤 {step.code} 未处理异常。",
+                        error_message=str(exc),
+                    )
+                    logger.exception(
+                        "workflow step crashed run_id=%s step_code=%s", run_id, step.code
+                    )
+                if step.code == "2" and isinstance(result.payload.get("_persistence"), dict):
+                    option_persistence_payload = result.payload.pop("_persistence")
+                if step.code == "1a" and isinstance(result.payload.get("_cta_input"), dict):
+                    context.cta_market_input = result.payload.pop("_cta_input")
+                if step.code == "3a" and isinstance(result.payload.get("_persistence"), dict):
+                    instrument_persistence_payload = result.payload.pop("_persistence")
+                    context.instrument_persistence_input = dict(instrument_persistence_payload)
+                context.results[step.code] = result
+                completed_at = utc_now()
+                # Step 5 is the snapshot itself. Persist a compact reference
+                # here instead of duplicating the complete read model in
+                # step_runs and snapshots.
+                persisted_step_payload = (
+                    {
+                        "snapshot_id": context.snapshot_id,
+                        "schema_version": result.payload.get("schema_version"),
+                        "data_quality": result.payload.get("data_quality"),
+                        "data_state": data_state_for(result),
+                    }
+                    if step.code == "5" and result.payload
+                    else result.payload or None
+                )
+                self.repository.update_step(
+                    model,
+                    status=result.status.value,
+                    completed_at=completed_at,
+                    summary=result.summary,
+                    error_message=result.error_message,
+                    payload=persisted_step_payload,
+                )
+                logger.info(
+                    "workflow step completed run_id=%s step_code=%s status=%s snapshot_id=%s",
+                    run_id,
+                    step.code,
+                    result.status.value,
+                    context.snapshot_id,
+                )
+        finally:
+            self._close_adapters(market_adapter, macro_adapter, options_adapter, anomalo_adapter)
 
         final_status = self._final_run_status(context.results)
         output_result = context.results.get("5")
@@ -362,7 +379,19 @@ class RunService:
             self._persist_report_display_projection(context)
 
             output_model = step_by_code["5"]
-            self.repository.update_step(output_model, payload=snapshot_payload)
+            self.repository.update_step(
+                output_model,
+                payload={
+                    "snapshot_id": snapshot_id,
+                    "schema_version": snapshot_payload.get("schema_version"),
+                    "data_quality": snapshot_payload.get("data_quality"),
+                    "data_state": (
+                        data_state_for(output_result)
+                        if output_result is not None
+                        else str(snapshot_payload.get("data_state") or "unavailable")
+                    ),
+                },
+            )
         errors = [
             f"{code}: {result.error_message}"
             for code, result in context.results.items()
@@ -383,6 +412,21 @@ class RunService:
             snapshot_id,
         )
         return RunCreateResponse(run_id=run_id, status=final_status.value, snapshot_id=snapshot_id)
+
+    @staticmethod
+    def _close_adapters(*adapters: object) -> None:
+        for adapter in adapters:
+            close = getattr(adapter, "close", None)
+            if not close:
+                continue
+            try:
+                close()
+            except Exception:
+                logger.warning(
+                    "workflow adapter close failed adapter=%s",
+                    type(adapter).__name__,
+                    exc_info=True,
+                )
 
     def _prepare_decision_dataset(self, context: RunContext) -> None:
         """Build one phase-specific packet and attach its report lineage."""
@@ -622,6 +666,17 @@ class RunService:
 
     def get_run(self, run_id: str) -> RunDetailResponse:
         return self._to_detail(self._require_run(run_id))
+
+    def get_run_progress(self, run_id: str) -> RunProgressResponse:
+        run = self.repository.get_run_progress(run_id)
+        if run is None:
+            raise AppError("找不到指定运行", code="run_not_found", status_code=404)
+        item = self._to_list_item(run)
+        steps = [
+            StepProgressResponse.model_validate(step, from_attributes=True)
+            for step in run.steps
+        ]
+        return RunProgressResponse(**item.model_dump(), steps=steps)
 
     def get_snapshot(self, snapshot_id: str) -> SnapshotResponse:
         snapshot = self.repository.get_snapshot(snapshot_id)
@@ -872,6 +927,8 @@ class RunService:
         if not self.settings.moomoo_enabled:
             return DisabledOptionsAdapter()
         target_symbols = target_symbols if target_symbols is not None else self.settings.options_collection_symbol_list
+        if not target_symbols:
+            return DisabledOptionsAdapter()
         return MoomooOptionsAdapter(
             host=self.settings.moomoo_host,
             port=self.settings.moomoo_port,

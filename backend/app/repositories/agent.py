@@ -139,6 +139,8 @@ class AIDecisionRepository:
         model.error_message = result.error_message
         model.prompt_tokens = result.prompt_tokens
         model.completion_tokens = result.completion_tokens
+        model.cached_prompt_tokens = result.cached_prompt_tokens
+        model.cache_write_tokens = result.cache_write_tokens
         model.estimated_cost = result.estimated_cost
         model.completed_at = now
         self.session.add(model)
@@ -176,6 +178,8 @@ class AIDecisionRepository:
                     raw_response_truncated=bool(turn.get("raw_response_truncated", False)),
                     prompt_tokens=turn.get("prompt_tokens"),
                     completion_tokens=turn.get("completion_tokens"),
+                    cached_prompt_tokens=turn.get("cached_prompt_tokens"),
+                    cache_write_tokens=turn.get("cache_write_tokens"),
                     created_at=now,
                 )
             )
@@ -600,13 +604,20 @@ class AIDecisionRepository:
         providers = sorted({str(run.provider) for run in runs if run.provider and run.provider != "pending"})
         models = sorted({str(run.model) for run in runs if run.model})
         skill_hashes = sorted({str(run.skill_hash) for run in runs if run.skill_hash and run.skill_hash != "pending"})
+        prompt_tokens = sum(int(run.prompt_tokens or 0) for run in runs)
+        cached_prompt_tokens = sum(int(run.cached_prompt_tokens or 0) for run in runs)
         return {
             "run_count": len(runs),
             "tool_call_count": tool_count,
             "prefetched_tool_count": prefetched_tool_count,
             "model_requested_tool_count": tool_count - prefetched_tool_count,
-            "prompt_tokens": sum(int(run.prompt_tokens or 0) for run in runs),
+            "prompt_tokens": prompt_tokens,
             "completion_tokens": sum(int(run.completion_tokens or 0) for run in runs),
+            "cached_prompt_tokens": cached_prompt_tokens,
+            "cache_write_tokens": sum(int(run.cache_write_tokens or 0) for run in runs),
+            "cache_hit_rate": round(cached_prompt_tokens / prompt_tokens, 6)
+            if prompt_tokens
+            else None,
             "estimated_cost": round(sum(float(run.estimated_cost or 0) for run in runs), 8) or None,
             "duration_ms": sum(durations),
             "providers": providers,

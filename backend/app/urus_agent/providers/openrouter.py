@@ -47,6 +47,8 @@ class OpenRouterProvider:
         max_completion_tokens: int | None = None,
         temperature: float = 0.1,
         input_cost_per_million: float = 0.0,
+        cached_input_cost_per_million: float = 0.0,
+        cache_write_cost_per_million: float = 0.0,
         output_cost_per_million: float = 0.0,
         max_retries: int = 1,
         retry_backoff_seconds: float = 0.5,
@@ -65,6 +67,12 @@ class OpenRouterProvider:
         )
         self.temperature = temperature
         self.input_cost_per_million = max(0.0, float(input_cost_per_million))
+        self.cached_input_cost_per_million = max(
+            0.0, float(cached_input_cost_per_million)
+        )
+        self.cache_write_cost_per_million = max(
+            0.0, float(cache_write_cost_per_million)
+        )
         self.output_cost_per_million = max(0.0, float(output_cost_per_million))
         self.max_retries = max(0, min(int(max_retries), 2))
         self.retry_backoff_seconds = max(0.0, min(float(retry_backoff_seconds), 5.0))
@@ -244,4 +252,5 @@ class FakeLLMProvider:
             raise RuntimeError("provider_error: fake provider has no response")
         value = self.responses.pop(0)
         message = value.get("message") if isinstance(value.get("message"), dict) else {"role": "assistant", "content": json.dumps(value, ensure_ascii=False)}
-        return ProviderResponse(message=message, raw=value, model=self.model, usage={})
+        usage = value.get("usage") if isinstance(value.get("usage"), dict) else {}
+        return ProviderResponse(message=message, raw=value, model=self.model, usage=usage)

@@ -196,6 +196,7 @@ class OpenDMarketAdapter:
     """
 
     _connect_timeout_seconds = 3.0
+    _close_timeout_seconds = 2.0
 
     def __init__(
         self,
@@ -238,9 +239,15 @@ class OpenDMarketAdapter:
             finally:
                 finished.set()
 
-        thread = threading.Thread(target=close_context, name="urus-opend-close", daemon=True)
+        # The SDK close path can block inside its network thread. Keep cleanup
+        # bounded so a completed workflow can still persist its final state.
+        thread = threading.Thread(
+            target=close_context,
+            name="urus-opend-close",
+            daemon=True,
+        )
         thread.start()
-        if not finished.wait(timeout=2.0):
+        if not finished.wait(timeout=self._close_timeout_seconds):
             logger.warning("Moomoo OpenD context close timed out; continuing shutdown")
 
     def market_card(self, symbol: str) -> dict[str, object]:

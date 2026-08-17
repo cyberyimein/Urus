@@ -53,6 +53,12 @@ export interface RunDetail extends RunListItem {
   steps: StepRun[]
 }
 
+export interface StepProgress extends Omit<StepRun, 'payload'> {}
+
+export interface RunProgress extends RunListItem {
+  steps: StepProgress[]
+}
+
 export interface RunCreateResponse {
   run_id: string
   status: RunStatus

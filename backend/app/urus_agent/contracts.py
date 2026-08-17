@@ -150,6 +150,8 @@ class DecisionResult(BaseModel):
     input_hash: str | None = None
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    cached_prompt_tokens: int | None = None
+    cache_write_tokens: int | None = None
     temperature: float | None = None
     estimated_cost: float | None = None
 

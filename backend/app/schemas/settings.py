@@ -34,6 +34,10 @@ class RuntimeModelSettings(BaseModel):
 
     ai_decision_model: str = Field(min_length=1, max_length=160)
     anomalo_retrieval_agent: str = Field(min_length=1, max_length=160)
+    input_cost_per_million: float = Field(default=0.0, ge=0, le=1_000_000)
+    cached_input_cost_per_million: float = Field(default=0.0, ge=0, le=1_000_000)
+    cache_write_cost_per_million: float = Field(default=0.0, ge=0, le=1_000_000)
+    output_cost_per_million: float = Field(default=0.0, ge=0, le=1_000_000)
 
     @field_validator("ai_decision_model", "anomalo_retrieval_agent")
     @classmethod

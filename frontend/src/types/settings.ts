@@ -12,6 +12,10 @@ export interface ScheduleSettings {
 export interface RuntimeModelSettings {
   ai_decision_model: string
   anomalo_retrieval_agent: string
+  input_cost_per_million: number
+  cached_input_cost_per_million: number
+  cache_write_cost_per_million: number
+  output_cost_per_million: number
 }
 
 export interface RuntimeSettingsUpdate {

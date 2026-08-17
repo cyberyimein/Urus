@@ -5,6 +5,7 @@ import type {
   RunCreateResponse,
   RunDetail,
   RunListItem,
+  RunProgress,
   RunType,
   SnapshotResponse,
   VersionResponse,
@@ -86,6 +87,8 @@ export const api = {
   watchlist: () => request<WatchlistResponse>('/watchlist'),
   listRuns: () => request<RunListItem[]>('/runs'),
   getRun: (runId: string) => request<RunDetail>(`/runs/${encodeURIComponent(runId)}`),
+  getRunProgress: (runId: string) =>
+    request<RunProgress>(`/runs/${encodeURIComponent(runId)}/progress`),
   getSnapshot: (snapshotId: string) =>
     request<SnapshotResponse>(`/snapshots/${encodeURIComponent(snapshotId)}`),
   getFrontendReadModel: (snapshotId: string) =>

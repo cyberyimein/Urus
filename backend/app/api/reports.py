@@ -366,6 +366,15 @@ def get_trace_node(report_id: str, node_id: str, db: Session = Depends(get_db)) 
                 "temperature": run.temperature,
                 "prompt_tokens": run.prompt_tokens,
                 "completion_tokens": run.completion_tokens,
+                "cached_prompt_tokens": run.cached_prompt_tokens,
+                "cache_write_tokens": run.cache_write_tokens,
+                "cache_hit_rate": (
+                    round(
+                        int(run.cached_prompt_tokens or 0) / int(run.prompt_tokens), 6
+                    )
+                    if run.prompt_tokens
+                    else None
+                ),
                 "estimated_cost": run.estimated_cost,
                 "started_at": run.started_at,
                 "completed_at": run.completed_at,
@@ -415,6 +424,8 @@ def get_trace_node_raw_response(report_id: str, node_id: str, db: Session = Depe
                 "returned_reasoning_fields": _returned_reasoning_fields(turn.response_message, turn.raw_provider_response),
                 "prompt_tokens": turn.prompt_tokens,
                 "completion_tokens": turn.completion_tokens,
+                "cached_prompt_tokens": turn.cached_prompt_tokens,
+                "cache_write_tokens": turn.cache_write_tokens,
                 "created_at": turn.created_at,
             }
             for turn in selected_turns

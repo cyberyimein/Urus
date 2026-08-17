@@ -13,22 +13,65 @@ from app.schemas.read_model import (
     RunCreateResponse,
     RunDetailResponse,
     RunListItem,
+    RunProgressResponse,
     SnapshotResponse,
     WatchlistResponse,
 )
 from app.services import RunService
+from app.services.workflow_process import process_isolation_enabled, run_workflow_process
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _execute_queued_workflow(
+    session_factory,
+    settings: Settings,
+    run_id: str,
+    workflow_request: RunCreateRequest,
+) -> RunCreateResponse:
+    try:
+        if process_isolation_enabled(settings):
+            run_workflow_process(settings, run_id, workflow_request)
+            with session_factory() as session:
+                run = RunService(session, settings).repository.get_run(run_id)
+                if run is None:
+                    raise RuntimeError(f"workflow worker did not persist run {run_id}")
+                return RunCreateResponse(
+                    run_id=run.id,
+                    status=run.status,
+                    snapshot_id=run.snapshot_id,
+                )
+        with session_factory() as session:
+            return RunService(session, settings).create_run(
+                workflow_request,
+                queued_run_id=run_id,
+            )
+    except Exception as exc:
+        with session_factory() as session:
+            service = RunService(session, settings)
+            run = service.repository.get_run(run_id)
+            if run is not None and run.status in {"pending", "running"}:
+                from app.core.time import utc_now
+
+                service.repository.update_run(
+                    run,
+                    status="failed",
+                    completed_at=utc_now(),
+                    error_message=f"工作流子进程异常终止：{str(exc)[:1000]}",
+                )
+        raise
 
 
 def _execute_manual_analysis(session_factory, settings: Settings, run_id: str, symbols) -> None:
     with session_factory() as session:
         service = RunService(session, settings)
         try:
-            service.create_run(
+            _execute_queued_workflow(
+                session_factory,
+                settings,
+                run_id,
                 RunCreateRequest(run_type="manual_analysis", symbols=symbols),
-                queued_run_id=run_id,
             )
         except Exception as exc:
             logger.exception("manual analysis failed run_id=%s", run_id)
@@ -58,10 +101,17 @@ def _retry_manual_ai(session_factory, settings: Settings, run_id: str) -> None:
 @router.post("/runs", response_model=RunCreateResponse, status_code=201)
 def create_run(
     request: RunCreateRequest,
+    raw_request: Request,
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> RunCreateResponse:
-    return RunService(db, settings).create_run(request)
+    queued = RunService(db, settings).initialize_run(request)
+    return _execute_queued_workflow(
+        raw_request.app.state.session_factory,
+        settings,
+        queued.run_id,
+        request,
+    )
 
 
 @router.post(
@@ -147,6 +197,15 @@ def get_run(
     settings: Settings = Depends(get_settings),
 ) -> RunDetailResponse:
     return RunService(db, settings).get_run(run_id)
+
+
+@router.get("/runs/{run_id}/progress", response_model=RunProgressResponse)
+def get_run_progress(
+    run_id: str,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> RunProgressResponse:
+    return RunService(db, settings).get_run_progress(run_id)
 
 
 @router.get("/snapshots/{snapshot_id}", response_model=SnapshotResponse)

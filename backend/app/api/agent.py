@@ -11,6 +11,11 @@ from app.repositories.agent import AIDecisionRepository
 router = APIRouter(prefix="/ai")
 
 
+def _cache_hit_rate(model) -> float | None:
+    prompt_tokens = int(model.prompt_tokens or 0)
+    return round(int(model.cached_prompt_tokens or 0) / prompt_tokens, 6) if prompt_tokens else None
+
+
 def _run_payload(model) -> dict[str, object]:
     return {
         "id": model.id,
@@ -34,6 +39,9 @@ def _run_payload(model) -> dict[str, object]:
         "error_message": model.error_message,
         "prompt_tokens": model.prompt_tokens,
         "completion_tokens": model.completion_tokens,
+        "cached_prompt_tokens": model.cached_prompt_tokens,
+        "cache_write_tokens": model.cache_write_tokens,
+        "cache_hit_rate": _cache_hit_rate(model),
         "estimated_cost": model.estimated_cost,
         "started_at": model.started_at,
         "completed_at": model.completed_at,

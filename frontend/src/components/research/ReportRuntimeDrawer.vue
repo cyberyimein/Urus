@@ -57,7 +57,9 @@ onUnmounted(() => window.removeEventListener('keydown', closeOnEscape))
             <div><dt>Prefetched</dt><dd>{{ formatNumber(runSummary?.prefetched_tool_count ?? 0) }}</dd></div>
             <div><dt>Model tools</dt><dd>{{ formatNumber(runSummary?.model_requested_tool_count ?? 0) }}</dd></div>
             <div><dt>Tokens</dt><dd>{{ formatNumber(runSummary?.prompt_tokens ?? 0) }} prompt / {{ formatNumber(runSummary?.completion_tokens ?? 0) }} completion</dd></div>
-            <div v-if="runSummary?.estimated_cost != null"><dt>估算成本</dt><dd>{{ runSummary.estimated_cost }}</dd></div>
+            <div><dt>缓存命中</dt><dd>{{ formatNumber(runSummary?.cached_prompt_tokens ?? 0) }} tokens / {{ runSummary?.cache_hit_rate != null ? `${(runSummary.cache_hit_rate * 100).toFixed(2)}%` : '—' }}</dd></div>
+            <div><dt>缓存写入</dt><dd>{{ formatNumber(runSummary?.cache_write_tokens ?? 0) }} tokens</dd></div>
+            <div v-if="runSummary?.estimated_cost != null"><dt>估算成本</dt><dd>${{ runSummary.estimated_cost.toFixed(6) }}</dd></div>
           </dl>
         </section>
 

@@ -28,6 +28,12 @@ def test_empty_database_can_migrate(tmp_path: Path) -> None:
     assert "prefetched" in {
         column["name"] for column in inspector.get_columns("ai_tool_calls")
     }
+    assert {"cached_prompt_tokens", "cache_write_tokens"}.issubset(
+        {column["name"] for column in inspector.get_columns("ai_decision_runs")}
+    )
+    assert {"cached_prompt_tokens", "cache_write_tokens"}.issubset(
+        {column["name"] for column in inspector.get_columns("ai_model_turns")}
+    )
     experience_columns = {
         column["name"]: column
         for column in inspector.get_columns("forecast_experiences")

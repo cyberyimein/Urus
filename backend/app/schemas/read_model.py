@@ -302,6 +302,31 @@ class StepRunResponse(BaseModel):
         return as_utc(value).isoformat() if value is not None else None
 
 
+class StepProgressResponse(BaseModel):
+    """Small polling projection that deliberately excludes the step payload."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    run_id: str
+    position: int
+    step_code: StepCodeValue
+    status: StepStatusValue
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    summary: str | None = None
+    error_message: str | None = None
+
+    @field_validator("started_at", "completed_at", mode="before")
+    @classmethod
+    def normalize_timestamps(cls, value: datetime | str | None) -> datetime | None:
+        return as_utc(value) if value is not None else None
+
+    @field_serializer("started_at", "completed_at")
+    def serialize_timestamps(self, value: datetime | None) -> str | None:
+        return as_utc(value).isoformat() if value is not None else None
+
+
 class RunListItem(BaseModel):
     id: str
     run_type: RunTypeValue
@@ -326,6 +351,10 @@ class RunListItem(BaseModel):
 
 class RunDetailResponse(RunListItem):
     steps: list[StepRunResponse]
+
+
+class RunProgressResponse(RunListItem):
+    steps: list[StepProgressResponse]
 
 
 class RunCreateResponse(BaseModel):

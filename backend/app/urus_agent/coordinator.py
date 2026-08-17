@@ -846,6 +846,12 @@ class DecisionCoordinator:
             ),
             temperature=self.settings.urus_agent_temperature,
             input_cost_per_million=self.settings.urus_agent_input_cost_per_million,
+            cached_input_cost_per_million=(
+                self.settings.urus_agent_cached_input_cost_per_million
+            ),
+            cache_write_cost_per_million=(
+                self.settings.urus_agent_cache_write_cost_per_million
+            ),
             output_cost_per_million=self.settings.urus_agent_output_cost_per_million,
             max_retries=(
                 provider_max_retries_override

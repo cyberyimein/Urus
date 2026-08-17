@@ -27,7 +27,23 @@ router = APIRouter()
 def _response(
     settings: Settings, persisted: RuntimeSettingsModel | None
 ) -> RuntimeSettingsResponse:
-    payload = persisted.payload if persisted is not None else environment_payload(settings)
+    payload = environment_payload(settings)
+    if persisted is not None:
+        persisted_payload = persisted.payload if isinstance(persisted.payload, dict) else {}
+        payload = {
+            **payload,
+            **persisted_payload,
+            # Backfill fields absent from pre-pricing runtime rows with the
+            # active environment values instead of showing/saving zeroes.
+            "models": {
+                **payload["models"],
+                **(
+                    persisted_payload.get("models", {})
+                    if isinstance(persisted_payload.get("models"), dict)
+                    else {}
+                ),
+            },
+        }
     schedule = ScheduleSettings.model_validate(payload.get("schedule", {}))
     models = RuntimeModelSettings.model_validate(payload.get("models", {}))
     return RuntimeSettingsResponse(

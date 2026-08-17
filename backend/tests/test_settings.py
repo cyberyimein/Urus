@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+from app.api.settings import _response
+from app.core.config import Settings
+from app.core.time import utc_now
+from app.models.runtime_settings import RuntimeSettingsModel
+from app.repositories.runtime_settings import apply_payload, environment_payload
+
 
 def _update_payload(client):
     response = client.get("/api/settings")
@@ -10,6 +16,40 @@ def _update_payload(client):
         "schedule": payload["schedule"],
         "models": payload["models"],
     }
+
+
+def test_legacy_runtime_settings_preserve_environment_prices() -> None:
+    settings = Settings(
+        urus_agent_input_cost_per_million=2.5,
+        urus_agent_cached_input_cost_per_million=0.25,
+        urus_agent_cache_write_cost_per_million=3.0,
+        urus_agent_output_cost_per_million=10.0,
+    )
+    legacy_payload = environment_payload(settings)
+    for key in (
+        "input_cost_per_million",
+        "cached_input_cost_per_million",
+        "cache_write_cost_per_million",
+        "output_cost_per_million",
+    ):
+        legacy_payload["models"].pop(key)
+
+    apply_payload(settings, legacy_payload)
+    response = _response(
+        settings,
+        RuntimeSettingsModel(
+            id=1,
+            payload=legacy_payload,
+            revision=1,
+            updated_at=utc_now(),
+        ),
+    )
+
+    assert settings.urus_agent_input_cost_per_million == 2.5
+    assert response.models.input_cost_per_million == 2.5
+    assert response.models.cached_input_cost_per_million == 0.25
+    assert response.models.cache_write_cost_per_million == 3.0
+    assert response.models.output_cost_per_million == 10.0
 
 
 def test_settings_expose_environment_defaults(client) -> None:
@@ -26,6 +66,10 @@ def test_settings_expose_environment_defaults(client) -> None:
     assert payload["schedule"]["pre_close"]["skip_ai_decision"] is True
     assert payload["models"]["ai_decision_model"]
     assert payload["models"]["anomalo_retrieval_agent"] == "scheduled-event-investigator"
+    assert payload["models"]["input_cost_per_million"] == 0
+    assert payload["models"]["cached_input_cost_per_million"] == 0
+    assert payload["models"]["cache_write_cost_per_million"] == 0
+    assert payload["models"]["output_cost_per_million"] == 0
 
 
 def test_settings_update_persists_and_updates_running_config(client, app) -> None:
@@ -34,6 +78,10 @@ def test_settings_update_persists_and_updates_running_config(client, app) -> Non
     payload["schedule"]["post_close_review"]["skip_ai_decision"] = True
     payload["models"]["ai_decision_model"] = "openai/gpt-oss-120b"
     payload["models"]["anomalo_retrieval_agent"] = "research-agent-v2"
+    payload["models"]["input_cost_per_million"] = 2.5
+    payload["models"]["cached_input_cost_per_million"] = 0.25
+    payload["models"]["cache_write_cost_per_million"] = 3.0
+    payload["models"]["output_cost_per_million"] = 10.0
 
     response = client.put("/api/settings", json=payload)
 
@@ -46,6 +94,10 @@ def test_settings_update_persists_and_updates_running_config(client, app) -> Non
     assert updated["models"]["ai_decision_model"] == "openai/gpt-oss-120b"
     assert app.state.settings.urus_agent_model == "openai/gpt-oss-120b"
     assert app.state.settings.anomalo_scheduled_agent == "research-agent-v2"
+    assert app.state.settings.urus_agent_input_cost_per_million == 2.5
+    assert app.state.settings.urus_agent_cached_input_cost_per_million == 0.25
+    assert app.state.settings.urus_agent_cache_write_cost_per_million == 3.0
+    assert app.state.settings.urus_agent_output_cost_per_million == 10.0
 
     reread = client.get("/api/settings").json()
     assert reread["revision"] == 1

@@ -73,6 +73,9 @@ export interface ReportRunSummary {
   model_requested_tool_count?: number
   prompt_tokens: number
   completion_tokens: number
+  cached_prompt_tokens?: number
+  cache_write_tokens?: number
+  cache_hit_rate?: number | null
   estimated_cost?: number | null
   duration_ms: number
   providers: string[]
@@ -179,6 +182,9 @@ export interface TraceNodeDetail extends TraceNode {
     temperature?: number | null
     prompt_tokens?: number | null
     completion_tokens?: number | null
+    cached_prompt_tokens?: number | null
+    cache_write_tokens?: number | null
+    cache_hit_rate?: number | null
     estimated_cost?: number | null
     started_at?: string | null
     completed_at?: string | null
@@ -194,6 +200,8 @@ export interface RawModelTurn {
   raw_response_truncated: boolean
   prompt_tokens: number | null
   completion_tokens: number | null
+  cached_prompt_tokens?: number | null
+  cache_write_tokens?: number | null
   returned_reasoning_fields?: string[]
   created_at: string | null
 }

@@ -17,6 +17,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     APP_HOST=0.0.0.0 \
     APP_PORT=8000 \
     DATABASE_URL=sqlite:////data/urus.db \
+    WORKFLOW_PROCESS_ISOLATION=true \
     MOOMOO_SDK_HOME=/data/moomoo_home \
     URUS_SCHEDULER_DATA_DIR=/data/scheduled_collection
 
