@@ -83,6 +83,8 @@ cp .env.example .env
 
 `.env` 已被 Git 忽略。按需修改 `MOOMOO_HOST`、数据源开关、Universe 和 CORS；不要把真实 API key、账户信息或内网地址提交到仓库。
 
+开发时 Urus 后端可以运行在本机，而 Moomoo OpenD 运行在同一 LAN 的另一台机器上。将示例中的 `MOOMOO_HOST=opend-host` 替换为实际可达的主机名或私有 IP，并保持 `MOOMOO_PORT=11111`；真实地址只放在本地 `.env` 或私有部署配置中。
+
 ### 2. 启动后端
 
 ```bash
@@ -184,7 +186,7 @@ API 前缀为 `/api`。完整 schema 以运行中的 OpenAPI 为准。
 | `URUS_AGENT_MODEL` | OpenRouter 模型标识 |
 | `SCHEDULED_*` | 东京时区的盘前、收盘前和盘后调度开关 |
 
-真实数据联调时，先确认 OpenD 已启动且 `MOOMOO_HOST`/`MOOMOO_PORT` 可达。没有 OpenD 时不要把连接失败解释为市场数据缺失或模拟成功。
+真实数据联调时，先确认远程或本机 OpenD 已启动且 `MOOMOO_HOST`/`MOOMOO_PORT` 可达。没有 OpenD 时不要把连接失败解释为市场数据缺失或模拟成功。
 
 ## 测试与构建
 
