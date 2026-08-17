@@ -21,7 +21,7 @@ cp deploy/urus.container.env.example deploy/urus.container.env
 chmod 600 deploy/urus.container.env
 ```
 
-填写 OpenRouter 密钥以及容器可访问的 OpenD 地址。若 OpenD 位于 Mac mini 宿主机，不能写 `127.0.0.1`；应按 Apple Container 的宿主机 DNS/网络配置使用可达主机名。若仍位于 `opend-host`，部署前应从 Mac mini 验证该地址的 `11111` 端口。
+填写 OpenRouter 密钥以及容器可访问的 OpenD 地址。若 OpenD 位于 Mac mini 宿主机，不能写 `127.0.0.1`；应按 Apple Container 的宿主机 DNS/网络配置使用可达主机名。部署前应从 Mac mini 验证该地址的 `11111` 端口。
 
 ## 部署
 

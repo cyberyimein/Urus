@@ -17,7 +17,7 @@ Urus 是一个股票分析与决策辅助系统。完整业务流程最终为：
 
 本次开发只建设能够承载上述流程的框架。框架完成并验收后，再按照章节 12 的顺序逐阶段实现，不允许在本次任务中提前填充真实业务。
 
-策略与数据需求的讨论原文位于同目录的 `strategy-discussion.md`。开发者可以阅读它理解背景，但本次实施范围以本文为准。
+策略与数据需求的内部讨论文档不随公开仓库发布；本次实施范围以本文和 `docs/` 中的公开设计文档为准。
 
 ## 2. 技术形态
 
@@ -68,7 +68,6 @@ Urus/
 ├── .env.example
 ├── README.md
 ├── development-requirements.md
-└── strategy-discussion.md
 ```
 
 路由层不得直接包含行情或决策业务。外部系统调用必须通过 `integrations/` 中的适配器接口进入。
@@ -241,14 +240,14 @@ API 返回使用稳定的 Pydantic schema。前端类型应从 OpenAPI 生成，
 - Pinia 或同等轻量状态管理。
 - 一个集中式后端 API client，base URL 由环境变量配置。
 
-本次不指定大型 UI 组件库。`sibling-project` 当前主要使用原生 Vue 与手写 CSS，Urus 框架也优先保持轻量；若开发者选择引入组件库，必须说明理由，且不得让组件库配置占据主要开发工作。
+本次不指定大型 UI 组件库。Urus 优先保持原生 Vue 与手写 CSS 的轻量结构；若开发者选择引入组件库，必须说明理由，且不得让组件库配置占据主要开发工作。
 
-### 7.2 初版视觉基线：参考兄弟项目 sibling-project
+### 7.2 初版视觉基线：参考轻量级兄弟项目
 
 框架阶段的页面风格参考只读兄弟项目：
 
-- `sibling-project/frontend/src/App.vue`
-- `sibling-project/frontend/src/styles.css`
+- 兄弟项目的 `frontend/src/App.vue`
+- 兄弟项目的 `frontend/src/styles.css`
 
 参考的是设计语言和交互密度，不复制 RAG 的项目、文档、检索等业务组件。初版建议沿用：
 
@@ -260,7 +259,7 @@ API 返回使用稳定的 Pydantic schema。前端类型应从 OpenAPI 生成，
 - hover、selected、focus状态保持轻微颜色和边框变化，不添加无意义的大幅动画。
 - 在窄屏下改为单列，按钮和状态行自然换行。
 
-可将以下 sibling-project CSS变量作为临时起点，但应在 Urus 自己的样式文件中重新定义，不让两个项目产生运行时依赖：
+可将以下视觉变量作为临时起点，但应在 Urus 自己的样式文件中重新定义，不让两个项目产生运行时依赖：
 
 ```css
 :root {
@@ -440,4 +439,4 @@ Anomalo 已有：
 - 根目录README，包含安装、启动、测试、构建和环境变量说明。
 - 一份简短的实现说明，列出实际目录、关键技术选择、已知限制和下一阶段接入点。
 
-不要修改`strategy-discussion.md`中的策略结论；如实现与本文冲突，应先报告冲突，不自行扩大范围。
+不要自行扩大本文未覆盖的策略范围；如实现与公开设计文档冲突，应先报告冲突。

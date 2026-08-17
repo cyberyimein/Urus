@@ -112,7 +112,7 @@ def test_opend_close_returns_when_sdk_close_blocks() -> None:
 def test_opend_adapter_normalises_snapshot_and_daily_summary() -> None:
     quote_context = FakeQuoteContext()
     adapter = OpenDMarketAdapter(
-        "opend-host",
+        "127.0.0.1",
         11111,
         history_days=20,
         sdk=FakeSdk(),
@@ -313,7 +313,7 @@ def test_opend_adapter_reports_unreachable_endpoint_without_sdk_retry(monkeypatc
         raise ConnectionRefusedError("connection refused")
 
     monkeypatch.setattr("app.integrations.moomoo.socket.create_connection", refused)
-    adapter = OpenDMarketAdapter("opend-host", 11111, sdk=UnusedSdk())
+    adapter = OpenDMarketAdapter("127.0.0.1", 11111, sdk=UnusedSdk())
 
     try:
         adapter.market_card("QQQ")
