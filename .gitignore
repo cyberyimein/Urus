@@ -18,3 +18,10 @@ frontend/dist/
 frontend/.vite/
 
 .DS_Store
+
+# Local browser automation artifacts and runtime logs.
+.playwright-cli/
+*.log
+
+# Internal strategy working notes; keep them out of public history.
+strategy-discussion.md
