@@ -9,6 +9,7 @@ from app.models import (
     InstrumentAnalysisBatchModel,
     InstrumentDailyBarModel,
     InstrumentSnapshotModel,
+    DailyBarModel,
     OptionAnalysisBatchModel,
     OptionContractSnapshotModel,
     OptionExpirationAnalysisModel,
@@ -177,6 +178,7 @@ def test_normalized_option_inputs_and_profile_are_saved_with_snapshot(tmp_path) 
         assert session.scalar(select(func.count()).select_from(InstrumentAnalysisBatchModel)) == 1
         assert session.scalar(select(func.count()).select_from(InstrumentSnapshotModel)) == 1
         assert session.scalar(select(func.count()).select_from(InstrumentDailyBarModel)) == 1
+        assert session.scalar(select(func.count()).select_from(DailyBarModel)) == 1
         batch = session.scalar(select(InstrumentAnalysisBatchModel))
         assert batch is not None and batch.feature_version == "technical_v3"
 

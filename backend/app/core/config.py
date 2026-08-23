@@ -57,6 +57,10 @@ class Settings(BaseSettings):
     options_risk_free_rate_percent: float = 4.0
     options_dividend_yield_percent: float = 0.0
     moomoo_history_days: int = 260
+    # Minimum completed daily bars required before a chart/evidence package is
+    # considered ready for strategy evaluation.  Keep this independent from
+    # the provider fetch window so another collector can satisfy the contract.
+    daily_min_history_bars: int = 260
     moomoo_sdk_home: str = "data/moomoo_home"
     moomoo_market_symbols: str = (
         "QQQ,SPY,IWM,DIA,RSP,SMH,SOXX,IGV,HYG,LQD,TLT,IEF,UUP,GLD,USO"

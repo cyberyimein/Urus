@@ -1,6 +1,10 @@
 import pytest
 
-from app.analytics.technical import calculate_relative_strength, calculate_technical_indicators
+from app.analytics.technical import (
+    calculate_relative_strength,
+    calculate_technical_indicators,
+    calculate_technical_series,
+)
 
 
 def _bars(count: int = 30) -> list[dict[str, object]]:
@@ -231,6 +235,21 @@ def test_daily_technical_indicators_include_extended_windows() -> None:
     assert result["moving_average"]["200d"] is not None
     assert result["realized_volatility_10d"]["sample_count"] == 10
     assert result["realized_volatility_60d"]["sample_count"] == 60
+
+
+def test_daily_technical_series_aligns_chart_points_to_input_bars() -> None:
+    bars = [{**bar, "volume": 1000.0} for bar in _bars(60)]
+
+    result = calculate_technical_series(bars, source="test_history")
+    by_id = {item["series_id"]: item for item in result["series"]}
+
+    assert result["available"] is True
+    assert result["sample_count"] == 60
+    assert len(by_id["close"]["points"]) == 60
+    assert by_id["close"]["points"][-1] == {"time": "2026-07-60", "value": 159.0}
+    assert by_id["ma20"]["points"][18]["value"] is None
+    assert by_id["ma20"]["points"][19]["value"] == 109.5
+    assert by_id["rsi14"]["bounds"]["reference_lines"] == [30, 50, 70]
 
 
 def test_relative_strength_aligns_returns_and_calculates_beta() -> None:

@@ -202,6 +202,203 @@ def calculate_technical_indicators(
     return result
 
 
+def calculate_technical_series(
+    bars: Sequence[Mapping[str, Any]],
+    *,
+    source: str,
+) -> dict[str, object]:
+    """Return aligned P0 chart series from completed daily bars.
+
+    The latest-value calculator above remains the source for strategy facts.
+    This function deliberately only creates display series, using the same
+    windows and Wilder/EMA definitions so a chart cannot drift from the
+    values shown in the technical payload.
+    """
+
+    clean_bars = _clean_bars(bars)
+    closes = [float(item["close"]) for item in clean_bars]
+    volumes = [
+        float(item["volume"]) if isinstance(item.get("volume"), (int, float)) else None
+        for item in clean_bars
+    ]
+    dates = [str(item["date"]) for item in clean_bars]
+
+    def points(values: Sequence[float | None]) -> list[dict[str, object]]:
+        return [
+            {"time": day, "value": round(value, 6) if value is not None else None}
+            for day, value in zip(dates, values, strict=True)
+        ]
+
+    def rolling_mean(values: Sequence[float], window: int) -> list[float | None]:
+        return [
+            fmean(values[index - window + 1 : index + 1]) if index + 1 >= window else None
+            for index in range(len(values))
+        ]
+
+    moving_averages = {
+        f"ma{window}": rolling_mean(closes, window)
+        for window in (10, 20, 50, 100, 200)
+    }
+    volume_values = [value if value is not None else 0.0 for value in volumes]
+    series: list[dict[str, object]] = [
+        {
+            "series_id": "close",
+            "pane": "price",
+            "kind": "line",
+            "unit": "price",
+            "points": points(closes),
+        },
+        *[
+            {
+                "series_id": series_id,
+                "pane": "price",
+                "kind": "line",
+                "unit": "price",
+                "points": points(values),
+            }
+            for series_id, values in moving_averages.items()
+        ],
+        {
+            "series_id": "volume",
+            "pane": "volume",
+            "kind": "bar",
+            "unit": "shares",
+            "points": points(volumes),
+        },
+        {
+            "series_id": "volume_ma20",
+            "pane": "volume",
+            "kind": "line",
+            "unit": "shares",
+            "points": points(rolling_mean(volume_values, 20)),
+        },
+    ]
+
+    bollinger_upper: list[float | None] = []
+    bollinger_middle: list[float | None] = []
+    bollinger_lower: list[float | None] = []
+    bollinger_width: list[float | None] = []
+    for index, close in enumerate(closes):
+        if index + 1 < 20:
+            bollinger_upper.append(None)
+            bollinger_middle.append(None)
+            bollinger_lower.append(None)
+            bollinger_width.append(None)
+            continue
+        window = closes[index - 19 : index + 1]
+        middle = fmean(window)
+        deviation = pstdev(window)
+        upper = middle + 2 * deviation
+        lower = middle - 2 * deviation
+        bollinger_upper.append(upper)
+        bollinger_middle.append(middle)
+        bollinger_lower.append(lower)
+        bollinger_width.append((upper - lower) / middle * 100 if middle else None)
+    series.extend(
+        [
+            {
+                "series_id": "bollinger_upper_20_2",
+                "pane": "price",
+                "kind": "line",
+                "unit": "price",
+                "points": points(bollinger_upper),
+            },
+            {
+                "series_id": "bollinger_middle_20",
+                "pane": "price",
+                "kind": "line",
+                "unit": "price",
+                "points": points(bollinger_middle),
+            },
+            {
+                "series_id": "bollinger_lower_20_2",
+                "pane": "price",
+                "kind": "line",
+                "unit": "price",
+                "points": points(bollinger_lower),
+            },
+            {
+                "series_id": "bollinger_bandwidth_20",
+                "pane": "volatility",
+                "kind": "line",
+                "unit": "percent",
+                "points": points(bollinger_width),
+            },
+        ]
+    )
+
+    rsi_values = _wilder_rsi_series(closes, RSI_WINDOW)
+    series.append(
+        {
+            "series_id": "rsi14",
+            "pane": "momentum",
+            "kind": "line",
+            "unit": "index",
+            "bounds": {"min": 0, "max": 100, "reference_lines": [30, 50, 70]},
+            "points": points(rsi_values),
+        }
+    )
+
+    fast = _ema_series(closes, MACD_FAST_WINDOW)
+    slow = _ema_series(closes, MACD_SLOW_WINDOW)
+    dif: list[float | None] = [
+        fast[index] - slow[index]
+        if fast[index] is not None and slow[index] is not None
+        else None
+        for index in range(len(closes))
+    ]
+    valid_dif = [value for value in dif if value is not None]
+    dea: list[float | None] = [None] * len(closes)
+    if len(valid_dif) >= MACD_SIGNAL_WINDOW:
+        first = next(index for index, value in enumerate(dif) if value is not None)
+        current = fmean(valid_dif[:MACD_SIGNAL_WINDOW])
+        dea[first + MACD_SIGNAL_WINDOW - 1] = current
+        alpha = 2 / (MACD_SIGNAL_WINDOW + 1)
+        for offset, value in enumerate(valid_dif[MACD_SIGNAL_WINDOW:], start=MACD_SIGNAL_WINDOW):
+            current = (value - current) * alpha + current
+            dea[first + offset] = current
+    histogram = [
+        dif[index] - dea[index]
+        if dif[index] is not None and dea[index] is not None
+        else None
+        for index in range(len(closes))
+    ]
+    series.extend(
+        [
+            {
+                "series_id": "macd_dif_12_26",
+                "pane": "momentum",
+                "kind": "line",
+                "unit": "price",
+                "points": points(dif),
+            },
+            {
+                "series_id": "macd_dea_9",
+                "pane": "momentum",
+                "kind": "line",
+                "unit": "price",
+                "points": points(dea),
+            },
+            {
+                "series_id": "macd_histogram",
+                "pane": "momentum",
+                "kind": "histogram",
+                "unit": "price",
+                "points": points(histogram),
+            },
+        ]
+    )
+
+    return {
+        "available": bool(clean_bars),
+        "quality_status": "ok" if clean_bars else "unavailable",
+        "source": source,
+        "as_of": dates[-1] if dates else None,
+        "sample_count": len(clean_bars),
+        "series": series,
+    }
+
+
 def _calculate_rsi(
     closes: list[float],
     *,

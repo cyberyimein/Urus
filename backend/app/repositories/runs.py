@@ -21,6 +21,7 @@ from app.models import (
     SnapshotModel,
     StepRunModel,
 )
+from app.repositories.daily_evidence import DailyEvidenceRepository
 
 
 class RunRepository:
@@ -194,6 +195,7 @@ class RunRepository:
         persistence_payload: dict[str, Any] | None,
         instrument_payload: dict[str, Any] | None = None,
         instrument_persistence_payload: dict[str, Any] | None = None,
+        market_timezone: str = "America/New_York",
     ) -> SnapshotModel:
         """Atomically save the read model and normalized option inputs/analytics."""
         snapshot = SnapshotModel(
@@ -226,6 +228,12 @@ class RunRepository:
                     persisted_at=created_at,
                     instrument_payload=instrument_payload,
                     persistence_payload=instrument_persistence_payload,
+                )
+                DailyEvidenceRepository(self.session).sync_legacy_snapshot_bars(
+                    instrument_persistence_payload,
+                    source="moomoo_opend_history",
+                    market_timezone=market_timezone,
+                    collected_at=created_at,
                 )
             self.session.commit()
         except Exception:

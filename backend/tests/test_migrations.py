@@ -22,6 +22,10 @@ def test_empty_database_can_migrate(tmp_path: Path) -> None:
         "alembic_version",
         "forecast_experiences",
         "capital_flow_daily",
+        "daily_bars",
+        "daily_indicator_snapshots",
+        "daily_decision_datasets",
+        "decision_chart_projections",
     }.issubset(
         set(inspector.get_table_names())
     )
@@ -34,6 +38,9 @@ def test_empty_database_can_migrate(tmp_path: Path) -> None:
     assert {"cached_prompt_tokens", "cache_write_tokens"}.issubset(
         {column["name"] for column in inspector.get_columns("ai_model_turns")}
     )
+    assert "bar_completion_policy" in {
+        column["name"] for column in inspector.get_columns("daily_decision_datasets")
+    }
     experience_columns = {
         column["name"]: column
         for column in inspector.get_columns("forecast_experiences")

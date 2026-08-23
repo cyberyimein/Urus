@@ -37,6 +37,10 @@ from app.models import (  # noqa: F401
     StepRunModel,
     StrategyResearchDatasetModel,
     ReportDisplayProjectionModel,
+    DailyBarModel,
+    DailyIndicatorSnapshotModel,
+    DailyDecisionDatasetModel,
+    DecisionChartProjectionModel,
 )
 
 config = context.config

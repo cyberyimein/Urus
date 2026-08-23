@@ -35,6 +35,12 @@ from app.models.runtime_settings import RuntimeSettingsModel
 from app.models.universe import InstrumentUniverseItemModel, InstrumentUniverseVersionModel
 from app.models.strategy import StrategyResearchDatasetModel
 from app.models.report_display import ReportDisplayProjectionModel
+from app.models.daily_evidence import (
+    DailyBarModel,
+    DailyDecisionDatasetModel,
+    DailyIndicatorSnapshotModel,
+    DecisionChartProjectionModel,
+)
 
 __all__ = [
     "RunModel",
@@ -71,4 +77,8 @@ __all__ = [
     "ForecastExperienceModel",
     "CapitalFlowDailyModel",
     "ReportDisplayProjectionModel",
+    "DailyBarModel",
+    "DailyIndicatorSnapshotModel",
+    "DailyDecisionDatasetModel",
+    "DecisionChartProjectionModel",
 ]

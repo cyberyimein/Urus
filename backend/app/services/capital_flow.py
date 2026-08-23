@@ -38,6 +38,27 @@ def latest_completed_session_date(cutoff_time: datetime, calendar_name: str) -> 
     return candidate.date()
 
 
+def is_trading_session_date(target_date: date, calendar_name: str) -> bool:
+    """Return whether ``target_date`` is an official exchange session."""
+
+    calendar = _calendar(calendar_name)
+    try:
+        session = calendar.date_to_session(target_date, direction="none")
+    except Exception:
+        return False
+    return session.date() == target_date
+
+
+def trading_session_dates(start_date: date, end_date: date, calendar_name: str) -> list[date]:
+    """Return official exchange sessions in an inclusive date range."""
+
+    if start_date > end_date:
+        return []
+    calendar = _calendar(calendar_name)
+    sessions = calendar.sessions_in_range(start_date.isoformat(), end_date.isoformat())
+    return [session.date() for session in sessions]
+
+
 def completed_session_dates(
     cutoff_time: datetime, calendar_name: str, *, count: int
 ) -> list[date]:

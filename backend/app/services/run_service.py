@@ -371,6 +371,7 @@ class RunService:
                     if instrument_persistence_payload
                     else None
                 ),
+                market_timezone=self.settings.market_timezone,
             )
 
             # The normalized option tables are committed before this point.

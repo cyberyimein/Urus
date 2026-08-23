@@ -50,6 +50,10 @@ from app.models import (  # noqa: F401 - register ORM tables
     InstrumentUniverseVersionModel,
     StrategyResearchDatasetModel,
     ReportDisplayProjectionModel,
+    DailyBarModel,
+    DailyIndicatorSnapshotModel,
+    DailyDecisionDatasetModel,
+    DecisionChartProjectionModel,
 )
 from app.repositories.runs import RunRepository
 from app.repositories.runtime_settings import RuntimeSettingsRepository, apply_payload
