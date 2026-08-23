@@ -12,6 +12,8 @@ import type {
   DailyDecisionDataset,
   DailyEvidenceResponse,
   DecisionChartProjection,
+  DeterministicSynthesis,
+  StrategyDecision,
 } from '@/types/dailyEvidence'
 
 type LayerKey = 'ma20' | 'ma50' | 'ma200' | 'bollinger' | 'volume' | 'rsi' | 'macd' | 'relative'
@@ -28,6 +30,9 @@ const error = ref('')
 const demoReason = ref('')
 const dataset = ref<DailyDecisionDataset | null>(null)
 const projection = ref<DecisionChartProjection | null>(null)
+const strategyDecisions = ref<StrategyDecision[]>([])
+const deterministicSynthesis = ref<DeterministicSynthesis>({})
+const activeStrategy = ref<string | null>(null)
 const aiNotice = ref('')
 const showTechnicalDetails = ref(false)
 const layers = reactive<Record<LayerKey, boolean>>({
@@ -124,6 +129,44 @@ const qualityState = computed(() => {
 const sourceLabel = computed(() => dataset.value?.bar_manifest?.find((item) => item.symbol === selectedSymbol.value)?.source ?? 'daily_bars')
 const firstWarning = computed(() => quality.value?.warnings?.[0] ?? dataset.value?.quality?.warnings?.[0] ?? '')
 const latestIndicatorSnapshot = computed(() => projection.value?.instruments?.[selectedSymbol.value]?.indicator_snapshot_id ?? null)
+const symbolStrategyDecisions = computed(() => strategyDecisions.value.filter((item) => item.scope.symbol === selectedSymbol.value))
+const activeStrategyDecision = computed(() => symbolStrategyDecisions.value.find((item) => item.strategy.name === activeStrategy.value) ?? null)
+const synthesisLabel = computed(() => {
+  const labels: Record<string, string> = {
+    aligned: '方向一致',
+    mixed: '信号混合',
+    conflicted: '策略冲突',
+    no_signal: '暂无信号',
+    insufficient_data: '数据不足',
+  }
+  return labels[deterministicSynthesis.value.consensus_state ?? ''] ?? '等待策略'
+})
+const synthesisTone = computed(() => {
+  const state = deterministicSynthesis.value.consensus_state
+  if (state === 'aligned') return 'positive'
+  if (state === 'conflicted' || state === 'insufficient_data') return 'negative'
+  if (state === 'mixed') return 'warning'
+  return 'neutral'
+})
+const synthesisActionLabel = computed(() => {
+  const labels: Record<string, string> = { prioritize: '优先观察', watch: '等待确认', avoid: '回避', wait: '等待', no_action: '不行动' }
+  return labels[deterministicSynthesis.value.suggested_action ?? ''] ?? '—'
+})
+const strategyNameLabels: Record<string, string> = {
+  trend_momentum_v1: '趋势动量',
+  mean_reversion_v1: '均值回归',
+  breakout_volume_v1: '突破量能',
+  relative_strength_rotation_v1: '相对强弱轮动',
+  quality_left_side_reversal_v1: '优质资产左侧反转',
+}
+const strategyActionLabels: Record<string, string> = {
+  prioritize: '优先观察',
+  watch: '观察',
+  wait: '等待',
+  avoid: '回避',
+  no_action: '不行动',
+}
+const strategyStanceLabels: Record<string, string> = { bullish: '偏多', bearish: '偏空', neutral: '中性', insufficient_data: '不可用' }
 
 function formatPrice(value: number | null | undefined) {
   if (value === null || value === undefined || !Number.isFinite(value)) return '—'
@@ -133,6 +176,10 @@ function formatPrice(value: number | null | undefined) {
 function formatPercent(value: number | null | undefined) {
   if (value === null || value === undefined || !Number.isFinite(value)) return '—'
   return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`
+}
+
+function formatAtrDistance(value: number | null | undefined) {
+  return value === null || value === undefined || !Number.isFinite(value) ? '—' : `${value.toFixed(2)} ATR`
 }
 
 function formatHash(value: string | null | undefined) {
@@ -159,6 +206,7 @@ function chooseSymbol(symbol: string) {
   selectedSymbol.value = normalized
   symbolDraft.value = normalized
   cursorIndex.value = null
+  activeStrategy.value = null
   router.replace({ name: 'instrument-decision', params: { symbol: normalized } }).catch(() => undefined)
   void loadEvidence()
 }
@@ -194,10 +242,16 @@ async function loadEvidence() {
 function applyResponse(response: DailyEvidenceResponse) {
   dataset.value = response.dataset
   projection.value = response.chart
+  strategyDecisions.value = response.strategy_decisions ?? []
+  deterministicSynthesis.value = response.deterministic_synthesis ?? {}
+}
+
+function selectStrategy(strategyName: string) {
+  activeStrategy.value = activeStrategy.value === strategyName ? null : strategyName
 }
 
 function showAiPlaceholder() {
-  aiNotice.value = '当前只完成 Phase A 证据冻结；AI 执行会通过 Anomalo Workflow 接口接入，不在 Urus 本地伪造结果。'
+  aiNotice.value = 'Phase B 确定性策略已完成；AI 仲裁仍由后续 Anomalo Workflow 接入，当前不会在 Urus 本地伪造结果。'
 }
 
 function closeAiNotice() {
@@ -335,7 +389,7 @@ function buildDemoResponse(symbol: string): DailyEvidenceResponse {
     quality,
     content_sha256: 'local-demo-chart',
   }
-  return { dataset: demoDataset, chart: demoChart }
+  return { dataset: demoDataset, chart: demoChart, strategy_decisions: [], deterministic_synthesis: {} }
 }
 
 onMounted(() => {
@@ -424,7 +478,7 @@ onMounted(() => {
         </section>
 
         <section class="decision-content-grid">
-          <DecisionChartWorkspace v-model:cursor-index="cursorIndex" :projection="projection" :symbol="selectedSymbol" :range="range" :layers="layers" />
+          <DecisionChartWorkspace v-model:cursor-index="cursorIndex" :projection="projection" :symbol="selectedSymbol" :range="range" :layers="layers" :strategy-filter="activeStrategy" />
 
           <aside class="decision-insight-rail">
             <article class="insight-card read-card">
@@ -437,9 +491,28 @@ onMounted(() => {
             </article>
 
             <article class="insight-card handoff-card">
-              <div class="insight-card-head"><div><span class="section-kicker">STRATEGY LAYER</span><h2>算法建议</h2></div><span class="phase-chip small">PHASE B</span></div>
-              <p class="handoff-copy">Phase A 只负责把完整日 K 和技术事实冻结好。策略 Registry 接入后，RSI、趋势、突破等算法会在这里分别给出建议。</p>
-              <div class="strategy-placeholder"><span class="placeholder-mark">+</span><div><strong>等待 Strategy Registry</strong><small>不会把 RSI 数字伪装成买卖信号</small></div></div>
+              <div class="insight-card-head"><div><span class="section-kicker">STRATEGY LAYER</span><h2>算法建议</h2></div><span class="phase-chip small">{{ symbolStrategyDecisions.length }} STRATEGIES</span></div>
+              <div class="synthesis-panel" :data-tone="synthesisTone">
+                <div><span>DETERMINISTIC SYNTHESIS</span><strong>{{ synthesisLabel }}</strong></div>
+                <b>{{ synthesisActionLabel }}</b>
+              </div>
+              <p class="synthesis-summary">{{ deterministicSynthesis.conflict_summary || '策略会读取同一份冻结日 K，独立输出方向、风险和确认条件。' }}</p>
+              <div v-if="symbolStrategyDecisions.length" class="strategy-decision-list">
+                <div v-for="decision in symbolStrategyDecisions" :key="decision.decision_id" class="strategy-decision-row" :class="{ active: activeStrategy === decision.strategy.name }" :data-status="decision.status" :data-tone="decision.stance === 'bullish' ? 'positive' : decision.stance === 'bearish' ? 'negative' : 'neutral'" role="button" tabindex="0" @click="selectStrategy(decision.strategy.name)" @keydown.enter.prevent="selectStrategy(decision.strategy.name)" @keydown.space.prevent="selectStrategy(decision.strategy.name)">
+                  <div class="strategy-decision-head"><span><i></i><strong>{{ strategyNameLabels[decision.strategy.name] ?? decision.strategy.name }}</strong></span><b>{{ strategyActionLabels[decision.action] ?? decision.action }}</b></div>
+                  <p>{{ decision.reasons[0]?.detail ?? '当前没有额外解释。' }}</p>
+                  <small>{{ strategyStanceLabels[decision.stance] ?? decision.stance }} · score {{ decision.score ?? '—' }} · {{ decision.setup_progress.stage }}</small>
+                </div>
+              </div>
+              <div v-if="activeStrategyDecision" class="strategy-detail">
+                <div class="strategy-detail-head"><span>SELECTED STRATEGY</span><strong>{{ strategyNameLabels[activeStrategyDecision.strategy.name] ?? activeStrategyDecision.strategy.name }}</strong></div>
+                <div class="strategy-detail-progress"><b>{{ activeStrategyDecision.setup_progress.stage }}</b><span>确认距 {{ formatAtrDistance(activeStrategyDecision.setup_progress.confirmation_distance_atr) }}</span><span>失效距 {{ formatAtrDistance(activeStrategyDecision.setup_progress.invalidation_distance_atr) }}</span></div>
+                <p>{{ activeStrategyDecision.risks[0] ?? '当前没有额外风险说明。' }}</p>
+                <p><em>确认</em>{{ activeStrategyDecision.confirmation_conditions[0] ?? '暂无确认条件。' }}</p>
+                <p><em>失效</em>{{ activeStrategyDecision.invalidation_conditions[0] ?? '暂无失效条件。' }}</p>
+                <small>HORIZON {{ activeStrategyDecision.horizon.value }} {{ activeStrategyDecision.horizon.unit }} · {{ activeStrategyDecision.evidence_refs.length }} EVIDENCE REFS</small>
+              </div>
+              <div v-if="!symbolStrategyDecisions.length" class="strategy-placeholder"><span class="placeholder-mark">—</span><div><strong>策略暂不可用</strong><small>LOCAL DEMO 或数据尚未通过策略质量 Gate</small></div></div>
             </article>
 
             <article class="insight-card ai-card">
@@ -471,7 +544,7 @@ onMounted(() => {
             </div>
             <div class="manifest-grid">
               <div><span>BAR WINDOW</span><strong>{{ dataset?.bar_manifest?.find((item) => item.symbol === selectedSymbol)?.start_date ?? '—' }} → {{ dataset?.bar_manifest?.find((item) => item.symbol === selectedSymbol)?.end_date ?? '—' }}</strong></div>
-              <div><span>FEATURE VERSION</span><strong>technical_v4</strong></div>
+              <div><span>FEATURE VERSION</span><strong>technical_v5</strong></div>
               <div><span>INDICATOR SNAPSHOT</span><strong>{{ formatHash(latestIndicatorSnapshot) }}</strong></div>
               <div><span>COMPLETION POLICY</span><strong>official close only</strong></div>
             </div>
@@ -486,7 +559,7 @@ onMounted(() => {
             <div class="decision-checklist">
               <div><span class="checklist-index">01</span><div><strong>趋势结构</strong><p>价格与 MA20 / MA50 的关系</p></div><em>{{ trend.label }}</em></div>
               <div><span class="checklist-index">02</span><div><strong>动量状态</strong><p>RSI 与 MACD 是否形成确认</p></div><em>{{ momentum.label }}</em></div>
-              <div><span class="checklist-index">03</span><div><strong>策略确认</strong><p>触发位、失效位与风险边界</p></div><em>Phase B 待接入</em></div>
+              <div><span class="checklist-index">03</span><div><strong>策略综合</strong><p>全部策略方向与冲突状态</p></div><em>{{ synthesisLabel }}</em></div>
             </div>
             <RouterLink class="text-link" to="/research">查看历史研究库 →</RouterLink>
           </article>

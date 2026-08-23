@@ -18,7 +18,9 @@ from app.decision_harness.contracts import (
     hash_bars,
     normalise_symbol,
 )
+from app.decision_harness.strategies import StrategyRegistry
 from app.repositories.daily_evidence import DailyEvidenceRepository
+from app.repositories.strategy_decisions import StrategyDecisionRepository
 from app.services.capital_flow import (
     is_trading_session_date,
     latest_completed_session_date,
@@ -33,6 +35,8 @@ class DailyMarketEvidenceService:
         self.session = session
         self.settings = settings
         self.repository = DailyEvidenceRepository(session)
+        self.strategy_repository = StrategyDecisionRepository(session)
+        self.strategy_registry = StrategyRegistry()
         self.market_timezone = settings.market_timezone
         self.calendar_name = settings.market_calendar
         self.minimum_history_bars = max(20, int(getattr(settings, "daily_min_history_bars", 260)))
@@ -132,6 +136,16 @@ class DailyMarketEvidenceService:
             benchmark_symbols=benchmarks,
             quality=quality,
         )
+        decisions, synthesis = self.strategy_registry.evaluate(dataset_payload, chart_payload)
+        saved_decisions, saved_synthesis = self.strategy_repository.save_bundle(
+            dataset_id=dataset.id,
+            scope=scope,
+            strategy_set_sha256=self.strategy_registry.strategy_set_sha256,
+            decisions=decisions,
+            synthesis=synthesis,
+            created_at=utc_now(),
+        )
+        chart_payload = self.strategy_registry.with_overlays(chart_payload, saved_decisions)
         chart_digest = content_sha256({key: value for key, value in chart_payload.items() if key != "content_sha256"})
         chart_payload["content_sha256"] = chart_digest
         chart = self.repository.save_chart(
@@ -145,7 +159,9 @@ class DailyMarketEvidenceService:
         self.session.commit()
         return {
             "dataset": dict(dataset.payload_json),
-            "chart": dict(chart.payload_json),
+            "chart": chart_payload if chart.content_sha256 != chart_digest else dict(chart.payload_json),
+            "strategy_decisions": saved_decisions,
+            "deterministic_synthesis": saved_synthesis,
         }
 
     def refresh_missing_bars(
@@ -236,7 +252,24 @@ class DailyMarketEvidenceService:
 
     def get_chart(self, dataset_id: str) -> dict[str, Any] | None:
         model = self.repository.chart(dataset_id)
-        return dict(model.payload_json) if model is not None else None
+        if model is None:
+            return None
+        payload = dict(model.payload_json)
+        decisions, _ = self.strategy_repository.bundle(dataset_id)
+        if decisions:
+            payload = self.strategy_registry.with_overlays(payload, decisions)
+            payload["content_sha256"] = content_sha256(
+                {key: value for key, value in payload.items() if key != "content_sha256"}
+            )
+        return payload
+
+    def get_strategy_bundle(self, dataset_id: str) -> dict[str, Any]:
+        decisions, synthesis = self.strategy_repository.bundle(dataset_id)
+        return {
+            "dataset_id": dataset_id,
+            "strategy_decisions": decisions,
+            "deterministic_synthesis": synthesis,
+        }
 
     def _build_symbol_evidence(
         self,
@@ -363,6 +396,8 @@ class DailyMarketEvidenceService:
                     (name, chart_instruments[name])
                     for name in benchmark_symbols
                     if chart_instruments.get(name, {}).get("bars")
+                    and chart_instruments.get(name, {}).get("quality", {}).get("status")
+                    not in {"missing", "conflicted"}
                 ),
                 None,
             )

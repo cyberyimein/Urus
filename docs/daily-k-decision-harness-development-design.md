@@ -628,14 +628,17 @@ evaluate(Daily Decision Dataset, Decision Scope) -> Strategy Decision[]
 
 ### 8.2 第一批策略
 
-建议第一批实现四个完整 Strategy Adapter：
+Phase B 首批实现五个完整 Strategy Adapter：
 
 1. `trend_momentum_v1`：均线结构、趋势、MACD、相对强弱和成交量确认；
 2. `mean_reversion_v1`：偏离、RSI、Bollinger、ATR 和反转确认；
 3. `breakout_volume_v1`：20/60 日突破、波动收缩、成交量和失败突破；
 4. `relative_strength_rotation_v1`：相对 benchmark、组内排名和持续性。
+5. `quality_left_side_reversal_v1`：面向现金股票的复合左侧反转策略；以研究范围和流动性作为可执行资格 Gate，联合 RSI12、缺口/成交密集支撑区、Beta 调整相对强弱与量价确认，输出 `ineligible | no_setup | watching | armed | confirmed | invalidated` 状态。
 
 `rsi14_context` 保留为指标 Module 或上述策略的输入，不单独作为“RSI 低就买”的浅层策略。
+
+`quality_left_side_reversal_v1` 不包含期权执行或订单能力。当前日 K 证据只能验证研究范围、流动性和技术结构，不能从 OHLCV 推导护城河或基本面反转；因此 Strategy Decision 必须持续暴露“基本面资格仍需人工或后续基本面快照确认”的风险，不得把用户加入观察范围解释为基本面已通过。
 
 ### 8.3 策略运行规则
 

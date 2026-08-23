@@ -41,3 +41,13 @@ class DailyEvidenceResponse(BaseModel):
 
     dataset: dict[str, Any]
     chart: dict[str, Any]
+    strategy_decisions: list[dict[str, Any]] = Field(default_factory=list)
+    deterministic_synthesis: dict[str, Any] = Field(default_factory=dict)
+
+
+class StrategyBundleResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dataset_id: str
+    strategy_decisions: list[dict[str, Any]]
+    deterministic_synthesis: dict[str, Any]

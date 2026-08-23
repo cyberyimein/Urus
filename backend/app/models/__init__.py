@@ -41,6 +41,7 @@ from app.models.daily_evidence import (
     DailyIndicatorSnapshotModel,
     DecisionChartProjectionModel,
 )
+from app.models.strategy_decision import DeterministicSynthesisModel, StrategyDecisionModel
 
 __all__ = [
     "RunModel",
@@ -81,4 +82,6 @@ __all__ = [
     "DailyIndicatorSnapshotModel",
     "DailyDecisionDatasetModel",
     "DecisionChartProjectionModel",
+    "StrategyDecisionModel",
+    "DeterministicSynthesisModel",
 ]

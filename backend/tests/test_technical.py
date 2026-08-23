@@ -55,6 +55,8 @@ def test_daily_technical_indicators_include_required_metadata() -> None:
     assert result["rsi14"]["available"] is True
     assert result["rsi14"]["value"] == 100.0
     assert result["rsi14"]["state"] == "overbought"
+    assert result["rsi12"]["available"] is True
+    assert result["rsi12"]["window"] == 12
 
 
 def test_rsi_context_distinguishes_confirmed_breakout_from_automatic_sell_signal() -> None:
@@ -250,6 +252,7 @@ def test_daily_technical_series_aligns_chart_points_to_input_bars() -> None:
     assert by_id["ma20"]["points"][18]["value"] is None
     assert by_id["ma20"]["points"][19]["value"] == 109.5
     assert by_id["rsi14"]["bounds"]["reference_lines"] == [30, 50, 70]
+    assert by_id["rsi12"]["bounds"]["reference_lines"] == [30, 50, 70]
 
 
 def test_relative_strength_aligns_returns_and_calculates_beta() -> None:

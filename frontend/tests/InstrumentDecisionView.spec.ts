@@ -29,7 +29,7 @@ describe('InstrumentDecisionView', () => {
     expect(wrapper.text()).toContain('LOCAL DEMO')
     expect(wrapper.text()).toContain('当前事实')
     expect(wrapper.text()).toContain('AI 决策')
-    expect(wrapper.text()).toContain('不会把 RSI 数字伪装成买卖信号')
+    expect(wrapper.text()).toContain('策略会读取同一份冻结日 K')
     expect(wrapper.text()).toContain('美股大盘')
     expect(wrapper.text()).toContain('半导体')
     expect(wrapper.text()).toContain('本次分析证据')

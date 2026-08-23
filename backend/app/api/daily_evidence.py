@@ -10,7 +10,11 @@ from app.core.config import Settings
 from app.core.errors import AppError
 from app.decision_harness.market_evidence import DailyMarketEvidenceService
 from app.integrations.moomoo import OpenDMarketAdapter
-from app.schemas.daily_evidence import DailyDatasetCreateRequest, DailyEvidenceResponse
+from app.schemas.daily_evidence import (
+    DailyDatasetCreateRequest,
+    DailyEvidenceResponse,
+    StrategyBundleResponse,
+)
 
 
 router = APIRouter(prefix="/daily-evidence", tags=["daily-evidence"])
@@ -78,3 +82,26 @@ def get_daily_chart_projection(
     if payload is None:
         raise AppError("找不到 Decision Chart Projection", code="daily_chart_not_found", status_code=404)
     return payload
+
+
+@router.get(
+    "/datasets/{dataset_id}/strategies",
+    response_model=StrategyBundleResponse,
+)
+def get_daily_strategy_bundle(
+    dataset_id: str,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> StrategyBundleResponse:
+    service = DailyMarketEvidenceService(db, settings)
+    dataset = service.get_dataset(dataset_id)
+    if dataset is None:
+        raise AppError("找不到 Daily Decision Dataset", code="daily_dataset_not_found", status_code=404)
+    payload = service.get_strategy_bundle(dataset_id)
+    if not payload["strategy_decisions"] and not payload["deterministic_synthesis"]:
+        raise AppError(
+            "该数据集尚未生成 Strategy Decision",
+            code="strategy_bundle_not_found",
+            status_code=404,
+        )
+    return StrategyBundleResponse(**payload)

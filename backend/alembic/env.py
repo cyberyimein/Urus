@@ -41,6 +41,8 @@ from app.models import (  # noqa: F401
     DailyIndicatorSnapshotModel,
     DailyDecisionDatasetModel,
     DecisionChartProjectionModel,
+    StrategyDecisionModel,
+    DeterministicSynthesisModel,
 )
 
 config = context.config

@@ -8,7 +8,7 @@ from typing import Any
 
 DAILY_DATASET_SCHEMA = "urus.daily_decision_dataset.v1"
 CHART_PROJECTION_SCHEMA = "urus.decision_chart_projection.v1"
-FEATURE_VERSION = "technical_v4"
+FEATURE_VERSION = "technical_v5"
 BAR_COMPLETION_POLICY = "official_exchange_close_only_v1"
 SUPPORTED_SCOPE_TYPES = {"instrument", "group", "observation_run"}
 

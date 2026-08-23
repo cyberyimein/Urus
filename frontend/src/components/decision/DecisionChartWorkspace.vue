@@ -11,6 +11,7 @@ const props = withDefaults(defineProps<{
   range?: RangeKey
   layers?: Record<string, boolean>
   cursorIndex?: number | null
+  strategyFilter?: string | null
 }>(), {
   range: '6M',
   layers: () => ({
@@ -24,6 +25,7 @@ const props = withDefaults(defineProps<{
     relative: true,
   }),
   cursorIndex: undefined,
+  strategyFilter: null,
 })
 
 const emit = defineEmits<{
@@ -95,6 +97,11 @@ const priceBounds = computed(() => {
       if (value !== null) values.push(value)
     }
   }
+  for (const overlay of props.projection?.overlays ?? []) {
+    if (overlay.symbol === props.symbol && typeof overlay.price === 'number') values.push(overlay.price)
+    if (overlay.symbol === props.symbol && typeof overlay.lower_price === 'number') values.push(overlay.lower_price)
+    if (overlay.symbol === props.symbol && typeof overlay.upper_price === 'number') values.push(overlay.upper_price)
+  }
   if (!values.length) return { min: 0, max: 1 }
   const min = Math.min(...values)
   const max = Math.max(...values)
@@ -121,6 +128,11 @@ const rsiY = (value: number) => momentumTop + momentumHeight - (value / 100) * m
 const macdY = (value: number) => momentumTop + momentumHeight - (value - macdValues.value.min) / (macdValues.value.max - macdValues.value.min) * momentumHeight
 const relativeY = (value: number) => relativeTop + relativeHeight - (value - 80) / 40 * relativeHeight
 
+function xForTime(value: unknown): number {
+  const index = bars.value.findIndex((bar) => bar.date === String(value ?? ''))
+  return index >= 0 ? xForIndex(index) : left + plotWidth
+}
+
 const priceTicks = computed(() => {
   const result: Array<{ value: number; y: number; label: string }> = []
   for (let index = 0; index < 5; index += 1) {
@@ -131,11 +143,34 @@ const priceTicks = computed(() => {
   return result
 })
 
+const visibleOverlays = computed(() => (props.projection?.overlays ?? []).filter((item) => item.symbol === props.symbol))
+const activeStrategySeriesIds = computed(() => {
+  const result = new Set<string>()
+  if (!props.strategyFilter) return result
+  for (const overlay of visibleOverlays.value) {
+    if (overlay.strategy_name !== props.strategyFilter || overlay.kind !== 'series_highlight') continue
+    if (!Array.isArray(overlay.series_ids)) continue
+    for (const seriesId of overlay.series_ids) {
+      if (typeof seriesId === 'string') result.add(seriesId)
+    }
+  }
+  return result
+})
+
+function hasActiveStrategySeries(prefix: string): boolean {
+  return [...activeStrategySeriesIds.value].some((seriesId) => seriesId.startsWith(prefix))
+}
+
+const bollingerActive = computed(() => props.layers.bollinger || hasActiveStrategySeries('bollinger_'))
+const rsiActive = computed(() => props.layers.rsi || hasActiveStrategySeries('rsi'))
+const macdActive = computed(() => props.layers.macd || hasActiveStrategySeries('macd_'))
+const relativeActive = computed(() => props.layers.relative || hasActiveStrategySeries('relative_performance'))
+
 const visibleSeries = computed(() => series.value.filter((item) => {
   if (item.series_id === 'ma20') return props.layers.ma20
   if (item.series_id === 'ma50') return props.layers.ma50
   if (item.series_id === 'ma200') return props.layers.ma200
-  if (item.series_id.startsWith('bollinger_')) return props.layers.bollinger
+  if (item.series_id.startsWith('bollinger_')) return bollingerActive.value
   if (item.series_id === 'volume' || item.series_id === 'volume_ma20') return false
   if (item.series_id === 'rsi14') return false
   if (item.series_id.startsWith('macd_')) return false
@@ -143,9 +178,14 @@ const visibleSeries = computed(() => series.value.filter((item) => {
   return false
 }))
 
-const rsiSeries = computed(() => props.layers.rsi ? seriesById.value.rsi14 : undefined)
-const macdSeries = computed(() => props.layers.macd ? series.value.filter((item) => item.series_id.startsWith('macd_')) : [])
-const relativeSeries = computed(() => props.layers.relative ? series.value.find((item) => item.series_id.startsWith('relative_performance')) : undefined)
+const rsiSeries = computed(() => {
+  if (!rsiActive.value) return undefined
+  const selectedRsi = [...activeStrategySeriesIds.value].find((seriesId) => seriesId.startsWith('rsi'))
+  return seriesById.value[selectedRsi ?? 'rsi14']
+})
+const macdSeries = computed(() => macdActive.value ? series.value.filter((item) => item.series_id.startsWith('macd_')) : [])
+const relativeSeries = computed(() => relativeActive.value ? series.value.find((item) => item.series_id.startsWith('relative_performance')) : undefined)
+const visibleStateSegments = computed(() => (props.projection?.state_segments ?? []).filter((item) => item.symbol === props.symbol))
 
 function linePath(item: ChartSeries | undefined, yScale: (value: number) => number): string {
   if (!item) return ''
@@ -165,7 +205,7 @@ function linePath(item: ChartSeries | undefined, yScale: (value: number) => numb
 }
 
 const bollingerAreaPath = computed(() => {
-  if (!props.layers.bollinger) return ''
+  if (!bollingerActive.value) return ''
   const upper = seriesById.value.bollinger_upper_20_2
   const lower = seriesById.value.bollinger_lower_20_2
   if (!upper || !lower) return ''
@@ -245,8 +285,8 @@ function histogramColor(bar: DailyBar): string {
         <span v-if="props.layers.ma20"><i class="legend-line ma20"></i> MA20</span>
         <span v-if="props.layers.ma50"><i class="legend-line ma50"></i> MA50</span>
         <span v-if="props.layers.ma200"><i class="legend-line ma200"></i> MA200</span>
-        <span v-if="props.layers.bollinger"><i class="legend-line bollinger"></i> Bollinger</span>
-        <span v-if="props.layers.relative"><i class="legend-line relative"></i> Relative</span>
+        <span v-if="bollingerActive"><i class="legend-line bollinger"></i> Bollinger</span>
+        <span v-if="relativeActive"><i class="legend-line relative"></i> Relative</span>
       </div>
       <button class="chart-latest-button" type="button" @click="setCursorToLatest">回到最新</button>
     </div>
@@ -281,7 +321,17 @@ function histogramColor(bar: DailyBar): string {
           <rect :x="xForIndex(index) - candleWidth / 2" :y="Math.min(priceY(bar.open), priceY(bar.close))" :width="candleWidth" :height="Math.max(1.2, Math.abs(priceY(bar.close) - priceY(bar.open)))" :class="bar.close >= bar.open ? 'candle-body-up' : 'candle-body-down'" />
         </g>
       </g>
-      <path v-for="item in visibleSeries" :key="item.series_id" :d="linePath(item, priceY)" class="chart-line" :class="`series-${item.series_id}`" :stroke="seriesColor(item.series_id)" />
+      <path v-for="item in visibleSeries" :key="item.series_id" :d="linePath(item, priceY)" class="chart-line" :class="[`series-${item.series_id}`, { 'series-strategy-highlight': activeStrategySeriesIds.has(item.series_id) }]" :stroke="seriesColor(item.series_id)" />
+      <g v-if="visibleOverlays.length" class="strategy-overlay-layer">
+        <g v-for="overlay in visibleOverlays" :key="String(overlay.overlay_id)" :class="{ 'strategy-overlay-dim': Boolean(props.strategyFilter && overlay.strategy_name !== props.strategyFilter) }">
+          <title>{{ overlay.strategy_name }} v{{ overlay.strategy_version }} · {{ overlay.stance }} · {{ overlay.action }} · {{ overlay.label }}{{ overlay.reason ? ` · ${overlay.reason}` : '' }}</title>
+          <rect v-if="overlay.kind === 'price_zone' && typeof overlay.lower_price === 'number' && typeof overlay.upper_price === 'number'" :x="xForTime(overlay.start_time)" :y="priceY(Number(overlay.upper_price))" :width="Math.max(1, xForTime(overlay.end_time) - xForTime(overlay.start_time))" :height="Math.max(1, priceY(Number(overlay.lower_price)) - priceY(Number(overlay.upper_price)))" :class="[`strategy-overlay-zone`, `strategy-overlay-${String(overlay.tone ?? 'neutral')}`]" />
+          <line v-if="typeof overlay.price === 'number' && !['trigger_marker', 'evidence_marker'].includes(String(overlay.kind))" :x1="xForTime(overlay.start_time)" :x2="xForTime(overlay.end_time)" :y1="priceY(Number(overlay.price))" :y2="priceY(Number(overlay.price))" :class="[`strategy-overlay-${String(overlay.tone ?? 'neutral')}`, `strategy-overlay-kind-${String(overlay.kind ?? 'marker')}`]" />
+          <circle v-if="typeof overlay.price === 'number' && ['trigger_marker', 'evidence_marker'].includes(String(overlay.kind))" :cx="xForTime(overlay.start_time)" :cy="priceY(Number(overlay.price))" :r="String(overlay.kind) === 'trigger_marker' ? 4.5 : 3" :class="`strategy-overlay-${String(overlay.tone ?? 'neutral')}`" />
+          <text v-if="typeof overlay.price === 'number'" :x="xForTime(overlay.start_time) + 7" :y="priceY(Number(overlay.price)) - 4">{{ overlay.label }}</text>
+          <text v-else-if="overlay.kind === 'price_zone' && typeof overlay.upper_price === 'number'" :x="xForTime(overlay.start_time) + 7" :y="priceY(Number(overlay.upper_price)) - 4">{{ overlay.label }}</text>
+        </g>
+      </g>
 
       <g v-if="props.layers.volume" class="volume-layer">
         <rect v-for="(bar, index) in bars" :key="`volume-${bar.date}`" :x="xForIndex(index) - candleWidth / 2" :y="volumeY(bar.volume)" :width="candleWidth" :height="Math.max(1, volumeTop + volumeHeight - volumeY(bar.volume))" :class="bar.close >= bar.open ? 'volume-up' : 'volume-down'" />
@@ -290,23 +340,23 @@ function histogramColor(bar: DailyBar): string {
 
       <g v-if="rsiSeries" class="rsi-layer">
         <line v-for="level in [30, 50, 70]" :key="`rsi-${level}`" :x1="left" :x2="left + plotWidth" :y1="rsiY(level)" :y2="rsiY(level)" class="rsi-reference" />
-        <path :d="linePath(rsiSeries, rsiY)" class="rsi-line" />
+        <path :d="linePath(rsiSeries, rsiY)" class="rsi-line" :class="{ 'series-strategy-highlight': activeStrategySeriesIds.has(rsiSeries.series_id) }" />
       </g>
       <g v-if="macdSeries.length" class="macd-layer">
         <line :x1="left" :x2="left + plotWidth" :y1="macdY(0)" :y2="macdY(0)" class="macd-zero" />
         <rect v-for="(bar, index) in bars" :key="`macd-${bar.date}`" :x="xForIndex(index) - candleWidth / 2" :y="Math.min(macdY(0), macdY(valueFor('macd_histogram', bar) ?? 0))" :width="candleWidth" :height="Math.max(1, Math.abs(macdY(valueFor('macd_histogram', bar) ?? 0) - macdY(0)))" :fill="histogramColor(bar)" class="macd-histogram" />
-        <path :d="linePath(seriesById.macd_dif_12_26, macdY)" class="macd-dif" />
-        <path :d="linePath(seriesById.macd_dea_9, macdY)" class="macd-dea" />
+        <path :d="linePath(seriesById.macd_dif_12_26, macdY)" class="macd-dif" :class="{ 'series-strategy-highlight': activeStrategySeriesIds.has('macd_dif_12_26') }" />
+        <path :d="linePath(seriesById.macd_dea_9, macdY)" class="macd-dea" :class="{ 'series-strategy-highlight': activeStrategySeriesIds.has('macd_dea_9') }" />
       </g>
       <g v-if="relativeSeries" class="relative-layer">
         <line :x1="left" :x2="left + plotWidth" :y1="relativeY(100)" :y2="relativeY(100)" class="relative-reference" />
-        <path :d="linePath(relativeSeries, relativeY)" class="relative-line" />
+        <path :d="linePath(relativeSeries, relativeY)" class="relative-line" :class="{ 'series-strategy-highlight': activeStrategySeriesIds.has(relativeSeries.series_id) }" />
       </g>
 
       <g class="chart-axis-labels">
         <text v-for="tick in priceTicks" :key="`price-label-${tick.value}`" :x="width - 4" :y="tick.y + 3" text-anchor="end">{{ tick.label }}</text>
         <text :x="left" :y="volumeTop - 10">VOLUME</text>
-        <text :x="left" :y="momentumTop - 10">{{ props.layers.macd ? 'MACD' : props.layers.rsi ? 'RSI 14' : props.layers.relative ? 'RELATIVE' : 'MOMENTUM' }}</text>
+        <text :x="left" :y="momentumTop - 10">{{ macdActive ? 'MACD' : rsiSeries ? rsiSeries.series_id.toUpperCase() : relativeActive ? 'RELATIVE' : 'MOMENTUM' }}</text>
         <text v-if="relativeSeries" :x="left" :y="relativeTop - 8">RELATIVE STRENGTH · QQQ</text>
         <text v-for="label in dateLabels" :key="`date-label-${label.label}`" :x="label.x" :y="height - 12" text-anchor="middle">{{ label.label }}</text>
       </g>
@@ -328,6 +378,10 @@ function histogramColor(bar: DailyBar): string {
       <span><i class="status-dot"></i> 已完成日 K · {{ bars.length }} bars</span>
       <span v-if="latestBar">As of {{ latestBar.date }} · {{ formatPrice(latestBar.close) }}</span>
       <span v-if="cursorBar && activeCursorIndex !== bars.length - 1">光标 {{ cursorBar.date }}</span>
+    </div>
+    <div v-if="visibleStateSegments.length" class="chart-state-strip" aria-label="策略状态时间带">
+      <span class="chart-state-label">STRATEGY STATE</span>
+      <span v-for="segment in visibleStateSegments" :key="String(segment.segment_id)" class="chart-state-segment" :class="{ 'chart-state-segment-dim': Boolean(props.strategyFilter && segment.strategy_name !== props.strategyFilter) }" :data-state="String(segment.state)">{{ segment.label }} · {{ segment.start_time }}</span>
     </div>
   </section>
 </template>

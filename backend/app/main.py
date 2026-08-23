@@ -54,6 +54,8 @@ from app.models import (  # noqa: F401 - register ORM tables
     DailyIndicatorSnapshotModel,
     DailyDecisionDatasetModel,
     DecisionChartProjectionModel,
+    StrategyDecisionModel,
+    DeterministicSynthesisModel,
 )
 from app.repositories.runs import RunRepository
 from app.repositories.runtime_settings import RuntimeSettingsRepository, apply_payload

@@ -123,4 +123,78 @@ export interface DecisionChartProjection {
 export interface DailyEvidenceResponse {
   dataset: DailyDecisionDataset
   chart: DecisionChartProjection
+  strategy_decisions: StrategyDecision[]
+  deterministic_synthesis: DeterministicSynthesis
+}
+
+export type StrategyStance = 'bullish' | 'bearish' | 'neutral' | 'insufficient_data' | string
+export type StrategyAction = 'prioritize' | 'watch' | 'wait' | 'avoid' | 'no_action' | string
+
+export interface StrategyDecision {
+  schema_version: string
+  decision_id: string
+  dataset_id: string
+  scope: {
+    scope_type: string
+    scope_id: string
+    scope_version?: number | null
+    symbol: string
+  }
+  strategy: {
+    name: string
+    version: string
+    implementation_sha256: string
+  }
+  status: 'ok' | 'not_applicable' | 'error' | string
+  stance: StrategyStance
+  action: StrategyAction
+  horizon: { unit: string; value: number }
+  score: number | null
+  score_scale: [number, number]
+  confidence: number | null
+  confidence_type: string
+  setup_progress: {
+    stage: string
+    stage_since: string | null
+    confirmation_distance_atr: number | null
+    invalidation_distance_atr: number | null
+    bars_in_stage: number
+    changed_from_previous_stage: boolean | null
+  }
+  reasons: Array<{ code: string; detail: string }>
+  risks: string[]
+  confirmation_conditions: string[]
+  invalidation_conditions: string[]
+  visual_anchors: Array<Record<string, unknown>>
+  evidence_refs: Array<Record<string, unknown>>
+  quality: DailyInstrumentQuality
+  generated_at: string
+  content_sha256: string
+  strategy_set_sha256?: string
+}
+
+export interface DeterministicSynthesis {
+  schema_version?: string
+  dataset_id?: string
+  scope?: DailyDecisionDataset['scope']
+  strategy_set_sha256?: string
+  consensus_state?: string
+  bullish_count?: number
+  bearish_count?: number
+  neutral_count?: number
+  not_applicable_count?: number
+  error_count?: number
+  strongest_supporting_strategy_ids?: string[]
+  strongest_conflicting_strategy_ids?: string[]
+  suggested_action?: StrategyAction
+  conflict_summary?: string
+  strategy_set?: Array<Record<string, string>>
+  generated_at?: string
+  content_sha256?: string
+}
+
+export interface StrategyBundleResponse {
+  dataset_id: string
+  strategy_decisions: StrategyDecision[]
+  deterministic_synthesis: DeterministicSynthesis
 }

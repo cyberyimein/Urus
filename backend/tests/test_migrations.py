@@ -26,6 +26,8 @@ def test_empty_database_can_migrate(tmp_path: Path) -> None:
         "daily_indicator_snapshots",
         "daily_decision_datasets",
         "decision_chart_projections",
+        "strategy_decisions",
+        "deterministic_syntheses",
     }.issubset(
         set(inspector.get_table_names())
     )

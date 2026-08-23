@@ -15,6 +15,7 @@ MACD_FAST_WINDOW = 12
 MACD_SLOW_WINDOW = 26
 MACD_SIGNAL_WINDOW = 9
 RSI_WINDOW = 14
+LEFT_SIDE_RSI_WINDOW = 12
 VOLUME_WINDOW = 20
 VOLUME_SURGE_RATIO = 1.5
 VOLUME_DRY_RATIO = 0.8
@@ -167,6 +168,14 @@ def calculate_technical_indicators(
     )
     result["rsi14"] = rsi14
     warnings.extend(str(item) for item in rsi14.get("warnings", []))
+    rsi12 = _calculate_rsi(
+        closes,
+        window=LEFT_SIDE_RSI_WINDOW,
+        as_of=as_of,
+        source=source,
+    )
+    result["rsi12"] = rsi12
+    warnings.extend(str(item) for item in rsi12.get("warnings", []))
     volume_effort_result = _calculate_volume_effort_result(
         clean_bars,
         atr14=atr14_value,
@@ -194,6 +203,7 @@ def calculate_technical_indicators(
         "bollinger_20_2",
         "bollinger_20_3",
         "rsi14",
+        "rsi12",
     }
     result["sample_count"] = len(clean_bars)
     result["available"] = available_keys.issubset(result)
@@ -327,17 +337,18 @@ def calculate_technical_series(
         ]
     )
 
-    rsi_values = _wilder_rsi_series(closes, RSI_WINDOW)
-    series.append(
-        {
-            "series_id": "rsi14",
-            "pane": "momentum",
-            "kind": "line",
-            "unit": "index",
-            "bounds": {"min": 0, "max": 100, "reference_lines": [30, 50, 70]},
-            "points": points(rsi_values),
-        }
-    )
+    for window in (LEFT_SIDE_RSI_WINDOW, RSI_WINDOW):
+        rsi_values = _wilder_rsi_series(closes, window)
+        series.append(
+            {
+                "series_id": f"rsi{window}",
+                "pane": "momentum",
+                "kind": "line",
+                "unit": "index",
+                "bounds": {"min": 0, "max": 100, "reference_lines": [30, 50, 70]},
+                "points": points(rsi_values),
+            }
+        )
 
     fast = _ema_series(closes, MACD_FAST_WINDOW)
     slow = _ema_series(closes, MACD_SLOW_WINDOW)

@@ -24,7 +24,12 @@ import type {
 } from '@/types/research'
 import type { RuntimeSettingsResponse, RuntimeSettingsUpdate } from '@/types/settings'
 import type { UniverseResponse, UniverseUpdate } from '@/types/universe'
-import type { DailyEvidenceResponse, DecisionChartProjection, DailyDecisionDataset } from '@/types/dailyEvidence'
+import type {
+  DailyEvidenceResponse,
+  DecisionChartProjection,
+  DailyDecisionDataset,
+  StrategyBundleResponse,
+} from '@/types/dailyEvidence'
 
 // Local Vite serves `/api` through the dev proxy, which keeps browser requests
 // same-origin and avoids loopback cross-port restrictions. Deployments can
@@ -159,4 +164,6 @@ export const api = {
     request<DailyDecisionDataset>(`/daily-evidence/datasets/${encodeURIComponent(datasetId)}`),
   getDailyChart: (datasetId: string) =>
     request<DecisionChartProjection>(`/daily-evidence/datasets/${encodeURIComponent(datasetId)}/chart`),
+  getDailyStrategies: (datasetId: string) =>
+    request<StrategyBundleResponse>(`/daily-evidence/datasets/${encodeURIComponent(datasetId)}/strategies`),
 }
