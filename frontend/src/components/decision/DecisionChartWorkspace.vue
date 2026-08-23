@@ -223,17 +223,17 @@ function formatVolume(value: number | null): string {
 }
 
 function seriesColor(seriesId: string): string {
-  if (seriesId === 'ma20') return '#c47a50'
-  if (seriesId === 'ma50') return '#b64f38'
-  if (seriesId === 'ma200') return '#a68e79'
-  if (seriesId.startsWith('bollinger')) return '#a68e79'
-  if (seriesId.startsWith('relative')) return '#c05c43'
-  return '#d4c0aa'
+  if (seriesId === 'ma20') return '#f6c344'
+  if (seriesId === 'ma50') return '#42a5f5'
+  if (seriesId === 'ma200') return '#ab47bc'
+  if (seriesId.startsWith('bollinger')) return '#90a4ae'
+  if (seriesId.startsWith('relative')) return '#ff8a65'
+  return '#c7d1d8'
 }
 
 function histogramColor(bar: DailyBar): string {
   const value = valueFor('macd_histogram', bar)
-  return value !== null && value >= 0 ? '#c47a50' : '#db6552'
+  return value !== null && value >= 0 ? '#26a69a' : '#ef5350'
 }
 </script>
 
@@ -260,11 +260,11 @@ function histogramColor(bar: DailyBar): string {
     <svg v-else class="decision-chart" :viewBox="`0 0 ${width} ${height}`" role="img" :aria-label="`${props.symbol} 日 K 图表`" @mousemove="onPointer" @mouseleave="setCursorToLatest">
       <defs>
         <linearGradient id="priceGlow" x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0" stop-color="#3b2921" stop-opacity=".34" />
-          <stop offset="1" stop-color="#160f0d" stop-opacity="0" />
+          <stop offset="0" stop-color="#2a3640" stop-opacity=".34" />
+          <stop offset="1" stop-color="#11161b" stop-opacity="0" />
         </linearGradient>
       </defs>
-      <rect x="0" y="0" :width="width" :height="height" fill="#160f0d" />
+      <rect x="0" y="0" :width="width" :height="height" fill="#11161b" />
       <rect :x="left" :y="priceTop" :width="plotWidth" :height="priceHeight" fill="url(#priceGlow)" />
 
       <g class="chart-grid">
