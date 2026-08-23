@@ -15,6 +15,7 @@ import type {
 } from '@/types/dailyEvidence'
 
 type LayerKey = 'ma20' | 'ma50' | 'ma200' | 'bollinger' | 'volume' | 'rsi' | 'macd' | 'relative'
+type WatchGroup = { id: string; name: string; benchmark: string; symbols: string[] }
 
 const router = useRouter()
 const route = useRoute()
@@ -40,7 +41,18 @@ const layers = reactive<Record<LayerKey, boolean>>({
   relative: true,
 })
 
-const watchlist = ['INTC', 'NVDA', 'LITE', 'COHR', 'AMD']
+const watchGroups: WatchGroup[] = [
+  { id: 'semiconductors', name: '半导体', benchmark: 'SOXX', symbols: ['INTC', 'NVDA', 'AMD'] },
+  { id: 'optical-modules', name: '光模块', benchmark: 'QQQ', symbols: ['LITE', 'COHR'] },
+]
+const expandedGroups = reactive<Record<string, boolean>>({ semiconductors: true, 'optical-modules': true })
+const watchlistCount = computed(() => watchGroups.reduce((count, group) => count + group.symbols.length, 0))
+const selectedGroup = computed<WatchGroup>(() => watchGroups.find((group) => group.symbols.includes(selectedSymbol.value)) ?? {
+  id: 'unassigned',
+  name: '未分组',
+  benchmark: 'QQQ',
+  symbols: [selectedSymbol.value],
+})
 const layerLabels: Array<{ key: LayerKey; label: string; short: string }> = [
   { key: 'ma20', label: 'MA20', short: '20' },
   { key: 'ma50', label: 'MA50', short: '50' },
@@ -135,9 +147,15 @@ function setRange(value: string) {
   if (value === '3M' || value === '6M' || value === '1Y' || value === 'ALL') range.value = value
 }
 
+function toggleWatchGroup(groupId: string) {
+  expandedGroups[groupId] = !expandedGroups[groupId]
+}
+
 function chooseSymbol(symbol: string) {
   const normalized = symbol.trim().toUpperCase()
   if (!normalized || normalized === selectedSymbol.value) return
+  const group = watchGroups.find((item) => item.symbols.includes(normalized))
+  if (group) expandedGroups[group.id] = true
   selectedSymbol.value = normalized
   symbolDraft.value = normalized
   cursorIndex.value = null
@@ -332,17 +350,38 @@ onMounted(() => {
       <aside class="decision-scope-rail">
         <div class="rail-topline"><span class="rail-pulse"></span> EVIDENCE DESK</div>
         <div class="scope-block">
-          <span class="rail-label">DECISION SCOPE</span>
-          <button class="scope-button active" type="button"><strong>个股</strong><small>instrument / Phase A</small></button>
-          <button class="scope-button disabled" type="button" disabled><strong>观察组</strong><small>group / Phase C</small></button>
-          <button class="scope-button disabled" type="button" disabled><strong>收市运行</strong><small>observation / Phase C</small></button>
+          <span class="rail-label">DECISION PATH</span>
+          <div class="scope-path" aria-label="大盘、板块、个股三级决策路径">
+            <div class="scope-level">
+              <span class="scope-level-index">01</span>
+              <span class="scope-level-copy"><small>MARKET</small><strong>美股大盘</strong><em>SPY · QQQ</em></span>
+            </div>
+            <div class="scope-level ancestor">
+              <span class="scope-level-index">02</span>
+              <span class="scope-level-copy"><small>SECTOR</small><strong>{{ selectedGroup.name }}</strong><em>{{ selectedGroup.benchmark }} · {{ selectedGroup.symbols.length }} stocks</em></span>
+            </div>
+            <div class="scope-level current">
+              <span class="scope-level-index">03</span>
+              <span class="scope-level-copy"><small>INSTRUMENT</small><strong>{{ selectedSymbol }}</strong><em>日 K · Phase A</em></span>
+            </div>
+          </div>
         </div>
         <div class="rail-divider"></div>
-        <div class="scope-block">
-          <div class="rail-section-title"><span class="rail-label">WATCHLIST</span><span class="rail-count">{{ watchlist.length }}</span></div>
-          <button v-for="symbol in watchlist" :key="symbol" class="watch-symbol" :class="{ active: symbol === selectedSymbol }" type="button" @click="chooseSymbol(symbol)">
-            <span class="watch-symbol-dot"></span><strong>{{ symbol }}</strong><small>{{ symbol === selectedSymbol ? 'OPEN' : 'VIEW' }}</small>
-          </button>
+        <div class="watchlist-block">
+          <div class="rail-section-title"><span class="rail-label">SECTOR WATCHLIST</span><span class="rail-count">{{ watchGroups.length }} / {{ watchlistCount }}</span></div>
+          <div class="watch-groups">
+            <section v-for="group in watchGroups" :key="group.id" class="watch-group">
+              <button class="watch-group-toggle" :class="{ active: group.id === selectedGroup.id }" type="button" :aria-expanded="expandedGroups[group.id]" @click="toggleWatchGroup(group.id)">
+                <span><strong>{{ group.name }}</strong><small>{{ group.benchmark }} benchmark</small></span>
+                <span class="watch-group-meta"><b>{{ group.symbols.length }}</b><i>{{ expandedGroups[group.id] ? '−' : '+' }}</i></span>
+              </button>
+              <div v-show="expandedGroups[group.id]" class="watch-symbol-list">
+                <button v-for="symbol in group.symbols" :key="symbol" class="watch-symbol" :class="{ active: symbol === selectedSymbol }" type="button" @click="chooseSymbol(symbol)">
+                  <span class="watch-symbol-dot"></span><strong>{{ symbol }}</strong><small>{{ symbol === selectedSymbol ? 'OPEN' : 'VIEW' }}</small>
+                </button>
+              </div>
+            </section>
+          </div>
         </div>
         <div class="rail-footer">
           <span class="phase-chip">PHASE A</span>
@@ -420,8 +459,15 @@ onMounted(() => {
         </section>
 
         <section class="evidence-footer-grid">
-          <article class="evidence-card">
-            <div class="evidence-card-head"><div><span class="section-kicker">EVIDENCE MANIFEST</span><h2>这张图从哪里来</h2></div><span class="hash-label">SHA-256 {{ formatHash(dataset?.content_sha256) }}</span></div>
+          <article class="evidence-card evidence-version-card">
+            <div class="evidence-card-head">
+              <div><span class="section-kicker">EVIDENCE VERSION</span><h2>本次分析证据</h2><p>锁定行情窗口、指标版本和收市规则，保证后续策略与 AI 使用同一份输入。</p></div>
+              <span class="evidence-state" :data-tone="qualityState.tone"><i></i>{{ dataset?.status === 'ok' ? 'FROZEN' : dataset?.status?.toUpperCase() ?? 'WAITING' }}</span>
+            </div>
+            <div class="evidence-identity">
+              <div><span>DATASET ID</span><strong>{{ dataset?.dataset_id ?? '—' }}</strong></div>
+              <span class="hash-label">SHA-256 {{ formatHash(dataset?.content_sha256) }}</span>
+            </div>
             <div class="manifest-grid">
               <div><span>BAR WINDOW</span><strong>{{ dataset?.bar_manifest?.find((item) => item.symbol === selectedSymbol)?.start_date ?? '—' }} → {{ dataset?.bar_manifest?.find((item) => item.symbol === selectedSymbol)?.end_date ?? '—' }}</strong></div>
               <div><span>FEATURE VERSION</span><strong>technical_v4</strong></div>
@@ -434,9 +480,13 @@ onMounted(() => {
             </div>
           </article>
           <article class="reading-guide">
-            <span class="section-kicker">HUMAN READING ORDER</span>
-            <h2>先找变化，再看数字</h2>
-            <ol><li><b>趋势</b><span>价格与 MA20 / MA50 的位置</span></li><li><b>动量</b><span>RSI 与 MACD 是否同步</span></li><li><b>确认</b><span>等待策略层给出确认/失效位</span></li></ol>
+            <div class="reading-guide-head"><div><span class="section-kicker">DECISION CHECKLIST</span><h2>决策检查清单</h2></div><span>3 STEPS</span></div>
+            <p class="reading-guide-intro">把图表事实整理成进入策略层前的三个检查点。</p>
+            <div class="decision-checklist">
+              <div><span class="checklist-index">01</span><div><strong>趋势结构</strong><p>价格与 MA20 / MA50 的关系</p></div><em>{{ trend.label }}</em></div>
+              <div><span class="checklist-index">02</span><div><strong>动量状态</strong><p>RSI 与 MACD 是否形成确认</p></div><em>{{ momentum.label }}</em></div>
+              <div><span class="checklist-index">03</span><div><strong>策略确认</strong><p>触发位、失效位与风险边界</p></div><em>Phase B 待接入</em></div>
+            </div>
             <RouterLink class="text-link" to="/research">查看历史研究库 →</RouterLink>
           </article>
         </section>
