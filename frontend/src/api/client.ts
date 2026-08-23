@@ -24,6 +24,7 @@ import type {
 } from '@/types/research'
 import type { RuntimeSettingsResponse, RuntimeSettingsUpdate } from '@/types/settings'
 import type { UniverseResponse, UniverseUpdate } from '@/types/universe'
+import type { DailyEvidenceResponse, DecisionChartProjection, DailyDecisionDataset } from '@/types/dailyEvidence'
 
 // Local Vite serves `/api` through the dev proxy, which keeps browser requests
 // same-origin and avoids loopback cross-port restrictions. Deployments can
@@ -141,4 +142,21 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({}),
     }),
+  createDailyDataset: (requestBody: {
+    scope_type: 'instrument' | 'group' | 'observation_run'
+    scope_id: string
+    scope_version?: number | null
+    symbols: string[]
+    benchmark_symbols?: string[]
+    trading_date?: string
+    cutoff_time?: string
+  }) =>
+    request<DailyEvidenceResponse>('/daily-evidence/datasets', {
+      method: 'POST',
+      body: JSON.stringify(requestBody),
+    }),
+  getDailyDataset: (datasetId: string) =>
+    request<DailyDecisionDataset>(`/daily-evidence/datasets/${encodeURIComponent(datasetId)}`),
+  getDailyChart: (datasetId: string) =>
+    request<DecisionChartProjection>(`/daily-evidence/datasets/${encodeURIComponent(datasetId)}/chart`),
 }

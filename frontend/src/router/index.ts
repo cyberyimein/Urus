@@ -1,7 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
 import DashboardView from '@/views/DashboardView.vue'
-import HomeView from '@/views/HomeView.vue'
 import ManualAnalysisNewView from '@/views/ManualAnalysisNewView.vue'
 import ManualAnalysisRunView from '@/views/ManualAnalysisRunView.vue'
 import DatasetsView from '@/views/DatasetsView.vue'
@@ -13,11 +12,13 @@ import ResearchReportsView from '@/views/ResearchReportsView.vue'
 import ResearchReportView from '@/views/ResearchReportView.vue'
 import SettingsView from '@/views/SettingsView.vue'
 import UniverseSettingsView from '@/views/UniverseSettingsView.vue'
+import InstrumentDecisionView from '@/views/InstrumentDecisionView.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: '/', name: 'home', component: HomeView },
+    { path: '/', name: 'home', component: InstrumentDecisionView },
+    { path: '/instruments/:symbol', name: 'instrument-decision', component: InstrumentDecisionView },
     { path: '/analysis/new', name: 'manual-analysis-new', component: ManualAnalysisNewView },
     { path: '/analysis/runs/:runId', name: 'manual-analysis-run', component: ManualAnalysisRunView },
     { path: '/research', name: 'research', component: ResearchHomeView },
