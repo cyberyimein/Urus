@@ -34,6 +34,8 @@ describe('InstrumentDecisionView', () => {
     expect(wrapper.text()).toContain('半导体')
     expect(wrapper.text()).toContain('本次分析证据')
     expect(wrapper.text()).toContain('决策检查清单')
+    expect(wrapper.text()).not.toContain('日 K 决策工作台')
+    expect(wrapper.text()).not.toContain('先看完整事实，再看算法策略')
 
     const sectorGroups = wrapper.findAll('.watch-group-toggle')
     expect(sectorGroups).toHaveLength(2)

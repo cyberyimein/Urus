@@ -392,9 +392,8 @@ onMounted(() => {
       <main class="decision-main">
         <section class="decision-topline">
           <div class="decision-heading">
-            <div class="breadcrumb"><span>DAILY EVIDENCE</span><b>/</b><span>INSTRUMENT</span></div>
-            <div class="title-row"><h1>{{ selectedSymbol }}</h1><span class="title-suffix">日 K 决策工作台</span></div>
-            <p class="subtitle">先看完整事实，再看算法策略，最后由用户主动发起 AI 评估。</p>
+            <div class="breadcrumb"><span>美股大盘</span><b>/</b><span>{{ selectedGroup.name }}</span><b>/</b><span>{{ selectedSymbol }}</span></div>
+            <div class="title-row"><h1>{{ selectedSymbol }}</h1><span class="instrument-context">{{ selectedGroup.name }} · {{ selectedGroup.benchmark }}</span></div>
           </div>
           <div class="decision-actions">
             <div class="connection-state" :data-demo="demoReason ? 'demo' : 'api'"><i></i><span>{{ demoReason ? 'LOCAL DEMO' : 'EVIDENCE API' }}</span></div>
