@@ -348,6 +348,7 @@ onMounted(() => {
     <AppShell />
     <div class="decision-layout">
       <aside class="decision-scope-rail">
+        <div class="decision-scope-inner">
         <div class="rail-topline"><span class="rail-pulse"></span> EVIDENCE DESK</div>
         <div class="scope-block">
           <span class="rail-label">DECISION PATH</span>
@@ -386,6 +387,7 @@ onMounted(() => {
         <div class="rail-footer">
           <span class="phase-chip">PHASE A</span>
           <p>只读证据<br />不生成订单</p>
+        </div>
         </div>
       </aside>
 
