@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from sqlalchemy import create_engine, func, select
@@ -150,6 +150,7 @@ def test_daily_evidence_freezes_indicators_and_chart_projection_idempotently() -
         first_dataset = first["dataset"]
         first_chart = first["chart"]
         assert first_dataset["status"] == "ok"
+        assert first_dataset["quality"]["status"] == "ok"
         assert first_dataset["bar_completion_policy"] == "official_exchange_close_only_v1"
         assert first_dataset["quality"]["available_symbol_count"] == 1
         assert first_dataset["bar_manifest"][0]["bar_count"] == 260
@@ -168,6 +169,79 @@ def test_daily_evidence_freezes_indicators_and_chart_projection_idempotently() -
         assert session.scalar(select(func.count()).select_from(DailyIndicatorSnapshotModel)) == 2
         assert session.scalar(select(func.count()).select_from(DailyDecisionDatasetModel)) == 1
         assert session.scalar(select(func.count()).select_from(DecisionChartProjectionModel)) == 1
+
+
+def test_daily_evidence_does_not_use_bar_revisions_collected_after_cutoff() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    cutoff = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
+    session_dates = completed_session_dates(cutoff, "XNYS", count=20)
+    original = _fixture_bars("INTC", session_dates, 20.0)
+    revised = [dict(item) for item in original]
+    revised[-1].update(
+        {
+            "close": float(revised[-1]["close"]) + 10.0,
+            "high": float(revised[-1]["high"]) + 10.0,
+            "low": float(revised[-1]["low"]) + 10.0,
+            "open": float(revised[-1]["open"]) + 10.0,
+        }
+    )
+
+    with Session(engine) as session:
+        repository = DailyEvidenceRepository(session)
+        repository.upsert_bars(
+            original,
+            source="fixture",
+            collected_at=cutoff - timedelta(hours=1),
+        )
+        repository.upsert_bars(
+            revised,
+            source="fixture",
+            collected_at=cutoff + timedelta(hours=1),
+        )
+
+        result = _service(session, minimum_history_bars=20).freeze(
+            scope_type="instrument",
+            scope_id="INTC",
+            symbols=["INTC"],
+            trading_date=session_dates[-1],
+            cutoff_time=cutoff,
+        )
+
+        assert result["chart"]["price"]["bars"][-1]["close"] == original[-1]["close"]
+
+
+def test_daily_evidence_uses_the_next_available_benchmark() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    cutoff = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
+    session_dates = completed_session_dates(cutoff, "XNYS", count=20)
+
+    with Session(engine) as session:
+        repository = DailyEvidenceRepository(session)
+        repository.upsert_bars(
+            _fixture_bars("INTC", session_dates, 20.0),
+            source="fixture",
+            collected_at=cutoff,
+        )
+        repository.upsert_bars(
+            _fixture_bars("SPY", session_dates, 300.0),
+            source="fixture",
+            collected_at=cutoff,
+        )
+
+        result = _service(session, minimum_history_bars=20).freeze(
+            scope_type="instrument",
+            scope_id="INTC",
+            symbols=["INTC"],
+            benchmark_symbols=["QQQ", "SPY"],
+            trading_date=session_dates[-1],
+            cutoff_time=cutoff,
+        )
+
+        series_ids = {item["series_id"] for item in result["chart"]["series"]}
+        assert "relative_performance_vs_SPY" in series_ids
+        assert "relative_performance_vs_QQQ" not in series_ids
 
 
 def test_daily_evidence_marks_short_history_partial_and_rejects_non_session_date() -> None:

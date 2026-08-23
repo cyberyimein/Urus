@@ -283,7 +283,7 @@ function histogramColor(bar: DailyBar): string {
       </g>
       <path v-for="item in visibleSeries" :key="item.series_id" :d="linePath(item, priceY)" class="chart-line" :class="`series-${item.series_id}`" :stroke="seriesColor(item.series_id)" />
 
-      <g class="volume-layer">
+      <g v-if="props.layers.volume" class="volume-layer">
         <rect v-for="(bar, index) in bars" :key="`volume-${bar.date}`" :x="xForIndex(index) - candleWidth / 2" :y="volumeY(bar.volume)" :width="candleWidth" :height="Math.max(1, volumeTop + volumeHeight - volumeY(bar.volume))" :class="bar.close >= bar.open ? 'volume-up' : 'volume-down'" />
       </g>
       <path v-if="props.layers.volume" :d="linePath(seriesById.volume_ma20, volumeY)" class="volume-average" />

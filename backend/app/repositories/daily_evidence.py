@@ -8,7 +8,7 @@ from uuid import uuid4
 from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
-from app.core.time import utc_now
+from app.core.time import as_utc, utc_now
 from app.decision_harness.contracts import compact_bar, content_sha256, normalise_symbol
 from app.models.daily_evidence import (
     DailyBarModel,
@@ -149,6 +149,7 @@ class DailyEvidenceRepository:
         symbols: Iterable[str],
         *,
         through_date: date | None = None,
+        cutoff_time: datetime | None = None,
         source: str | None = None,
         adjustment: str = "QFQ",
     ) -> dict[str, list[DailyBarModel]]:
@@ -158,6 +159,8 @@ class DailyEvidenceRepository:
         filters = [DailyBarModel.symbol.in_(normalized)]
         if through_date is not None:
             filters.append(DailyBarModel.bar_date <= through_date)
+        if cutoff_time is not None:
+            filters.append(DailyBarModel.collected_at <= as_utc(cutoff_time))
         if source is not None:
             filters.append(DailyBarModel.source == source)
         filters.append(DailyBarModel.adjustment == adjustment.strip().upper())
@@ -182,23 +185,26 @@ class DailyEvidenceRepository:
         symbols: Iterable[str],
         *,
         through_date: date | None = None,
+        cutoff_time: datetime | None = None,
         market_timezone: str = "America/New_York",
     ) -> int:
-        """Backfill canonical rows from the newest existing 3A snapshot per symbol."""
+        """Backfill canonical rows from the newest point-in-time 3A snapshot per symbol."""
 
         normalized = list(dict.fromkeys(normalise_symbol(item) for item in symbols))
         if not normalized:
             return 0
-        statement = (
-            select(InstrumentSnapshotModel)
-            .where(InstrumentSnapshotModel.symbol.in_(normalized))
-            .order_by(InstrumentSnapshotModel.symbol.asc(), InstrumentSnapshotModel.captured_at.desc())
+        filters = [InstrumentSnapshotModel.symbol.in_(normalized)]
+        if cutoff_time is not None:
+            filters.append(InstrumentSnapshotModel.captured_at <= as_utc(cutoff_time))
+        statement = select(InstrumentSnapshotModel).where(and_(*filters)).order_by(
+            InstrumentSnapshotModel.symbol.asc(), InstrumentSnapshotModel.captured_at.desc()
         )
         latest: dict[str, InstrumentSnapshotModel] = {}
         for snapshot in self.session.scalars(statement):
             latest.setdefault(snapshot.symbol, snapshot)
-        rows: list[dict[str, Any]] = []
+        total = 0
         for symbol, snapshot in latest.items():
+            rows: list[dict[str, Any]] = []
             bars_statement = select(InstrumentDailyBarModel).where(
                 InstrumentDailyBarModel.instrument_snapshot_id == snapshot.id
             ).order_by(InstrumentDailyBarModel.bar_date.asc())
@@ -206,16 +212,16 @@ class DailyEvidenceRepository:
                 if through_date is not None and bar.bar_date > through_date:
                     continue
                 rows.append({"symbol": symbol, **compact_bar(bar)})
-        if not rows:
-            return 0
-        return len(
-            self.upsert_bars(
-                rows,
-                source="legacy_instrument_snapshot",
-                market_timezone=market_timezone,
-                collected_at=utc_now(),
-            )
-        )
+            if rows:
+                total += len(
+                    self.upsert_bars(
+                        rows,
+                        source="legacy_instrument_snapshot",
+                        market_timezone=market_timezone,
+                        collected_at=as_utc(snapshot.captured_at),
+                    )
+                )
+        return total
 
     def indicator(
         self,

@@ -75,6 +75,7 @@ class DailyMarketEvidenceService:
         self.repository.sync_legacy_for_symbols(
             all_symbols,
             through_date=target_date,
+            cutoff_time=cutoff,
             market_timezone=self.market_timezone,
         )
         collection = {"status": "not_requested", "fetched_symbols": [], "warnings": []}
@@ -82,9 +83,10 @@ class DailyMarketEvidenceService:
             collection = self.refresh_missing_bars(
                 all_symbols,
                 through_date=target_date,
+                cutoff_time=cutoff,
                 source_adapter=bar_source,
             )
-        grouped = self.repository.bars(all_symbols, through_date=target_date)
+        grouped = self.repository.bars(all_symbols, through_date=target_date, cutoff_time=cutoff)
         quality, manifests, indicator_ids, chart_instruments = self._build_symbol_evidence(
             grouped,
             requested_symbols=requested_symbols,
@@ -151,6 +153,7 @@ class DailyMarketEvidenceService:
         symbols: Iterable[str],
         *,
         through_date: date,
+        cutoff_time: datetime,
         source_adapter: Any,
     ) -> dict[str, Any]:
         """Fetch only symbols that cannot currently satisfy the daily contract.
@@ -162,7 +165,7 @@ class DailyMarketEvidenceService:
         """
 
         normalized = list(dict.fromkeys(normalise_symbol(item) for item in symbols))
-        current = self.repository.bars(normalized, through_date=through_date)
+        current = self.repository.bars(normalized, through_date=through_date, cutoff_time=cutoff_time)
         missing_symbols = [
             symbol
             for symbol in normalized
@@ -208,7 +211,7 @@ class DailyMarketEvidenceService:
             market_timezone=self.market_timezone,
             collected_at=utc_now(),
         )
-        refreshed = self.repository.bars(normalized, through_date=through_date)
+        refreshed = self.repository.bars(normalized, through_date=through_date, cutoff_time=cutoff_time)
         fetched = [
             symbol
             for symbol in missing_symbols
@@ -310,7 +313,7 @@ class DailyMarketEvidenceService:
                     "quality": quality_symbols[symbol],
                 }
         quality = {
-            "status": self._overall_status(quality_symbols),
+            "status": self._overall_status({"symbols": quality_symbols}),
             "symbols": quality_symbols,
             "requested_symbol_count": len(requested_symbols),
             "available_symbol_count": sum(
@@ -355,9 +358,19 @@ class DailyMarketEvidenceService:
         }
         for symbol, item in chart_instruments.items():
             series = list(item["technical_series"].get("series") or [])
-            benchmark = next((chart_instruments.get(name) for name in benchmark_symbols if name in chart_instruments), None)
-            if benchmark and benchmark.get("bars"):
-                series.append(self._relative_performance_series(item["bars"], benchmark["bars"], benchmark_symbols[0]))
+            benchmark_match = next(
+                (
+                    (name, chart_instruments[name])
+                    for name in benchmark_symbols
+                    if chart_instruments.get(name, {}).get("bars")
+                ),
+                None,
+            )
+            if benchmark_match:
+                benchmark_symbol, benchmark = benchmark_match
+                series.append(
+                    self._relative_performance_series(item["bars"], benchmark["bars"], benchmark_symbol)
+                )
             output["instruments"][symbol] = {
                 "symbol": symbol,
                 "price": {
