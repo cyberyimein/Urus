@@ -238,6 +238,8 @@ ENV_FILE=deploy/urus.container.env \
 - [`docs/implementation.md`](docs/implementation.md)：已落地实现和边界。
 - [`docs/market-data-sources.md`](docs/market-data-sources.md)：数据源与质量策略。
 - [`docs/stage4b-ai-decision.md`](docs/stage4b-ai-decision.md)：Stage 4B 决策流程。
+- [`docs/decision-ai-learning-loop-design.md`](docs/decision-ai-learning-loop-design.md)：第二种决策 AI 的可验证策略闭环设计。
+- [`docs/daily-k-decision-harness-development-design.md`](docs/daily-k-decision-harness-development-design.md)：日 K、策略、组决策、收市后观测和 Anomalo Workflow JSON 的开发规格。
 - [`docs/urus-agent-design-requirements.md`](docs/urus-agent-design-requirements.md)：Agent 工具边界和输出契约。
 
 ## License
