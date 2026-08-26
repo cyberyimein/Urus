@@ -24,9 +24,20 @@ const universe: UniverseResponse = {
 
 afterEach(() => vi.restoreAllMocks())
 
+function capacityPlan(items = universe.items) {
+  return {
+    schema_version: 'urus.market_data_capacity_plan.v1', plan_id: 'plan-1', provider: 'moomoo_openapi',
+    universe_content_sha256: 'b'.repeat(64), captured_at: '2026-08-13T00:00:00Z', expires_at: '2026-08-13T00:05:00Z',
+    quota: { quality_status: 'ok', available: true, used: 10, remain: 90, total: 100, reserve: 20 },
+    summary: { desired_history_count: items.length, cache_ready_count: 0, zero_cost_refresh_count: 0, new_slot_count: items.length, admitted_new_slot_count: items.length, pending_quota_count: 0 },
+    symbols: items.map((item) => ({ symbol: item.symbol, decision: 'admitted', quota_cost: 1 })), warnings: [],
+  }
+}
+
 describe('UniverseSettingsView', () => {
   it('removes a symbol only from the next saved version', async () => {
     vi.spyOn(api, 'getUniverse').mockResolvedValue(structuredClone(universe))
+    vi.spyOn(api, 'createUniverseCapacityPlan').mockResolvedValue(capacityPlan())
     const save = vi.spyOn(api, 'updateUniverse').mockResolvedValue({ ...structuredClone(universe), revision: 2, items: [universe.items[0]] })
     const wrapper = mount(UniverseSettingsView, { global: { stubs: { AppShell: true, RouterLink: true } } })
     await flushPromises()
@@ -48,6 +59,7 @@ describe('UniverseSettingsView', () => {
 
   it('protects the required QQQ benchmark from deletion', async () => {
     vi.spyOn(api, 'getUniverse').mockResolvedValue(structuredClone(universe))
+    vi.spyOn(api, 'createUniverseCapacityPlan').mockResolvedValue(capacityPlan())
     const wrapper = mount(UniverseSettingsView, { global: { stubs: { AppShell: true, RouterLink: true } } })
     await flushPromises()
     await wrapper.findAll('tbody tr')[0].get('button[aria-label="删除标的"]').trigger('click')
@@ -57,6 +69,7 @@ describe('UniverseSettingsView', () => {
 
   it('adds and removes cross-cutting themes without changing the primary label unexpectedly', async () => {
     vi.spyOn(api, 'getUniverse').mockResolvedValue(structuredClone(universe))
+    vi.spyOn(api, 'createUniverseCapacityPlan').mockResolvedValue(capacityPlan())
     const save = vi.spyOn(api, 'updateUniverse').mockResolvedValue(structuredClone(universe))
     const wrapper = mount(UniverseSettingsView, { global: { stubs: { AppShell: true, RouterLink: true } } })
     await flushPromises()

@@ -31,6 +31,7 @@ from app.models import RunModel, RunStatus, StepStatus
 from app.repositories import EventRepository, InstrumentUniverseRepository, RunRepository
 from app.repositories.agent import AIDecisionRepository
 from app.repositories.capital_flows import CapitalFlowRepository
+from app.repositories.daily_evidence import DailyEvidenceRepository
 from app.repositories.report_display import ReportDisplayRepository
 from app.schemas.enums import StepCodeValue
 from app.schemas.read_model import (
@@ -67,6 +68,8 @@ from app.workflows import (
 from app.workflows.base import data_state_for
 from app.workflows.cta import build_systematic_flows
 from app.services.capital_flow import CapitalFlowService
+from app.services.history_quota import HistoryAdmission
+from app.services.market_data_collection import MoomooCollectionCoordinator
 
 logger = logging.getLogger(__name__)
 
@@ -158,7 +161,25 @@ class RunService:
         is_manual = request.run_type.value == "manual_analysis"
         session_context = self._session_context(cutoff_time) if is_manual else request.run_type.value
 
-        market_adapter = self._build_market_adapter(scopes.market_symbols)
+        collection_coordinator = (
+            MoomooCollectionCoordinator(self.settings)
+            if self.settings.moomoo_enabled
+            else None
+        )
+        history_admission = None
+        if self.settings.moomoo_enabled:
+            history_admission = HistoryAdmission(
+                self.repository.session,
+                self.settings,
+                universe_version_id=universe.id,
+                run_id=run_id,
+                rate_limiter=collection_coordinator,
+            )
+        market_adapter = self._build_market_adapter(
+            scopes.market_symbols,
+            history_admission=history_admission,
+            rate_limiter=collection_coordinator,
+        )
         capital_flow_service = (
             CapitalFlowService(
                 CapitalFlowRepository(self.repository.session),
@@ -173,11 +194,15 @@ class RunService:
         )
         # Manual and scheduled runs use the same configured option universe.
         # Request symbols narrow the decision universe, not market-data coverage.
-        options_adapter = self._build_options_adapter(scopes.option_symbols)
+        options_adapter = self._build_options_adapter(
+            scopes.option_symbols, rate_limiter=collection_coordinator
+        )
         macro_adapter = self._build_macro_adapter()
         anomalo_adapter = self._build_anomalo_adapter(
             simulate=request.simulate_macro_event or request.simulate_instrument_event
         )
+        # Preserve the legacy indicator scope in the read model while wiring
+        # the independent history scope to the live collector.
         instrument_symbols = scopes.instrument_symbols
         context = RunContext(
             run_id=run_id,
@@ -185,6 +210,8 @@ class RunService:
             cutoff_time=cutoff_time,
             symbols=symbols,
             instrument_symbols=instrument_symbols,
+            history_symbols=scopes.history_symbols,
+            option_symbols=scopes.option_symbols,
             event_instrument_symbols=scopes.event_symbols,
             simulate_macro_event=request.simulate_macro_event,
             simulate_instrument_event=request.simulate_instrument_event,
@@ -224,8 +251,13 @@ class RunService:
         snapshot_id: str | None = None
         option_persistence_payload: dict[str, object] | None = None
         instrument_persistence_payload: dict[str, object] | None = None
-
         try:
+            if history_admission is not None:
+                history_admission.bind_quota_reader(market_adapter.quota_snapshot)
+                history_admission.prepare_symbols(
+                    scopes.history_symbols or scopes.instrument_symbols,
+                    now=cutoff_time,
+                )
             for step in pipeline.steps:
                 if step.code == "4":
                     self._prepare_decision_dataset(context)
@@ -295,6 +327,16 @@ class RunService:
                 )
         finally:
             self._close_adapters(market_adapter, macro_adapter, options_adapter, anomalo_adapter)
+            try:
+                if instrument_persistence_payload:
+                    DailyEvidenceRepository(self.repository.session).sync_legacy_snapshot_bars(
+                        instrument_persistence_payload,
+                        market_timezone=self.settings.market_timezone,
+                        collected_at=cutoff_time,
+                    )
+            finally:
+                if history_admission is not None:
+                    history_admission.release_unfinished(now=utc_now())
 
         final_status = self._final_run_status(context.results)
         output_result = context.results.get("5")
@@ -887,16 +929,26 @@ class RunService:
             ]
         )
 
-    def _build_market_adapter(self, market_symbols: list[str] | None = None):
+    def _build_market_adapter(
+        self,
+        market_symbols: list[str] | None = None,
+        *,
+        history_admission: HistoryAdmission | None = None,
+        rate_limiter: object | None = None,
+    ):
         if not self.settings.moomoo_enabled:
             return DisabledMoomooAdapter()
         return OpenDMarketAdapter(
             host=self.settings.moomoo_host,
             port=self.settings.moomoo_port,
             market_timezone=self.settings.market_timezone,
-            history_days=self.settings.moomoo_history_days,
+            history_days=max(self.settings.moomoo_history_days, self.settings.daily_min_history_bars),
             sdk_home=Path(self.settings.moomoo_sdk_home),
             market_symbols=market_symbols or self.settings.moomoo_market_symbols.split(","),
+            history_admission=history_admission,
+            rate_limiter=rate_limiter,
+            history_request_interval_seconds=self.settings.moomoo_history_request_interval_seconds,
+            snapshot_request_interval_seconds=self.settings.moomoo_snapshot_request_interval_seconds,
         )
 
     def _build_macro_adapter(self):
@@ -924,7 +976,12 @@ class RunService:
             return FallbackDailyMacroAdapter(fred_adapter, yahoo_adapter)
         return fred_adapter or yahoo_adapter
 
-    def _build_options_adapter(self, target_symbols: list[str] | None = None) -> OptionsCollectorAdapter:
+    def _build_options_adapter(
+        self,
+        target_symbols: list[str] | None = None,
+        *,
+        rate_limiter: object | None = None,
+    ) -> OptionsCollectorAdapter:
         if not self.settings.moomoo_enabled:
             return DisabledOptionsAdapter()
         target_symbols = target_symbols if target_symbols is not None else self.settings.options_collection_symbol_list
@@ -944,6 +1001,7 @@ class RunService:
             gamma_profile_points=self.settings.options_gamma_profile_points,
             risk_free_rate_percent=self.settings.options_risk_free_rate_percent,
             dividend_yield_percent=self.settings.options_dividend_yield_percent,
+            rate_limiter=rate_limiter,
         )
 
     def _build_anomalo_adapter(self, *, simulate: bool):

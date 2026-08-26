@@ -16,6 +16,7 @@ from app.models.daily_evidence import (
     DailyIndicatorSnapshotModel,
     DecisionChartProjectionModel,
 )
+from app.models.market_data_capacity import HistoryCollectionStateModel
 from app.models.instruments import InstrumentDailyBarModel, InstrumentSnapshotModel
 
 
@@ -142,7 +143,73 @@ class DailyEvidenceRepository:
             market_timezone=market_timezone,
             collected_at=collected_at,
         )
+        # Keep the quota projection in the same transaction as canonical bar
+        # persistence.  Only states that were created by the admission layer
+        # are updated; direct/mock collectors remain backward compatible.
+        self._reconcile_history_capacity_states(
+            {str(row.get("symbol") or "") for row in rows},
+            collected_at=collected_at or utc_now(),
+        )
         return len(models)
+
+    def _reconcile_history_capacity_states(
+        self,
+        symbols: Iterable[str],
+        *,
+        collected_at: datetime,
+    ) -> int:
+        normalized = list(dict.fromkeys(normalise_symbol(symbol) for symbol in symbols if symbol))
+        if not normalized:
+            return 0
+        states = list(
+            self.session.scalars(
+                select(HistoryCollectionStateModel).where(
+                    HistoryCollectionStateModel.provider == "moomoo_openapi",
+                    HistoryCollectionStateModel.symbol.in_(normalized),
+                )
+            )
+        )
+        if not states:
+            return 0
+        bars = self.bars(normalized)
+        changed = 0
+        observed_at = as_utc(collected_at)
+        for state in states:
+            if not state.desired_history:
+                continue
+            rows = bars.get(state.symbol, [])
+            if not rows:
+                continue
+            state.bar_count = len(rows)
+            state.latest_bar_date = rows[-1].bar_date
+            required = state.required_through_date
+            if required is not None and state.latest_bar_date < required:
+                state.access_state = "retry_wait"
+                state.quality_state = "stale"
+                state.reason_code = "history_target_not_reached"
+                state.message = (
+                    f"历史 K 线最新日期 {state.latest_bar_date.isoformat()} "
+                    f"早于目标 {required.isoformat()}。"
+                )
+                state.last_attempt_at = state.last_attempt_at or observed_at
+                state.updated_at = observed_at
+                changed += 1
+                continue
+            state.access_state = "acquired"
+            minimum = max(1, int(state.minimum_bar_count or 260))
+            state.quality_state = "ready" if len(rows) >= minimum else "partial"
+            state.reason_code = "history_short_sample" if state.quality_state == "partial" else None
+            state.message = (
+                "已取得历史 K 线，但样本长度低于完整策略要求。"
+                if state.quality_state == "partial"
+                else None
+            )
+            state.last_attempt_at = state.last_attempt_at or observed_at
+            state.last_success_at = observed_at
+            state.updated_at = observed_at
+            changed += 1
+        self.session.flush()
+        return changed
 
     def bars(
         self,

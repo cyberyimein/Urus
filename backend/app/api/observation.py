@@ -21,6 +21,8 @@ from app.schemas.observation import (
     ObservationRunResponse,
 )
 from app.services.observation import ObservationGroupSyncService, ObservationRunService
+from app.services.history_quota import HistoryAdmission
+from app.services.market_data_collection import MoomooCollectionCoordinator
 from app.repositories.universe import InstrumentUniverseRepository
 
 
@@ -43,7 +45,12 @@ def _ensure_groups(db: Session, settings: Settings) -> ObservationGroupRepositor
     return repository
 
 
-def _market_adapter(settings: Settings):
+def _market_adapter(
+    settings: Settings,
+    *,
+    history_admission: HistoryAdmission | None = None,
+    rate_limiter: object | None = None,
+):
     if not settings.moomoo_enabled:
         return None
     return OpenDMarketAdapter(
@@ -53,6 +60,10 @@ def _market_adapter(settings: Settings):
         history_days=max(settings.moomoo_history_days, settings.daily_min_history_bars),
         sdk_home=Path(settings.moomoo_sdk_home),
         market_symbols=[item.strip() for item in settings.moomoo_market_symbols.split(",") if item.strip()],
+        history_admission=history_admission,
+        rate_limiter=rate_limiter,
+        history_request_interval_seconds=settings.moomoo_history_request_interval_seconds,
+        snapshot_request_interval_seconds=settings.moomoo_snapshot_request_interval_seconds,
     )
 
 
@@ -136,16 +147,35 @@ def create_observation_run(
         except ValueError as exc:
             raise AppError(str(exc), code="observation_group_sync_invalid", status_code=422) from exc
     _ensure_groups(db, settings)
-    adapter = _market_adapter(settings)
+    collection_coordinator = (
+        MoomooCollectionCoordinator(settings) if settings.moomoo_enabled else None
+    )
+    history_admission = (
+        HistoryAdmission(db, settings, rate_limiter=collection_coordinator)
+        if settings.moomoo_enabled
+        else None
+    )
+    adapter = None
     try:
+        adapter = _market_adapter(
+            settings,
+            history_admission=history_admission,
+            rate_limiter=collection_coordinator,
+        )
         result = ObservationRunService(db, settings).create_run(
             payload,
             bar_source=adapter,
+            history_admission=history_admission,
             universe_sync=universe_sync,
         )
     except ValueError as exc:
         raise AppError(str(exc), code="observation_run_invalid", status_code=422) from exc
     finally:
+        if history_admission is not None:
+            try:
+                history_admission.release_unfinished()
+            except Exception:
+                db.rollback()
         if adapter is not None:
             adapter.close()
     return ObservationRunResponse(**result)

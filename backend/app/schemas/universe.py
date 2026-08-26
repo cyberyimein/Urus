@@ -43,7 +43,9 @@ class UniverseCollection(BaseModel):
 
     quote: bool = True
     daily_history: bool = True
-    options: bool = False
+    # Options are collected serially by the daily workflow. Enabling the intent
+    # does not make an OpenD call during Universe validation or save.
+    options: bool = True
 
 
 class InstrumentConfig(BaseModel):
@@ -163,6 +165,10 @@ class UniverseDerivedScopes(BaseModel):
     option_symbols: list[str]
     event_symbols: list[str]
     ai_candidate_symbols: list[str]
+    # History collection is intentionally independent from the protected
+    # indicator-recommendation role.  Keep a default for legacy response
+    # payloads and old tests that construct this schema directly.
+    history_symbols: list[str] = Field(default_factory=list)
 
 
 class UniverseResponse(BaseModel):
@@ -173,6 +179,8 @@ class UniverseResponse(BaseModel):
     created_at: datetime
     items: list[InstrumentConfig]
     derived: UniverseDerivedScopes
+    capacity: dict[str, object] = Field(default_factory=dict)
+    collection_states: dict[str, dict[str, object]] = Field(default_factory=dict)
 
 
 class UniverseValidationResponse(BaseModel):
@@ -180,6 +188,29 @@ class UniverseValidationResponse(BaseModel):
     item_count: int
     enabled_count: int
     derived: UniverseDerivedScopes
+    capacity: dict[str, object] = Field(default_factory=dict)
+    collection_states: dict[str, dict[str, object]] = Field(default_factory=dict)
+
+
+class UniverseCapacityPlanResponse(BaseModel):
+    schema_version: str = "urus.market_data_capacity_plan.v1"
+    plan_id: str
+    provider: str = "moomoo_openapi"
+    universe_content_sha256: str
+    captured_at: datetime
+    expires_at: datetime | None = None
+    quota: dict[str, object] = Field(default_factory=dict)
+    summary: dict[str, int] = Field(default_factory=dict)
+    symbols: list[dict[str, object]] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class HistoryCollectionProjectionResponse(BaseModel):
+    provider: str = "moomoo_openapi"
+    captured_at: datetime | None = None
+    capacity: dict[str, object] = Field(default_factory=dict)
+    states: dict[str, dict[str, object]] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
 
 
 class UniverseImpactResponse(BaseModel):

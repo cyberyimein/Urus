@@ -5,6 +5,7 @@ from dataclasses import asdict
 from datetime import UTC, date, datetime
 from math import isfinite
 import socket
+import threading
 from time import monotonic, sleep
 from typing import Any, Protocol
 
@@ -21,13 +22,13 @@ def _pandas():
 
 
 class OptionsCollectorAdapter(Protocol):
-    def options_snapshot(self) -> dict[str, object]: ...
+    def options_snapshot(self, symbols: list[str] | None = None) -> dict[str, object]: ...
 
     def close(self) -> None: ...
 
 
 class DisabledOptionsAdapter:
-    def options_snapshot(self) -> dict[str, object]:
+    def options_snapshot(self, symbols: list[str] | None = None) -> dict[str, object]:
         return {
             "is_mock": True,
             "status": "not_implemented",
@@ -45,6 +46,7 @@ class MoomooOptionsAdapter:
     """Snapshot-only Moomoo options collector; never calls subscribe()."""
 
     _connect_timeout_seconds = 3.0
+    _collection_lock = threading.Lock()
 
     def __init__(
         self,
@@ -65,6 +67,7 @@ class MoomooOptionsAdapter:
         dividend_yield_percent: float = 0.0,
         monotonic_clock: Callable[[], float] = monotonic,
         sleeper: Callable[[float], None] = sleep,
+        rate_limiter: Any | None = None,
     ) -> None:
         if not symbols:
             raise ValueError("at least one option target symbol is required")
@@ -77,8 +80,11 @@ class MoomooOptionsAdapter:
         self.max_dte = max_dte
         self.strike_range_percent = strike_range_percent
         self.batch_size = batch_size
-        self.snapshot_interval_seconds = max(0.0, snapshot_interval_seconds)
-        self.option_chain_interval_seconds = max(0.0, option_chain_interval_seconds)
+        self.snapshot_interval_seconds = max(0.51, snapshot_interval_seconds)
+        # Ten chain calls in any 30-second window is the provider ceiling;
+        # 3.05s leaves a small scheduling margin even when a caller overrides
+        # the setting downward.
+        self.option_chain_interval_seconds = max(3.05, option_chain_interval_seconds)
         self.gamma_profile_range_percent = gamma_profile_range_percent
         self.gamma_profile_points = gamma_profile_points
         self.risk_free_rate_percent = risk_free_rate_percent
@@ -86,6 +92,7 @@ class MoomooOptionsAdapter:
         self._quote_context_factory = quote_context_factory
         self._monotonic_clock = monotonic_clock
         self._sleeper = sleeper
+        self._rate_limiter = rate_limiter
         self._last_snapshot_request_at: float | None = None
         self._last_option_chain_request_at: float | None = None
         self._quote_ctx: Any | None = None
@@ -146,29 +153,57 @@ class MoomooOptionsAdapter:
         return [values[index : index + size] for index in range(0, len(values), size)]
 
     def _market_snapshot(self, codes: list[str], label: str) -> object:
-        now = self._monotonic_clock()
-        if self._last_snapshot_request_at is not None:
-            remaining = self.snapshot_interval_seconds - (now - self._last_snapshot_request_at)
-            if remaining > 0:
-                self._sleeper(remaining)
+        if self._rate_limiter is not None:
+            self._rate_limiter.acquire_rate_slot(
+                # Option contract snapshots share the provider's quote/history
+                # bucket; only option-chain calls have the separate 10/30s
+                # ceiling.
+                "moomoo_quote_history",
+                self.snapshot_interval_seconds,
+                now=datetime.now(UTC),
+                sleeper=self._sleeper,
+            )
+        else:
+            now = self._monotonic_clock()
+            if self._last_snapshot_request_at is not None:
+                remaining = self.snapshot_interval_seconds - (now - self._last_snapshot_request_at)
+                if remaining > 0:
+                    self._sleeper(remaining)
         self._last_snapshot_request_at = self._monotonic_clock()
         return self._require_ok(label, self._context().get_market_snapshot(codes))
 
     def _option_chain(self, underlying: str, start: str, end: str) -> object:
-        now = self._monotonic_clock()
-        if self._last_option_chain_request_at is not None:
-            remaining = self.option_chain_interval_seconds - (
-                now - self._last_option_chain_request_at
+        if self._rate_limiter is not None:
+            self._rate_limiter.acquire_rate_slot(
+                "moomoo_option_chain",
+                self.option_chain_interval_seconds,
+                now=datetime.now(UTC),
+                sleeper=self._sleeper,
             )
-            if remaining > 0:
-                self._sleeper(remaining)
+        else:
+            now = self._monotonic_clock()
+            if self._last_option_chain_request_at is not None:
+                remaining = self.option_chain_interval_seconds - (
+                    now - self._last_option_chain_request_at
+                )
+                if remaining > 0:
+                    self._sleeper(remaining)
         self._last_option_chain_request_at = self._monotonic_clock()
         label = f"get_option_chain({underlying}, {start}..{end})"
         result = self._context().get_option_chain(underlying, start=start, end=end)
         ret, data = result
         message = str(data).lower()
         if ret != 0 and ("频率" in message or "frequency" in message):
-            self._sleeper(30.1)
+            if self._rate_limiter is not None:
+                self._rate_limiter.acquire_rate_slot(
+                    "moomoo_option_chain",
+                    30.1,
+                    now=datetime.now(UTC),
+                    sleeper=self._sleeper,
+                    minimum_wait_seconds=30.1,
+                )
+            else:
+                self._sleeper(30.1)
             self._last_option_chain_request_at = self._monotonic_clock()
             result = self._context().get_option_chain(underlying, start=start, end=end)
         return self._require_ok(label, result)
@@ -256,7 +291,17 @@ class MoomooOptionsAdapter:
                 )
         return contracts
 
-    def options_snapshot(self) -> dict[str, object]:
+    def options_snapshot(self, symbols: list[str] | None = None) -> dict[str, object]:
+        with self._collection_lock:
+            original_symbols = self.symbols
+            if symbols is not None:
+                self.symbols = [self._market_code(item) for item in symbols]
+            try:
+                return self._options_snapshot()
+            finally:
+                self.symbols = original_symbols
+
+    def _options_snapshot(self) -> dict[str, object]:
         pd = _pandas()
         context = self._context()
         subscription_before = self._require_ok(
