@@ -55,7 +55,8 @@ describe('ResearchHomeView', () => {
     })
     await flushPromises()
 
-    expect(wrapper.text()).toContain('研究中心')
+    expect(wrapper.text()).toContain('旧研究中心')
+    expect(wrapper.text()).toContain('历史报告')
     expect(wrapper.text()).toContain('最近更新')
     expect(wrapper.text()).toContain('手动分析')
     expect(wrapper.text()).toContain('开发工具')

@@ -111,6 +111,7 @@ class DailyMarketEvidenceService:
         }
         payload_without_id = {
             "schema_version": DAILY_DATASET_SCHEMA,
+            "feature_version": FEATURE_VERSION,
             "trading_date": target_date.isoformat(),
             "cutoff_time": cutoff.isoformat(),
             "market_timezone": self.market_timezone,
@@ -225,6 +226,9 @@ class DailyMarketEvidenceService:
             persistence,
             source="moomoo_opend_history",
             market_timezone=self.market_timezone,
+            # Keep the actual acquisition time.  A provider response may
+            # contain bars newer than the requested historical target; those
+            # rows must not become visible to an earlier point-in-time freeze.
             collected_at=utc_now(),
         )
         refreshed = self.repository.bars(normalized, through_date=through_date, cutoff_time=cutoff_time)
@@ -232,7 +236,7 @@ class DailyMarketEvidenceService:
             symbol
             for symbol in missing_symbols
             if refreshed.get(symbol)
-            and len(refreshed[symbol]) >= len(current.get(symbol, []))
+            and len(refreshed[symbol]) >= self.minimum_history_bars
             and refreshed[symbol][-1].bar_date >= through_date
         ]
         return {
@@ -397,7 +401,7 @@ class DailyMarketEvidenceService:
                     for name in benchmark_symbols
                     if chart_instruments.get(name, {}).get("bars")
                     and chart_instruments.get(name, {}).get("quality", {}).get("status")
-                    not in {"missing", "conflicted"}
+                    == "ok"
                 ),
                 None,
             )

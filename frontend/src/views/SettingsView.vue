@@ -112,7 +112,7 @@ onMounted(loadSettings)
         <p class="settings-intro">控制两次正式日程是否运行、是否只采集不启动 AI，以及本分支实际使用的模型入口。</p>
       </div>
       <div v-if="settings" class="settings-status">
-        <RouterLink class="secondary-button" to="/settings/universe">大盘 / ETF / 个股设置</RouterLink>
+        <RouterLink class="secondary-button" to="/settings/universe">管理关注列表与个股 →</RouterLink>
         <span class="settings-source" :data-source="settings.source">
           {{ settings.source === 'runtime' ? '运行时覆盖' : '环境默认' }}
         </span>

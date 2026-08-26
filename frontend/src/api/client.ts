@@ -30,6 +30,16 @@ import type {
   DailyDecisionDataset,
   StrategyBundleResponse,
 } from '@/types/dailyEvidence'
+import type {
+  ObservationGroup,
+  ObservationGroupDetail,
+  ObservationGroupSync,
+  ObservationRun,
+} from '@/types/api'
+import type {
+  CrossSectionCatalogItem,
+  CrossSectionProjection,
+} from '@/types/crossSection'
 
 // Local Vite serves `/api` through the dev proxy, which keeps browser requests
 // same-origin and avoids loopback cross-port restrictions. Deployments can
@@ -166,4 +176,40 @@ export const api = {
     request<DecisionChartProjection>(`/daily-evidence/datasets/${encodeURIComponent(datasetId)}/chart`),
   getDailyStrategies: (datasetId: string) =>
     request<StrategyBundleResponse>(`/daily-evidence/datasets/${encodeURIComponent(datasetId)}/strategies`),
+  listObservationGroups: () => request<ObservationGroup[]>('/observation/groups'),
+  syncObservationGroups: () => request<ObservationGroupSync>('/observation/groups/sync', {
+    method: 'POST',
+    body: JSON.stringify({}),
+  }),
+  getObservationGroup: (groupId: string) =>
+    request<ObservationGroupDetail>(`/observation/groups/${encodeURIComponent(groupId)}`),
+  createObservationRun: (requestBody: {
+    group_ids?: string[]
+    trading_date?: string
+    cutoff_time?: string
+    trigger_mode?: 'manual' | 'scheduled'
+    request_intent_id?: string
+    universe_revision_id?: string
+    universe_freshness?: string
+    universe_source_url?: string
+  }) => request<ObservationRun>('/observation/runs', {
+    method: 'POST',
+    body: JSON.stringify(requestBody),
+  }),
+  listObservationRuns: (limit = 30) =>
+    request<ObservationRun[]>(`/observation/runs?limit=${encodeURIComponent(String(limit))}`),
+  getObservationRun: (runId: string) =>
+    request<ObservationRun>(`/observation/runs/${encodeURIComponent(runId)}`),
+  listIndicatorCatalog: () =>
+    request<CrossSectionCatalogItem[]>('/observation/indicator-catalog'),
+  getIndicatorCrossSection: (runId: string, indicatorId: string) =>
+    request<CrossSectionProjection>(
+      `/observation/runs/${encodeURIComponent(runId)}/indicators/${encodeURIComponent(indicatorId)}`,
+    ),
+  listStrategyCatalog: () =>
+    request<CrossSectionCatalogItem[]>('/observation/strategy-catalog'),
+  getStrategyCrossSection: (runId: string, strategyId: string) =>
+    request<CrossSectionProjection>(
+      `/observation/runs/${encodeURIComponent(runId)}/strategies/${encodeURIComponent(strategyId)}`,
+    ),
 }

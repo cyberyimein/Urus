@@ -81,7 +81,10 @@ class FakeDailyBarAdapter:
 def test_daily_evidence_refreshes_only_missing_symbols_then_hits_canonical_cache() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
     Base.metadata.create_all(engine)
-    cutoff = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
+    # A newly fetched bar is only available at its real acquisition time; use
+    # a live cutoff for this cache test instead of asserting historical
+    # backdating.
+    cutoff = datetime.now(UTC) + timedelta(seconds=1)
     session_dates = completed_session_dates(cutoff, "XNYS", count=20)
     adapter = FakeDailyBarAdapter(_fixture_bars("INTC", session_dates, 20.0))
 

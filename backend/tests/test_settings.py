@@ -61,9 +61,10 @@ def test_settings_expose_environment_defaults(client) -> None:
     assert payload["revision"] == 0
     assert payload["schedule"]["pre_market"] == {
         "enabled": True,
-        "skip_ai_decision": False,
+        "skip_ai_decision": True,
     }
     assert payload["schedule"]["pre_close"]["skip_ai_decision"] is True
+    assert payload["schedule"]["post_close_review"]["skip_ai_decision"] is True
     assert payload["models"]["ai_decision_model"]
     assert payload["models"]["anomalo_retrieval_agent"] == "scheduled-event-investigator"
     assert payload["models"]["input_cost_per_million"] == 0

@@ -16,6 +16,10 @@ def app(tmp_path: Path):
         app_env="test",
         database_url=f"sqlite:///{tmp_path / 'test.db'}",
         cors_origins="http://testserver",
+        # The developer .env intentionally points at the deployed Phase C
+        # Universe. Tests must opt into that behavior explicitly instead of
+        # making the local-sync contract depend on the host environment.
+        observation_universe_source_url="",
         enabled_symbols="QQQ,INTC",
         # Keep workflow API tests focused on the disabled/mock adapter. The
         # production default is the full Stage 3A universe.

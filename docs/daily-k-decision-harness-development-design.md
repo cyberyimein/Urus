@@ -800,6 +800,173 @@ Y：相对强弱 5 日变化或动量变化
 选择热力图行、象限点或排行榜项时，所有组图聚焦同一 symbol；选择某个交易日时，广度、热力图和小图同步到该日。
 筛选只改变显示，不重算或修改冻结的组级 Strategy Decision。
 
+### 10.7 指标横向扫描页面
+
+个股页回答“这一只股票的指标和策略如何”，指标页回答“同一个指标在全部观察组和全部成员中处于什么状态”。指标页是
+Observation Run 冻结结果的只读横向投影，不创建新的指标算法，也不在前端重新计算指标。
+
+建议路由：
+
+```text
+/indicators
+/indicators/:indicatorId
+```
+
+`/indicators` 展示指标目录和当前横向摘要；`/indicators/:indicatorId` 展示一个确定指标版本，例如
+`rsi14@technical_v4`、`macd_12_26_9@technical_v4` 或 `relative_strength_20d@technical_v4`。页面必须绑定一个已完成的
+Observation Run，并固定显示其 trading date、cutoff、feature version 和组版本集合。切换日期时切换到另一份已保存投影，
+不能把不同交易日或不同 feature version 的值拼在同一排名中。
+
+页面默认包含：
+
+```text
+指标定义、参数、单位和版本
+全部观察组的分布与极端值摘要
+group → symbol 两级状态表
+symbol × group / date 热力图
+当前值、分位数、阈值距离和最近变化
+刚进入 / 刚离开阈值的 symbol
+数据缺失、过期和不可比标记
+跳转个股页与所属组页
+“AI 评估当前指标”占位按钮
+```
+
+核心展示规则：
+
+- 第一层按 Observation Group 分组，组标题显示有效样本数、中位数、四分位数和极端值占比；
+- 第二层展示组内全部 symbol，同一 symbol 属于多个组时可在各组中出现，但底层只引用同一个 indicator snapshot；
+- 默认排序优先显示“刚发生变化”的 symbol，其次是阈值距离和绝对极端程度，不默认按 symbol 字母排序；
+- RSI 应显示当前值、30/50/70 区间、进入或离开超买超卖区的时间；MACD 应显示 DIF/DEA/柱体及交叉状态；
+- 均线类指标应显示价格相对均线的位置、距离和刚上穿/下穿状态，不能只显示 MA 数字；
+- 相对强弱必须同时展示 benchmark、窗口和 excess return，禁止把不同 benchmark 的数值直接混排；
+- 表格、热力图和分布图只使用后端投影中的正式值，前端只负责坐标、颜色、筛选和排序；
+- 点击 symbol 在侧栏打开简化 K 线与指标上下文，双击进入 `/instruments/:symbol`；
+- 页面筛选不修改 Observation Group，也不生成新的正式判断。
+
+指标页不是单纯的数字表。第一屏至少用“跨组分布图 + 分组热力图 + 状态变化列表”回答：哪些组整体偏强或偏弱、哪些
+股票处于极端、哪些股票刚发生指标状态转换。
+
+2026-08-26 的本地实现将 `group → symbol` 的第二层落地为密集卡片网格，而不是固定最小宽度的横向表格。卡片必须继续引用同一份
+Observation Run 冻结投影，前端只负责布局、坐标和视觉派生，不重新判定指标状态。每个卡片显示 symbol、正式状态、当前值、前值/变化、
+质量状态、状态转换和到个股冻结数据集的链接；卡片区域不得产生横向滚动。
+
+组列表按新版关注列表语义拆成“指标推荐”和 `SECTOR WATCHLIST / 主题观察组` 两个区段；旧的手工自选/核心观察组不进入当前横向扫描的
+活动展示。投影中的历史质量统计仍保留在 provenance 中，页面顶部的活动组和活动标的统计只计算当前可见区段。
+
+RSI 14 使用 0–100 的三段确定性轨道：`<30` 为超卖、`30–70`（含边界）为平衡、`>70` 为超买；组级轨道显示状态分布、Q1、
+Median、Q3 和区间颜色，个股卡片显示当前值与前值 marker。超卖、平衡和超买使用独立的冷青、暗沙和暖红色，但颜色只表示状态区间，
+不得被解释为买卖指令。`threshold_distance` 若包含 50 等参考线，UI 不得把它笼统显示为“距阈”，应显示为“距参考”或按状态边界展示。
+
+其它横向指标沿用相同卡片容器，根据指标类型使用零轴发散条、比例区间轨道、二态线上/线下轨道或策略状态轨道；score 只能标注为策略
+内部强弱，不能显示为胜率或收益概率。卡片网格在宽屏、窄屏和移动端自适应列数，唯一允许横向滚动的是顶部的指标选择栏。
+
+策略横向扫描使用独立的策略观察组设计：组级同时显示 `bullish / neutral / bearish` stance 分布和 `forming / near_confirmation /
+confirmed / invalidated` setup stage 分布；score 轨道固定为 `-100` 至 `+100`，以 `0` 为中心，并按策略规则用 `-25`、`+25` 区分偏空、
+中性和偏多区域。个股卡片必须按“stance → action → setup stage → score → change/quality”顺序阅读，score 是策略内部强弱，不能被解释为
+概率、胜率或收益预测。策略颜色只表达 stance 和阶段状态，不能替代确认条件、失效条件或 Evidence Reference。
+
+### 10.8 策略横向扫描页面
+
+策略页回答“同一个确定性策略对全部观察组股票给出了什么判断”。它读取已经持久化的 Strategy Decision，并按策略名称、
+版本和 Observation Run 进行横向投影，不在页面中再次执行策略。
+
+建议路由：
+
+```text
+/strategies
+/strategies/:strategyId
+```
+
+`/strategies` 展示 Strategy Registry、适用范围和本次运行摘要；`/strategies/:strategyId` 固定到明确的
+`strategy_name + strategy_version + implementation_sha256`。页面默认包含：
+
+```text
+策略定义、版本、horizon 和适用条件
+各观察组 bullish / bearish / neutral / not_applicable 分布
+group → symbol 两级 Strategy Decision 表
+stance / action / setup stage 热力图
+forming / confirmed / weakening / invalidated 状态变化
+trigger、确认位、失效位和距离
+策略内领涨、掉队、刚触发和接近触发列表
+质量失败、策略异常和不适用原因
+Evidence Reference 与个股图表跳转
+“AI 评估当前策略”占位按钮
+```
+
+核心展示规则：
+
+- 策略页只能比较同一 strategy version 和 implementation hash；版本不同必须拆开展示；
+- `score` 只表示策略内部强弱，界面不得改写为胜率或收益概率；
+- 默认优先显示刚确认、接近确认、刚失效和强冲突的 symbol，而不是只按 score 排序；
+- 每个决策必须同时展示 stance、action、setup stage、horizon、确认条件、失效条件和质量状态；
+- `not_applicable`、`insufficient_data` 和 `error` 必须分开，不能统一显示为 neutral；
+- 组摘要使用该策略的真实决策分布与参与率，不使用所有策略综合分数替代；
+- 点击决策可定位到个股 K 线上的 Strategy Overlay，并继续进入完整个股页；
+- 页面可以把其他策略的结论作为冲突提示，但不能在当前策略排名中偷偷混入其他策略分数。
+
+策略页第一屏至少用“跨组 stance 分布 + setup stage 热力图 + 状态变化泳道”回答：策略目前主要在哪些组生效、哪些股票
+刚形成机会、哪些判断正在失效，以及哪些结果因数据质量不能成立。
+
+### 10.9 横向扫描投影与 AI 占位
+
+指标页和策略页不增加新的 Decision Scope。它们都引用一个不可变的 `observation_run_id`，并使用 lens 描述当前观察角度：
+
+```json
+{
+  "scope_type": "observation_run",
+  "scope_id": "observation-run-id",
+  "lens": {
+    "type": "indicator",
+    "id": "rsi14",
+    "version": "technical_v4"
+  }
+}
+```
+
+或：
+
+```json
+{
+  "scope_type": "observation_run",
+  "scope_id": "observation-run-id",
+  "lens": {
+    "type": "strategy",
+    "id": "quality_left_side_reversal_v1",
+    "version": "1.0.0",
+    "implementation_sha256": "..."
+  }
+}
+```
+
+建议提供只读查询 Interface：
+
+```text
+GET /api/observation/indicator-catalog
+GET /api/observation/runs/:runId/indicators/:indicatorId
+GET /api/observation/strategy-catalog
+GET /api/observation/runs/:runId/strategies/:strategyId
+```
+
+横向投影响应至少包含：
+
+```text
+schema_version / content_sha256
+observation_run_id / trading_date / cutoff_time
+lens / feature_version 或 strategy identity
+group_version_ids / dataset_ids / snapshot_ids
+groups[]：分布、参与率、状态计数和质量
+rows[]：group_id、symbol、正式值/Decision、变化和 Evidence Reference
+transitions[]：前态、现态、发生日期和触发原因
+quality：有效、缺失、过期、冲突和不可比计数
+```
+
+后端 workspace Module 负责去重、版本一致性检查、跨组聚合、变化比较和 content hash。前端不得直接拉取几十只股票后自行
+拼出正式横向排名。若同一 Observation Run 中找不到唯一版本，接口返回明确的 `version_conflict`，页面要求用户选择版本，
+不能静默选择“最新版本”。
+
+Phase C 只实现确定性投影和 AI 按钮占位。按钮必须显示“尚未接入”或 disabled 状态，点击不得调用现有聊天接口、不得生成
+模拟结果，也不得创建未完成定义的远端运行。Phase D 冻结 Workflow Definition，Phase E 才启用真实提交和结果展示。
+
 ## 11. 三种用户流程
 
 ### 11.1 个股主动决策
@@ -836,7 +1003,8 @@ Y：相对强弱 5 日变化或动量变化
 
 ```text
 确认交易日已收市
-  → 冻结 active Observation Group 版本
+  → 从已部署系统同步并保存当前 Universe Revision
+  → 同步并冻结 active Observation Group 版本
   → 增量补齐全部 symbol 日 K
   → 质量 Gate
   → 计算指标与组级特征
@@ -847,6 +1015,10 @@ Y：相对强弱 5 日变化或动量变化
   → 保存远端结果并生成新报告版本
 ```
 
+计划时间必须基于目标市场交易日历、`market_timezone`、正式收盘时间和可配置的数据到齐缓冲，而不是简单按服务器本地日期运行。
+调度器必须持有任务级互斥锁，同一交易日同一 slot 不能并发执行；进程重启后从已保存 stage 恢复或幂等重跑。
+`--once post_close_review` 仅用于人工联调和补跑，仍执行相同的 sync、冻结、质量和报告链路，不能走旁路。
+
 确定性报告至少回答：
 
 - 哪些组正在改善、转弱或异常；
@@ -856,6 +1028,88 @@ Y：相对强弱 5 日变化或动量变化
 - 哪些策略出现显著冲突。
 
 远端 AI 失败不能使确定性报告失败。
+
+### 11.4 已部署系统的关注列表是自动运行的上游事实源
+
+Phase C 不维护第二份自动关注列表。只要配置了 `OBSERVATION_UNIVERSE_SOURCE_URL`，每次正式盘后运行必须先通过
+`GET {OBSERVATION_UNIVERSE_SOURCE_URL}/api/settings/universe` 读取已部署 Urus 当前 Universe，再生成本地可审计版本。禁止直接
+读取远端数据库、共享目录或进程缓存，也禁止把某次获取到的 symbol 清单硬编码进仓库。
+
+同步顺序固定如下：
+
+```text
+拉取上游 Universe
+  → 校验响应 Schema、symbol、asset_type、roles、tags
+  → 规范化并计算 source content hash
+  → 保存不可变 Local Universe Revision
+  → 根据该 revision 同步自动 Observation Group
+  → 冻结本次运行引用的 group version
+```
+
+自动组生成规则：
+
+- 只选取 `enabled=true` 且 `roles.equity_watchlist=true` 的成员；股票和 ETF 都必须保留；
+- 所有入选成员进入一个 `core-watchlist` 组，产品名称为“指标推荐”，并带有 `indicator-recommendation` 标签；每个有效
+  `theme` 生成一个主题组；
+- “指标推荐”是部署 Universe 的只读投影，设置页只能查看和筛选，不能手动勾选或取消成员；同一 symbol 可以同时属于指标推荐
+  和多个主题组，不能因为跨组重叠被删除；
+- 自动组必须保存 `source_url`、上游 revision/hash、本地 Universe Revision ID 和同步时间；
+- 上游不再返回的自动组应退役，但不得删除历史版本、历史运行，也不得改动手工组；
+- 上游内容 hash 未变化时，同步必须复用已有 revision 和 group version，不制造空版本。
+
+“指标推荐”是独立的自动列表；`SECTOR WATCHLIST` 只展示由当前 Universe 的 `theme` 投影生成的主题组。主题归属可在
+Universe 设置页自由维护，不再提供“自选组 / 自选个股”这类特殊 Observation Group。为兼容旧版本，带有
+`user-qualified`、`self-selected` 或 `user-selected` 标签的旧手工组只保留用于历史引用，不出现在 active group 列表、侧栏或默认盘后运行中；
+其历史 group ID、版本和运行均不迁移、不删除。
+
+正式同步入口为 `POST /api/observation/groups/sync`。响应至少返回：来源标识、上游 revision/hash、本地 revision ID、创建/复用/
+退役的组、成员数和同步时间。日志、错误和 API 响应中的 URL 必须移除用户名、密码、token 和敏感 query 参数。
+
+### 11.5 同步失败、陈旧数据与幂等策略
+
+默认策略是 fail closed：配置了上游来源但本次无法成功同步时，不允许悄悄改用 `ENABLED_SYMBOLS`、上次内存状态或空 Universe
+启动新的正式 Observation Run；已经保存的历史报告仍可读取。这样可以避免系统看似正常、实际观察错误标的。
+
+如运维确实需要容灾，可显式设置 `OBSERVATION_ALLOW_STALE_UNIVERSE=true`。此时只能复用最近一次成功保存的 Local Universe
+Revision，并必须在 run 和 report 中记录 `universe_freshness=stale`、最后成功同步时间、失败原因和可见警告。默认值必须为
+`false`，不能由代码自动打开。
+
+幂等边界至少包括：
+
+- Universe Revision：规范化后的上游内容 hash；
+- Group Version：group ID、成员/角色/标签 hash 与来源 revision；
+- Observation Run：交易日、全部冻结 group version、策略/指标 policy version；
+- Dataset/Snapshot：run ID、去重 symbol 集、benchmark 集、数据截止时间和 schema version。
+
+重复触发相同盘后槽位应返回或复用同一份逻辑结果；如果输入发生变化，应明确创建新版本，不能原地覆盖旧报告。
+
+### 11.6 一次运行只冻结一份共享市场数据集
+
+调度器在同步完成后，对全部 active group 的成员和所需 benchmark 求并集并去重，一次性完成日 K 补齐、质量 Gate、指标计算和
+Strategy Decision。所有组快照都引用同一个 run-level dataset；重叠 symbol 必须复用相同 bar、feature snapshot 和 Strategy
+Decision ID，不能按组重复采集或得到不同的“同日事实”。
+
+相对强弱等依赖 benchmark 的投影必须保存 benchmark ID 和版本，并拒绝在同一比较面板中混用不同 benchmark。每个报告项都
+必须能追溯到 `observation_run_id → group_version_id → dataset/snapshot ID → evidence reference`。
+
+单个 symbol 的采集或计算失败不得让整次运行消失。运行可进入 `partial`，但必须保留失败 symbol、失败阶段、错误类别、重试次数
+及其影响的组；报告中不得把缺失值当成零值或把失败成员从分母中无声移除。
+
+### 11.7 deterministic-only 报告契约
+
+关闭 AI（`URUS_AGENT_ENABLED=false`）且没有任何模型密钥时，盘后流程仍必须完整结束并产出
+`urus.observation_report.v1`。基础报告至少包含：
+
+- Universe 来源/revision/freshness、group version、dataset 和 policy provenance；
+- 组强弱排序、改善/恶化、广度变化和状态转换；
+- 个股领先、掉队、刚触发、接近触发、刚失效及数据异常；
+- 机会泳道、风险泳道、策略冲突和质量问题；
+- Group Momentum Map、Breadth Delta 和状态转换所需的冻结数据；
+- report schema version、稳定 content hash、生成时间和运行状态。
+
+“异常”必须来自版本化阈值、横截面分布或相邻交易日状态差分，不能只是任意截取 top K。相同冻结输入和相同 policy version 必须
+生成相同业务内容 hash；时间戳、数据库 ID 等运行元数据不得污染该 hash。AI 入口在 Phase C 只能作为占位能力，自动任务不得
+调用聊天接口、Anomalo 或任何模型服务。
 
 ## 12. Urus 与 Anomalo 的职责
 
@@ -1210,6 +1464,10 @@ artifact 是不可变记录；重跑创建新的 Remote Decision Run，不覆盖
 /instruments/:symbol
 /groups
 /groups/:groupId
+/indicators
+/indicators/:indicatorId
+/strategies
+/strategies/:strategyId
 /observation-groups
 /observation-runs
 /observation-runs/:runId
@@ -1223,6 +1481,8 @@ artifact 是不可变记录；重跑创建新的 Remote Decision Run，不覆盖
 /instruments/NVDA?range=6m&mode=technical&panes=volume,rsi,relative_strength
 /instruments/NVDA?range=1y&strategy=trend_momentum_v1&focus=2026-08-21
 /groups/optical-module?view=rotation&date=2026-08-21&symbol=COHR
+/indicators/rsi14?run=observation-run-id&sort=transition&group=optical-module
+/strategies/quality_left_side_reversal_v1?run=observation-run-id&stage=confirmed
 ```
 
 URL 只保存显示模式、可见窗口和选择对象，不保存完整数据或修改 Decision Dataset。未识别的 Layer 和 pane 安全忽略，
@@ -1312,6 +1572,8 @@ backend/app/integrations/
 frontend/src/views/
   InstrumentDecisionView.vue
   GroupDecisionView.vue
+  IndicatorScannerView.vue
+  StrategyScannerView.vue
   ObservationGroupsView.vue
   ObservationRunView.vue
   RemoteDecisionRunView.vue
@@ -1329,6 +1591,10 @@ frontend/src/components/decision/
   GroupRotationMap.vue
   GroupHeatmap.vue
   InstrumentSmallMultiples.vue
+  IndicatorCrossSection.vue
+  StrategyCrossSection.vue
+  CrossSectionHeatmap.vue
+  StateTransitionLanes.vue
   ObservationVisualOverview.vue
   RemoteWorkflowStatus.vue
 ```
@@ -1423,6 +1689,10 @@ Interface 是主要测试面。
 - 数据质量和缺失状态可见；
 - 页面刷新不自动发起新 Workflow；
 - Observation Run 正确展示 deterministic-only 与 AI-enhanced 两种版本。
+- 指标页和策略页只读取同一 Observation Run 的横向投影，不在前端重算指标或策略；
+- 同一 symbol 出现在多个组时引用同一个底层 snapshot/decision，组成员关系可以重复展示但证据不能复制成不同版本；
+- 不同 feature version、strategy version、implementation hash 或 benchmark 的结果不会被静默混排；
+- 指标/策略 AI 按钮在 Phase C 保持 disabled，Phase E 接入后也不会因页面刷新自动提交。
 
 ## 23. 分阶段开发计划
 
@@ -1465,12 +1735,32 @@ Interface 是主要测试面。
 
 ### Phase C：组与 Observation Run
 
+Phase C 实现状态（2026-08-25）：正式入口为 `POST /api/observation/groups/sync` 和 `POST /api/observation/runs`。前者从
+`OBSERVATION_UNIVERSE_SOURCE_URL` 指向的已部署 Urus 读取当前 `/api/settings/universe`，保存带来源、revision、content hash 和
+freshness 的本地 Universe 版本，并按 `roles.equity_watchlist` 生成“指标推荐”和主题组；后者严格按“同步关注列表 → 冻结组版本 →
+一次性冻结全部去重 symbol 的共享 dataset → 组快照/策略 → deterministic-only 报告”执行。整个闭环已在
+`URUS_AGENT_ENABLED=false` 下完成真实本地联调：实时上游响应被成功读取，生成 9 个自动组、27 个关注标的，盘后运行成功，
+报告为 `urus.observation_report.v1`，所有组复用同一个 run-level dataset，指标/策略横向投影均保持 AI disabled。
+
+侧栏将“指标推荐”作为独立列表；`SECTOR WATCHLIST` 只包含由 Universe 主题自由生成的主题组。Universe 设置页可以筛选
+“指标推荐”并查看成员，也可以维护主题归属，但不再提供 `equity_watchlist` 的手动开关；保存时保留上游成员资格，新建标的默认不进入指标推荐。
+
+运行时仍支持没有上游地址的本地开发模式（freshness 为 `local`）；配置上游后默认 fail-closed，只有显式启用
+`OBSERVATION_ALLOW_STALE_UNIVERSE=true` 才允许复用最近一次成功 revision，并将 `stale` 和错误原因写入同步结果与报告。
+
+同一 Observation Run 中，重叠组引用相同的 dataset、instrument snapshot 和 Strategy Decision；相对强弱投影拒绝混用
+benchmark。报告保存 `urus.observation_report.v1`、内容 hash、改善/恶化组、强弱异常、机会/风险泳道、策略冲突、质量问题、
+Group Momentum Map、Breadth Delta 和状态转换，前端只渲染冻结结果。单 symbol 失败保留为显式质量项，不会删除其余组结果。
+
 开发：
 
 - Observation Group 版本；
 - 组级特征和组级策略；
 - 组页面；
 - 组相对强弱、广度、轮动象限、热力图和 small multiples；
+- 指标目录、单指标横向扫描页和跨组指标投影；
+- 策略目录、单策略横向扫描页和跨组 Strategy Decision 投影；
+- 指标/策略页的分组热力图、状态变化列表、个股下钻和 AI 按钮占位；
 - 唯一收市后计划任务；
 - Observation Run 可视总览；
 - deterministic-only 收市后报告。
@@ -1479,7 +1769,67 @@ Interface 是主要测试面。
 
 - 能同时运行多个已配置组；
 - 报告能识别改善/恶化组和异常个股；
-- 单个 symbol 失败不会使整次运行消失。
+- 单个 symbol 失败不会使整次运行消失；
+- 能从一个指标视角比较全部观察组成员，且所有值来自同一 Observation Run 和 feature version；
+- 能从一个策略视角比较全部观察组成员，且不混用不同 strategy version 或 implementation hash；
+- 指标/策略页能优先显示刚转换、刚触发、接近触发和刚失效的 symbol；
+- AI 按钮只占位，不调用现有聊天接口或伪造结果。
+
+#### Phase C 实施记录与维护顺序
+
+按以下垂直切片交付，每一片通过测试后再进入下一片，避免先铺 UI、最后才发现数据契约无法闭环：
+
+1. **C1 数据契约与迁移**：定义 Universe Revision、Group/Group Version、Observation Run、共享 Dataset/Snapshot、Report 的表、
+   枚举、唯一约束、外键和 Pydantic/TypeScript Schema；迁移必须可从现有数据库前向升级。
+2. **C2 上游 Universe 同步**：实现 HTTP client、响应校验、规范化/hash、revision 复用、自动组生成/退役、手工组隔离、凭据脱敏
+   和 fail-closed/stale 显式策略。
+3. **C3 共享数据集编排**：对组成员及 benchmark 求并集，复用采集、feature 和 Strategy Decision；保存完整 provenance，支持
+   单 symbol 失败后的 `partial` 结果。
+4. **C4 确定性报告**：实现 `urus.observation_report.v1`、稳定 hash、状态差分、异常阈值、组/个股泳道、冲突和质量摘要；禁止
+   任何模型调用。
+5. **C5 API 与前端投影**：完成组同步/查询、运行创建/历史/详情、报告读取；组页、总览、指标页和策略页只渲染冻结快照，并可
+   下钻到 Evidence Reference。
+6. **C6 调度与本地运维**：唯一常驻入口使用 `scripts/schedule_market_data_collection.py`；盘后槽位先 sync 再 run，支持
+   `--once post_close_review`、时区/交易日校验、幂等重跑和结构化日志。
+7. **C7 真实联调与交付证据**：使用部署实例实时返回的关注列表完成一次本地盘后运行，保存命令、脱敏配置、实际 symbol/group
+   数、run ID、report hash、运行状态和关键 API 响应；不得把当次 symbol 清单或数量固化为产品规则。
+
+建议代码落点：`backend/app/core/config.py`、`backend/app/schemas/observation.py`、
+`backend/app/repositories/{universe,observation}.py`、`backend/app/services/observation.py`、
+`backend/app/decision_harness/observation_report.py`、`backend/app/api/routes/observation.py`、数据库迁移、
+`backend/scripts/schedule_market_data_collection.py`，以及前端对应的 API/types/views。若仓库实际结构不同，应保持职责边界而不是
+机械创建同名文件。
+
+#### Phase C 必测场景与本地验收
+
+自动化测试至少覆盖：
+
+1. 上游股票与 ETF 都进入“指标推荐”，tags 生成重叠主题组；指标推荐独立展示，`SECTOR WATCHLIST` 只展示主题组，旧自选组不进入 active catalog；
+2. 相同上游内容重复同步不新增 revision/group version；
+3. 上游删除 tag 只退役自动组，历史版本和手工组保留；
+4. 上游超时、非 2xx、坏 JSON、Schema 错误和重复 symbol 均按契约处理并脱敏；
+5. 默认 fail closed；显式 stale 模式复用最近成功 revision 并在报告中告警；
+6. 多个组重叠成员时只产生一份 run-level dataset 和一套 symbol snapshot/decision；
+7. benchmark 不一致时比较被拒绝，而不是静默混算；
+8. 相同冻结输入重复生成报告时业务 content hash 一致；
+9. 单 symbol 失败生成 `partial` 报告，组分母、失败原因和受影响视图明确；
+10. 调度器严格执行 sync-before-run，重复盘后触发幂等，且 AI/Anomalo/chat client 调用次数为零；
+11. 前端能查看来源、freshness、group/run 历史、报告版本并下钻到冻结证据。
+
+Luna 完成编码后必须按 README 启动本地后端、前端和调度器，并执行一次：
+
+```bash
+cd backend
+uv run alembic upgrade head
+uv run python scripts/schedule_market_data_collection.py \
+  --api-base-url http://127.0.0.1:8000/api \
+  --backend-managed-externally \
+  --once post_close_review
+```
+
+验收人随后检查 `/api/settings/universe`、`/api/observation/groups`、运行详情和最新报告：来源应为配置的部署实例，成员数与本次
+实时响应一致，所有组引用同一共享 dataset，报告具备稳定 hash，且日志中不存在 AI 调用。真实地址和凭据只放本地环境变量，
+不能提交到文档、fixture 或版本库。
 
 ### Phase D：Anomalo Workflow 设计冻结
 
@@ -1490,10 +1840,28 @@ Interface 是主要测试面。
 - alignment/execution/result 契约；
 - evidence bundle 读取方式；
 - idempotency、超时、重试和 trace 规则；
-- 三个 Workflow 模板；
+- 个股、组、Observation Run 三个基础 Workflow 模板；
+- 指标横向评估和策略横向评估的 observation_run lens 契约；
+- `indicator-cross-section-review` 与 `strategy-cross-section-review` Workflow 模板；
+- 两类页面按钮的 trigger source、确认信息、输入 manifest 和 Result Schema；
 - Anomalo 对齐测试样例。
 
 退出条件：同一 JSON 在 Urus 和 Anomalo 计算出相同 hash；Anomalo 能对每个节点明确返回 aligned 或具体不兼容原因。
+
+指标/策略横向评估 Workflow 必须继续使用 `observation_run` scope。输入 manifest 固定包含本次运行的 group snapshot、indicator
+snapshot 或 Strategy Decision ID、版本/hash、质量状态和 Evidence Reference。Workflow 不允许重新查询“最新数据”，也不允许
+扩大到当前 Observation Run 之外的 group 或 symbol。idempotency key 至少包含：
+
+```text
+observation_run_id
+lens.type / lens.id / lens.version / implementation_sha256（若适用）
+workflow_id / workflow_version
+request_intent_id
+```
+
+指标横向评估的结构化输出重点是跨组异常、状态转换、极端值是否具有组内一致性以及需要继续下钻的 symbol；策略横向评估的
+结构化输出重点是策略适用性、setup 质量、组间差异、确认/失效风险和策略自身的异常判断。两者都只能解释和排序已有证据，
+不能改写指标、Strategy Decision 或 Deterministic Synthesis。
 
 ### Phase E：远端 AI 接入
 
@@ -1501,9 +1869,16 @@ Interface 是主要测试面。
 
 - `AnomaloWorkflowAdapter`；
 - 主动个股/组触发；
+- 启用指标页“AI 评估当前指标”和策略页“AI 评估当前策略”；
+- 提交前确认 observation run、lens、覆盖组数、symbol 数、数据质量和 Workflow 版本；
+- indicator/strategy cross-section 远端状态轮询与结构化结果投影；
 - 收市后 observation_run 提交；
 - 状态轮询和结果投影；
 - Fake/production Adapter contract tests。
+
+按钮只有在以下条件全部满足时才启用：绑定的 Observation Run 已完成、lens 对应版本唯一、必要 snapshot/decision 可读、
+Workflow alignment receipt 有效。提交后页面保留原确定性横向视图，并在独立 AI 区域显示 queued/alignment/running/
+succeeded/partial/failed 状态。AI 结果保存为附加 artifact，不覆盖原横向排名；远端失败时指标页和策略页仍完整可用。
 
 ### Phase F：案例、回放和 Skill 演化
 
@@ -1566,7 +1941,10 @@ Anomalo 尚无动态 Skill 更新 Interface 时，Urus 只生成版本化候选�
 9. 远端失败不影响确定性结果；
 10. 所有远端结果可追溯到 dataset、scope、strategy、workflow、skill 和 hash；
 11. 决策账本从策略上线第一天开始保存；
-12. 不自动交易，不自动修改 active 策略或 Skill。
+12. 不自动交易，不自动修改 active 策略或 Skill；
+13. 指标页能从单一指标视角横向比较全部 Observation Group 成员；
+14. 策略页能从单一策略视角横向比较全部 Observation Group 成员；
+15. 横向页面只投影冻结证据，AI 结果只作为附加解释，不能覆盖正式指标、策略输出或排名。
 
 ## 26. 已确定决策与待协议项
 
@@ -1577,6 +1955,7 @@ Anomalo 尚无动态 Skill 更新 Interface 时，Urus 只生成版本化候选�
 - 算法策略先于 AI，并已能给出页面建议；
 - AI 只能主动发起，外加唯一的收市后计划任务；
 - 个股、组、跨组 Observation Run 是三种 Decision Scope；
+- 指标页和策略页是 Observation Run 的横向 lens，不新增 Decision Scope；
 - AI Workflow 执行能力集中在 Anomalo；
 - Workflow Definition 由 Urus 设计和版本化；
 - 案例、回放和 Skill 演化最后开发，但账本立即开始记录。

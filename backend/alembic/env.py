@@ -43,6 +43,10 @@ from app.models import (  # noqa: F401
     DecisionChartProjectionModel,
     StrategyDecisionModel,
     DeterministicSynthesisModel,
+    ObservationGroupVersionModel,
+    GroupDailySnapshotModel,
+    ObservationRunModel,
+    ObservationUniverseRevisionModel,
 )
 
 config = context.config

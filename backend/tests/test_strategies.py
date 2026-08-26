@@ -165,3 +165,42 @@ def test_quality_left_side_reversal_requires_a_benchmark() -> None:
 
     assert decisions[0]["status"] == "not_applicable"
     assert decisions[0]["reasons"][0]["code"] == "benchmark_missing"
+
+
+def test_strategy_quality_gate_blocks_partial_daily_evidence() -> None:
+    dataset = {
+        "dataset_id": "dataset-partial-quality",
+        "scope": {
+            "scope_type": "instrument",
+            "scope_id": "INTC",
+            "symbols": ["INTC"],
+            "benchmark_symbols": [],
+        },
+        "quality": {"symbols": {"INTC": {"status": "partial"}}},
+    }
+    chart = {
+        "instruments": {
+            "INTC": {
+                "price": {
+                    "bars": [
+                        {
+                            "date": "2026-08-21",
+                            "open": 20.0,
+                            "high": 21.0,
+                            "low": 19.0,
+                            "close": 20.5,
+                            "volume": 1000.0,
+                        }
+                    ]
+                }
+            }
+        }
+    }
+
+    decisions, synthesis = StrategyRegistry(
+        adapters=(SkippedStrategy(),)
+    ).evaluate(dataset, chart)
+
+    assert decisions[0]["status"] == "not_applicable"
+    assert decisions[0]["reasons"][0]["code"] == "data_quality"
+    assert synthesis["consensus_state"] == "insufficient_data"

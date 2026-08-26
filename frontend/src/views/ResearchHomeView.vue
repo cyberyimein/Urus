@@ -40,16 +40,16 @@ onMounted(async () => {
   <main class="page-shell research-library-page">
     <section class="research-library-header">
       <div>
-        <p class="eyebrow">RESEARCH CENTER</p>
-        <h1>研究中心</h1>
-        <p class="hero-copy">查看最新研究判断，或进入正式日循环、手动分析和历史报告。</p>
+        <p class="eyebrow">LEGACY RESEARCH CENTER</p>
+        <h1>旧研究中心</h1>
+        <p class="hero-copy">这里保留旧版研究判断、正式日循环、手动分析和历史报告；新的组观察与横向扫描请从主导航进入。</p>
       </div>
       <div class="research-library-actions">
         <RouterLink class="primary-button" to="/analysis/new">手动分析</RouterLink>
         <RouterLink class="text-link" to="/research/daily">正式日循环</RouterLink>
         <RouterLink class="text-link" to="/research/on-demand">手动记录</RouterLink>
         <RouterLink class="text-link" to="/research/datasets">冻结数据集</RouterLink>
-        <RouterLink class="text-link" to="/research/reports">全部历史 →</RouterLink>
+        <RouterLink class="text-link" to="/research/reports">历史报告 →</RouterLink>
         <RouterLink class="text-link" to="/operations">开发工具 →</RouterLink>
       </div>
     </section>

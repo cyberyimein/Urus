@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from scripts.schedule_market_data_collection import due_slots, slot_key, slot_policy
+from scripts.schedule_market_data_collection import collect, due_slots, slot_key, slot_policy
 
 
 TOKYO = ZoneInfo("Asia/Tokyo")
@@ -73,3 +73,43 @@ def test_due_slots_apply_runtime_schedule_switches() -> None:
     assert [(item[1], item[2]) for item in due] == [("pre_close", "尾盘前")]
     assert slot_policy(schedule, "pre_close") == (True, True)
     assert slot_policy(schedule, "pre_market") == (True, True)
+    assert slot_policy(schedule, "pre_market", ai_decision_enabled=False) == (True, True)
+
+
+def test_post_close_slot_syncs_universe_and_creates_deterministic_observation(monkeypatch) -> None:
+    calls: list[tuple[str, str, dict | None]] = []
+
+    def fake_request(url: str, *, method: str = "GET", payload=None, timeout: float = 10.0):
+        calls.append((url, method, payload))
+        if url.endswith("/observation/groups/sync"):
+            return {
+                "source": "stale",
+                "group_count": 4,
+                "symbol_count": 27,
+                "universe_revision_id": "revision-1",
+                "universe_freshness": "stale",
+                "source_url": "https://deployed.example/api",
+            }
+        if url.endswith("/observation/runs"):
+            return {"run_id": "observation-1", "status": "succeeded"}
+        raise AssertionError(f"unexpected scheduler request: {url}")
+
+    monkeypatch.setattr("scripts.schedule_market_data_collection.request_json", fake_request)
+
+    result = collect("http://urus.test/api", "post_close_review", timeout=30)
+
+    assert result["run_id"] == "observation-1"
+    assert result["universe_sync"]["symbol_count"] == 27
+    assert calls == [
+        ("http://urus.test/api/observation/groups/sync", "POST", {}),
+        (
+            "http://urus.test/api/observation/runs",
+            "POST",
+            {
+                "trigger_mode": "scheduled",
+                "universe_revision_id": "revision-1",
+                "universe_freshness": "stale",
+                "universe_source_url": "https://deployed.example/api",
+            },
+        ),
+    ]

@@ -13,7 +13,8 @@ describe('AppShell', () => {
       },
     })
 
-    expect(wrapper.get('nav').text()).toContain('研究中心')
+    expect(wrapper.get('nav').text()).toContain('旧研究中心')
+    expect(wrapper.get('nav').text()).not.toContain('历史报告')
     expect(wrapper.get('nav').text()).not.toContain('手动分析')
     expect(wrapper.get('nav').text()).not.toContain('开发工具')
   })

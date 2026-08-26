@@ -79,4 +79,33 @@ describe('UniverseSettingsView', () => {
       ]),
     }))
   })
+
+  it('filters by watchlist while keeping indicator recommendation membership read-only', async () => {
+    vi.spyOn(api, 'getUniverse').mockResolvedValue(structuredClone(universe))
+    const wrapper = mount(UniverseSettingsView, { global: { stubs: { AppShell: true, RouterLink: true } } })
+    await flushPromises()
+
+    const coreButton = wrapper.findAll('.watchlist-tabs button').find((button) => button.text().startsWith('指标推荐'))
+    expect(coreButton).toBeTruthy()
+    await coreButton!.trigger('click')
+    expect(wrapper.findAll('tbody tr')).toHaveLength(1)
+    await wrapper.find('tbody tr').trigger('click')
+    expect(wrapper.find('input[aria-label="核心关注列表"]').exists()).toBe(false)
+    expect(wrapper.find('.protected-role').text()).toContain('已由部署 Universe 纳入')
+    await wrapper.get('button[aria-label="关闭"]').trigger('click')
+
+    const listButton = wrapper.findAll('.watchlist-tabs button').find((button) => button.text().startsWith('大型科技'))
+    expect(listButton).toBeTruthy()
+    await listButton!.trigger('click')
+    expect(wrapper.findAll('tbody tr')).toHaveLength(1)
+    expect(wrapper.find('tbody').text()).toContain('AAPL')
+
+    await wrapper.find('tbody tr').trigger('click')
+    await wrapper.get('.theme-add-row input').setValue('AI 基础设施')
+    await wrapper.get('.theme-add-row button').trigger('click')
+    const membership = wrapper.findAll('.list-check').find((label) => label.text().includes('大型科技'))
+    expect(membership).toBeTruthy()
+    await membership!.get('input').setValue(false)
+    expect(wrapper.find('.theme-chip-list').text()).not.toContain('大型科技')
+  })
 })

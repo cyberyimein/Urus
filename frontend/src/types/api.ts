@@ -24,6 +24,157 @@ export interface WatchlistResponse {
   is_mock: boolean
 }
 
+export interface ObservationGroup {
+  version_id: string
+  group_id: string
+  version: number
+  status: string
+  source: 'manual' | 'universe' | string
+  universe_revision_id: string | null
+  display_name: string
+  description: string
+  symbols: string[]
+  benchmark_symbols: string[]
+  tags: string[]
+  display_order: number
+  content_sha256: string
+  created_at: string
+  activated_at: string | null
+}
+
+export interface ObservationGroupDetail {
+  group: ObservationGroup
+  latest_snapshot: GroupDailySnapshot | null
+}
+
+export interface ObservationGroupSync {
+  source: string
+  source_url: string | null
+  universe_revision_id: string
+  universe_version_id: string
+  universe_revision: number
+  universe_freshness: 'fresh' | 'stale' | 'local' | string
+  warnings: string[]
+  sync_error?: string | null
+  upstream_universe_version_id?: string | null
+  upstream_universe_revision?: number | null
+  symbol_count: number
+  group_count: number
+  groups: ObservationGroup[]
+}
+
+export interface GroupDailySnapshot {
+  schema_version: string
+  feature_version: string
+  dataset_id: string
+  indicator_snapshot_ids: string[]
+  group: {
+    group_id: string
+    version_id: string
+    version: number
+    display_name: string
+    symbols: string[]
+    benchmark_symbols: string[]
+  }
+  trading_date: string
+  quality: {
+    requested_symbol_count: number
+    valid_symbol_count: number
+    missing_symbol_count: number
+    status: string
+    warnings: string[]
+  }
+  features: {
+    valid_symbol_count: number
+    requested_symbol_count: number
+    missing_symbol_count: number
+    returns_percent: Record<string, { count: number; median: number | null; q1: number | null; q3: number | null; min: number | null; max: number | null }>
+    breadth: Record<string, number | null>
+    rsi_distribution: Record<string, number | null>
+    rsi_extremes: Record<string, number | null>
+    macd_positive_percent: number | null
+    volume_expansion_percent: number | null
+    relative_strength: Record<string, string | number | null>
+    cross_sectional_dispersion_1d: number | null
+    leaders: Array<{ symbol: string; return_percent: number | null }>
+    laggards: Array<{ symbol: string; return_percent: number | null }>
+    leader_concentration: number | null
+  }
+  symbols: Array<Record<string, any>>
+  charts: {
+    relative_strength: { benchmark: string | null; series: Array<{ time: string; value: number | null; benchmark_value?: number | null }>; dispersion: Array<{ time: string; value: number | null }> }
+    breadth: { series: Record<string, Array<{ time: string; value: number | null }>> }
+    rotation: Array<{ symbol: string; x_relative_20d: number | null; y_relative_change: number | null; size: number | null; stance: string; trend?: string }>
+    heatmap: Array<Record<string, any>>
+    small_multiples: Array<{ symbol: string; points: Array<{ time: string; value: number | null; ma20: number | null; ma50: number | null }>; return_20d: number | null; trend: string | null }>
+  }
+  group_decision: { state: string; stance: string; action: string; reasons: string[]; participation?: number | null; leader_concentration?: number | null }
+  group_strategy_decisions: Array<Record<string, any>>
+  changes: {
+    previous_trading_date: string | null
+    group_state: { from: string | null; to: string | null; changed: boolean }
+    median_20d_delta_percent: number | null
+    breadth_ma20_delta: number | null
+    relative_20d_delta_percent: number | null
+    leaders_added: string[]
+    leaders_removed: string[]
+  }
+  strategy_decisions: Array<Record<string, any>>
+  deterministic_synthesis: Record<string, any>
+  content_sha256: string
+}
+
+export interface ObservationRun {
+  run_id: string
+  status: string
+  trigger_mode: string
+  trading_date: string
+  universe_revision_id: string | null
+  universe_freshness: string
+  universe_source_url: string | null
+  idempotency_key: string
+  group_ids: string[]
+  group_version_ids: string[]
+  group_snapshots: Array<Record<string, any>>
+  report?: ObservationReport
+  group_count: number
+  successful_group_count?: number
+  failed_group_count?: number
+  content_sha256: string
+  created_at: string
+  completed_at: string | null
+  error_message: string | null
+}
+
+export interface ObservationReport {
+  schema_version: string
+  mode: 'deterministic-only' | string
+  run_id: string
+  trading_date: string
+  provenance?: {
+    universe_revision_id?: string | null
+    universe_freshness?: string
+    universe_source_url?: string | null
+    dataset_ids?: string[]
+    group_version_ids?: string[]
+  }
+  summary: Record<string, number>
+  group_rankings: Array<Record<string, any>>
+  improving_groups: Array<Record<string, any>>
+  deteriorating_groups: Array<Record<string, any>>
+  anomalies: { leaders: Array<Record<string, any>>; laggards: Array<Record<string, any>> }
+  strategy_conflicts: Array<Record<string, any>>
+  quality_issues: Array<Record<string, any>>
+  opportunity_lanes: Record<string, Array<Record<string, any>>>
+  risk_lanes: Record<string, Array<Record<string, any>>>
+  visuals: {
+    group_momentum_map: Array<Record<string, any>>
+    breadth_delta: Array<Record<string, any>>
+    state_transitions: Array<Record<string, any>>
+  }
+  content_sha256: string
+}
+
 export interface RunListItem {
   id: string
   run_type: RunType

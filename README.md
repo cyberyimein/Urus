@@ -16,11 +16,14 @@ Urus 是研究软件，不是交易系统：它不连接券商下单，不执行
 - **研究分支**：支持确定性的 CTA ETF 代理压力分析，也保留事件研究覆盖层的配置入口。
 - **Stage 4B Urus Agent**：可选通过 OpenRouter 对冻结证据进行结构化分析；模型只能使用受约束的只读工具，输出会保存 schema、模型、成本、token 和 trace 信息。
 - **研究前端**：Vue 3 界面提供首页、手动分析、研究报告、技术报告、决策摘要、trace、运行进度、Universe 和运行设置。
+- **确定性收市复盘**：从已部署 Urus 同步关注列表，按核心列表和主题生成版本化 Observation Group，共享冻结数据集并产出不依赖 AI 的跨组报告。
 - **可重现持久化**：SQLAlchemy + Alembic 保存运行、快照、指标、期权、报告、数据集和 AI 审计记录；本地默认 SQLite，也可配置 PostgreSQL。
 
 ## 当前状态
 
 项目处于积极开发阶段。真实数据源和 AI 均通过显式开关启用；关闭或不可用时，系统会保留 `disabled`、`unavailable`、`partial` 或 `is_mock` 等状态，不把占位结果伪装成实时事实。
+
+阶段 C（确定性收市复盘）已落地：盘后任务从已部署 Urus 同步当前 Universe，生成带 provenance 的观察组，复用 run-level 冻结数据集，并产出不依赖 AI 的 Observation Report；默认上游不可用时 fail-closed。
 
 当前默认配置：
 
@@ -118,6 +121,28 @@ export VITE_API_BASE_URL=http://backend-host:8000/api
 npm run dev
 ```
 
+### 4. 启动每日收市任务
+
+另开终端运行常驻调度器。它读取 `/api/settings` 中的东京时区计划；盘后槽位会先从已部署系统同步 Universe，再执行一份 `deterministic-only` Observation Run，不调用 AI：
+
+```bash
+cd backend
+uv run python scripts/schedule_market_data_collection.py \
+  --api-base-url http://127.0.0.1:8000/api \
+  --backend-managed-externally
+```
+
+首次联调可立即跑一次完整盘后流程：
+
+```bash
+uv run python scripts/schedule_market_data_collection.py \
+  --api-base-url http://127.0.0.1:8000/api \
+  --backend-managed-externally \
+  --once post_close_review
+```
+
+设置 `OBSERVATION_UNIVERSE_SOURCE_URL=http://deployed-urus:port` 后，`POST /api/observation/groups/sync` 会先读取上游 `/api/settings/universe`，在本地保存带来源的 Universe 版本，再生成核心和主题观察组。
+
 ## 工作流
 
 一次研究运行会保存阶段状态和冻结证据，典型顺序为：
@@ -184,6 +209,9 @@ API 前缀为 `/api`。完整 schema 以运行中的 OpenAPI 为准。
 | `URUS_AGENT_ENABLED` | 启用 Stage 4B Urus Agent |
 | `OPENROUTER_API_KEY` | OpenRouter 密钥，只能放在本地/部署环境变量中 |
 | `URUS_AGENT_MODEL` | OpenRouter 模型标识 |
+| `OBSERVATION_UNIVERSE_SOURCE_URL` | 已部署 Urus 根地址；盘后从其 `/api/settings/universe` 同步当前关注列表 |
+| `OBSERVATION_UNIVERSE_SYNC_TIMEOUT_SECONDS` | 上游关注列表同步超时 |
+| `OBSERVATION_ALLOW_STALE_UNIVERSE` | 上游不可用时是否显式复用最近成功 Universe；默认 `false`，建议保持关闭 |
 | `SCHEDULED_*` | 东京时区的盘前、收盘前和盘后调度开关 |
 
 真实数据联调时，先确认远程或本机 OpenD 已启动且 `MOOMOO_HOST`/`MOOMOO_PORT` 可达。没有 OpenD 时不要把连接失败解释为市场数据缺失或模拟成功。

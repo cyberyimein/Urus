@@ -17,7 +17,14 @@ import type {
 } from '@/types/dailyEvidence'
 
 type LayerKey = 'ma20' | 'ma50' | 'ma200' | 'bollinger' | 'volume' | 'rsi' | 'macd' | 'relative'
-type WatchGroup = { id: string; name: string; benchmark: string; symbols: string[] }
+type WatchGroup = {
+  id: string
+  name: string
+  benchmark: string
+  symbols: string[]
+  source: string
+  tags: string[]
+}
 
 const router = useRouter()
 const route = useRoute()
@@ -46,17 +53,39 @@ const layers = reactive<Record<LayerKey, boolean>>({
   relative: true,
 })
 
-const watchGroups: WatchGroup[] = [
-  { id: 'semiconductors', name: '半导体', benchmark: 'SOXX', symbols: ['INTC', 'NVDA', 'AMD'] },
-  { id: 'optical-modules', name: '光模块', benchmark: 'QQQ', symbols: ['LITE', 'COHR'] },
+const defaultWatchGroups: WatchGroup[] = [
+  { id: 'semiconductors', name: '半导体', benchmark: 'SOXX', symbols: ['INTC', 'NVDA', 'AMD'], source: 'manual', tags: ['theme'] },
+  { id: 'optical-modules', name: '光模块', benchmark: 'QQQ', symbols: ['LITE', 'COHR'], source: 'manual', tags: ['theme'] },
 ]
-const expandedGroups = reactive<Record<string, boolean>>({ semiconductors: true, 'optical-modules': true })
-const watchlistCount = computed(() => watchGroups.reduce((count, group) => count + group.symbols.length, 0))
-const selectedGroup = computed<WatchGroup>(() => watchGroups.find((group) => group.symbols.includes(selectedSymbol.value)) ?? {
+const watchGroups = ref<WatchGroup[]>([])
+const expandedGroups = reactive<Record<string, boolean>>({})
+const isIndicatorGroup = (group: WatchGroup) => group.source === 'universe' && (
+  group.tags.includes('indicator-recommendation') || group.tags.includes('watchlist')
+)
+const isLegacySelfSelectedGroup = (group: WatchGroup) => group.source === 'manual' && (
+  group.tags.includes('self-selected') || group.tags.includes('user-selected') || group.tags.includes('user-qualified')
+)
+const indicatorGroups = computed(() => watchGroups.value.filter(isIndicatorGroup))
+const sectorGroups = computed(() => watchGroups.value.filter((group) => !isIndicatorGroup(group) && !isLegacySelfSelectedGroup(group)))
+const indicatorSymbolCount = computed(() => indicatorGroups.value.reduce((count, group) => count + group.symbols.length, 0))
+const sectorSymbolCount = computed(() => sectorGroups.value.reduce((count, group) => count + group.symbols.length, 0))
+const groupDisplayName = (group: WatchGroup) => {
+  if (isIndicatorGroup(group)) return '指标推荐'
+  return group.name
+}
+const groupSubtitle = (group: WatchGroup) => {
+  if (isIndicatorGroup(group)) return `${group.benchmark} benchmark · 自动生成`
+  return `${group.benchmark} benchmark`
+}
+const selectedGroup = computed<WatchGroup>(() => sectorGroups.value.find((group) => group.symbols.includes(selectedSymbol.value))
+  ?? indicatorGroups.value.find((group) => group.symbols.includes(selectedSymbol.value))
+  ?? {
   id: 'unassigned',
   name: '未分组',
   benchmark: 'QQQ',
   symbols: [selectedSymbol.value],
+  source: 'manual',
+  tags: [],
 })
 const layerLabels: Array<{ key: LayerKey; label: string; short: string }> = [
   { key: 'ma20', label: 'MA20', short: '20' },
@@ -167,6 +196,7 @@ const strategyActionLabels: Record<string, string> = {
   no_action: '不行动',
 }
 const strategyStanceLabels: Record<string, string> = { bullish: '偏多', bearish: '偏空', neutral: '中性', insufficient_data: '不可用' }
+const historicalDatasetId = computed(() => typeof route.query.dataset === 'string' ? route.query.dataset : '')
 
 function formatPrice(value: number | null | undefined) {
   if (value === null || value === undefined || !Number.isFinite(value)) return '—'
@@ -201,7 +231,7 @@ function toggleWatchGroup(groupId: string) {
 function chooseSymbol(symbol: string) {
   const normalized = symbol.trim().toUpperCase()
   if (!normalized || normalized === selectedSymbol.value) return
-  const group = watchGroups.find((item) => item.symbols.includes(normalized))
+  const group = watchGroups.value.find((item) => item.symbols.includes(normalized))
   if (group) expandedGroups[group.id] = true
   selectedSymbol.value = normalized
   symbolDraft.value = normalized
@@ -219,21 +249,49 @@ async function loadEvidence() {
   loading.value = true
   error.value = ''
   demoReason.value = ''
+  const datasetId = historicalDatasetId.value
   try {
-    const response = await api.createDailyDataset({
-      scope_type: 'instrument',
-      scope_id: selectedSymbol.value,
-      symbols: [selectedSymbol.value],
-      benchmark_symbols: ['QQQ'],
-      scope_version: 1,
-    })
-    const chartBars = response.chart?.instruments?.[selectedSymbol.value]?.price?.bars ?? []
-    if (!chartBars.length) throw new Error('后端尚未返回可绘制的完整日 K')
-    applyResponse(response)
+    if (datasetId) {
+      const [storedDataset, storedChart, storedStrategies] = await Promise.all([
+        api.getDailyDataset(datasetId),
+        api.getDailyChart(datasetId),
+        api.getDailyStrategies(datasetId),
+      ])
+      if (storedDataset.dataset_id !== datasetId || storedChart.dataset_id !== datasetId || storedStrategies.dataset_id !== datasetId) {
+        throw new Error('冻结证据的 dataset_id 不一致，已拒绝加载。')
+      }
+      const chartBars = storedChart.instruments?.[selectedSymbol.value]?.price?.bars ?? []
+      if (!chartBars.length) throw new Error(`冻结 dataset 中没有 ${selectedSymbol.value} 的日 K`)
+      applyResponse({
+        dataset: storedDataset,
+        chart: storedChart,
+        strategy_decisions: storedStrategies.strategy_decisions,
+        deterministic_synthesis: storedStrategies.deterministic_synthesis,
+      })
+    } else {
+      const response = await api.createDailyDataset({
+        scope_type: 'instrument',
+        scope_id: selectedSymbol.value,
+        symbols: [selectedSymbol.value],
+        benchmark_symbols: ['QQQ'],
+        scope_version: 1,
+      })
+      const chartBars = response.chart?.instruments?.[selectedSymbol.value]?.price?.bars ?? []
+      if (!chartBars.length) throw new Error('后端尚未返回可绘制的完整日 K')
+      applyResponse(response)
+    }
   } catch (reason) {
     const message = reason instanceof Error ? reason.message : 'Daily Evidence 请求失败。'
-    demoReason.value = `${message} · 当前显示本地演示数据，明确标记为 LOCAL DEMO。`
-    applyResponse(buildDemoResponse(selectedSymbol.value))
+    if (datasetId) {
+      error.value = `冻结证据加载失败：${message}`
+      dataset.value = null
+      projection.value = null
+      strategyDecisions.value = []
+      deterministicSynthesis.value = {}
+    } else {
+      demoReason.value = `${message} · 当前显示本地演示数据，明确标记为 LOCAL DEMO。`
+      applyResponse(buildDemoResponse(selectedSymbol.value))
+    }
   } finally {
     loading.value = false
   }
@@ -360,6 +418,7 @@ function buildDemoResponse(symbol: string): DailyEvidenceResponse {
   const scope = { scope_type: 'instrument' as const, scope_id: symbol, scope_version: 1, symbols: [symbol], benchmark_symbols: ['QQQ'], trading_date: dates[dates.length - 1] }
   const demoDataset: DailyDecisionDataset = {
     schema_version: 'urus.daily_decision_dataset.local-demo.v1',
+    feature_version: 'technical_v5',
     dataset_id: 'local-demo-dataset',
     trading_date: dates[dates.length - 1],
     cutoff_time: '2026-08-22T05:30:00Z',
@@ -392,7 +451,31 @@ function buildDemoResponse(symbol: string): DailyEvidenceResponse {
   return { dataset: demoDataset, chart: demoChart, strategy_decisions: [], deterministic_synthesis: {} }
 }
 
+async function loadWatchGroups() {
+  try {
+    const groups = await api.listObservationGroups()
+    watchGroups.value = groups
+      .map((group) => ({
+        id: group.group_id,
+        name: group.display_name,
+        benchmark: group.benchmark_symbols[0] ?? '—',
+        symbols: group.symbols,
+        source: group.source ?? 'manual',
+        tags: group.tags ?? [],
+      }))
+      .filter((group) => !isLegacySelfSelectedGroup(group))
+    for (const group of watchGroups.value) {
+      if (expandedGroups[group.id] === undefined) expandedGroups[group.id] = !isIndicatorGroup(group)
+    }
+  } catch {
+    // Keep local UI debugging usable when the observation API is offline.
+    watchGroups.value = defaultWatchGroups.map((group) => ({ ...group, symbols: [...group.symbols], tags: [...group.tags] }))
+    for (const group of watchGroups.value) expandedGroups[group.id] = !isIndicatorGroup(group)
+  }
+}
+
 onMounted(() => {
+  void loadWatchGroups()
   void loadEvidence()
 })
 </script>
@@ -422,20 +505,39 @@ onMounted(() => {
           </div>
         </div>
         <div class="rail-divider"></div>
-        <div class="watchlist-block">
-          <div class="rail-section-title"><span class="rail-label">SECTOR WATCHLIST</span><span class="rail-count">{{ watchGroups.length }} / {{ watchlistCount }}</span></div>
-          <div class="watch-groups">
-            <section v-for="group in watchGroups" :key="group.id" class="watch-group">
-              <button class="watch-group-toggle" :class="{ active: group.id === selectedGroup.id }" type="button" :aria-expanded="expandedGroups[group.id]" @click="toggleWatchGroup(group.id)">
-                <span><strong>{{ group.name }}</strong><small>{{ group.benchmark }} benchmark</small></span>
-                <span class="watch-group-meta"><b>{{ group.symbols.length }}</b><i>{{ expandedGroups[group.id] ? '−' : '+' }}</i></span>
-              </button>
-              <div v-show="expandedGroups[group.id]" class="watch-symbol-list">
-                <button v-for="symbol in group.symbols" :key="symbol" class="watch-symbol" :class="{ active: symbol === selectedSymbol }" type="button" @click="chooseSymbol(symbol)">
-                  <span class="watch-symbol-dot"></span><strong>{{ symbol }}</strong><small>{{ symbol === selectedSymbol ? 'OPEN' : 'VIEW' }}</small>
+        <div class="watchlist-rail-scroll">
+          <div v-if="indicatorGroups.length" class="watchlist-block watchlist-core-block">
+            <div class="rail-section-title"><span class="rail-label">指标推荐</span><span class="rail-count">{{ indicatorGroups.length }} / {{ indicatorSymbolCount }}</span></div>
+            <div class="watch-groups">
+              <section v-for="group in indicatorGroups" :key="group.id" class="watch-group">
+                <button class="watch-group-toggle" :class="{ active: group.id === selectedGroup.id }" type="button" :aria-expanded="expandedGroups[group.id]" @click="toggleWatchGroup(group.id)">
+                  <span><strong>{{ groupDisplayName(group) }}</strong><small>{{ groupSubtitle(group) }}</small></span>
+                  <span class="watch-group-meta"><b>{{ group.symbols.length }}</b><i>{{ expandedGroups[group.id] ? '−' : '+' }}</i></span>
                 </button>
-              </div>
-            </section>
+                <div v-show="expandedGroups[group.id]" class="watch-symbol-list">
+                  <button v-for="symbol in group.symbols" :key="symbol" class="watch-symbol" :class="{ active: symbol === selectedSymbol }" type="button" @click="chooseSymbol(symbol)">
+                    <span class="watch-symbol-dot"></span><strong>{{ symbol }}</strong><small>{{ symbol === selectedSymbol ? 'OPEN' : 'VIEW' }}</small>
+                  </button>
+                </div>
+              </section>
+            </div>
+          </div>
+
+          <div class="watchlist-block">
+            <div class="rail-section-title"><span class="rail-label">SECTOR WATCHLIST</span><span class="rail-count">{{ sectorGroups.length }} / {{ sectorSymbolCount }}</span></div>
+            <div class="watch-groups">
+              <section v-for="group in sectorGroups" :key="group.id" class="watch-group">
+                <button class="watch-group-toggle" :class="{ active: group.id === selectedGroup.id }" type="button" :aria-expanded="expandedGroups[group.id]" @click="toggleWatchGroup(group.id)">
+                  <span><strong>{{ groupDisplayName(group) }}</strong><small>{{ groupSubtitle(group) }}</small></span>
+                  <span class="watch-group-meta"><b>{{ group.symbols.length }}</b><i>{{ expandedGroups[group.id] ? '−' : '+' }}</i></span>
+                </button>
+                <div v-show="expandedGroups[group.id]" class="watch-symbol-list">
+                  <button v-for="symbol in group.symbols" :key="symbol" class="watch-symbol" :class="{ active: symbol === selectedSymbol }" type="button" @click="chooseSymbol(symbol)">
+                    <span class="watch-symbol-dot"></span><strong>{{ symbol }}</strong><small>{{ symbol === selectedSymbol ? 'OPEN' : 'VIEW' }}</small>
+                  </button>
+                </div>
+              </section>
+            </div>
           </div>
         </div>
         <div class="rail-footer">

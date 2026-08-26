@@ -28,6 +28,15 @@ class Settings(BaseSettings):
     app_host: str = "127.0.0.1"
     app_port: int = 8000
     database_url: str = "sqlite:///./urus.db"
+    # Optional deployed Urus instance used as the source of truth for the
+    # local Phase C watchlist. Leave empty in production to use its own active
+    # Universe; local workstations can point at the deployed API root.
+    observation_universe_source_url: str = ""
+    observation_universe_sync_timeout_seconds: float = 15.0
+    # A stale local revision is a deliberate emergency mode.  Keep the
+    # default fail-closed so a broken upstream cannot silently change the
+    # observed universe.
+    observation_allow_stale_universe: bool = False
     workflow_process_isolation: bool = True
     workflow_process_timeout_seconds: float = 7200.0
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
@@ -127,11 +136,11 @@ class Settings(BaseSettings):
     # Runtime scheduler defaults. They can be overridden from /settings and
     # are intentionally separate from the provider credentials above.
     scheduled_pre_market_enabled: bool = True
-    scheduled_pre_market_skip_ai_decision: bool = False
+    scheduled_pre_market_skip_ai_decision: bool = True
     scheduled_pre_close_enabled: bool = True
     scheduled_pre_close_skip_ai_decision: bool = True
     scheduled_post_close_enabled: bool = True
-    scheduled_post_close_skip_ai_decision: bool = False
+    scheduled_post_close_skip_ai_decision: bool = True
     event_discovery_horizon_days: int = 120
     event_instrument_symbols: str = (
         "LITE,COHR,MRVL,NOK,AMD,INTC,NVDA,NBIS,ORCL,MSFT,NOW,RKLB,AMZN,AAPL,GOOG"

@@ -79,7 +79,7 @@ class StrategyAdapter:
         )
 
     def evaluate(self, context: StrategyContext) -> dict[str, Any]:
-        if context.quality.get("status") in {"missing", "conflicted"}:
+        if context.quality.get("status") != "ok":
             return self.not_applicable(context, "data_quality", "数据质量未通过策略 Gate。")
         if len(context.bars) < self.minimum_bars:
             return self.not_applicable(
@@ -997,7 +997,7 @@ def deterministic_synthesis(
     bullish = [item for item in usable if item.get("stance") == "bullish"]
     bearish = [item for item in usable if item.get("stance") == "bearish"]
     neutral = [item for item in usable if item.get("stance") == "neutral"]
-    has_failed_quality = any(value in {"missing", "conflicted"} for value in quality_values)
+    has_failed_quality = any(value != "ok" for value in quality_values)
     if has_failed_quality or (has_strategy_error and not usable):
         consensus_state = "insufficient_data"
     elif not usable:
@@ -1084,7 +1084,7 @@ def _build_context(dataset: dict[str, Any], chart: dict[str, Any], symbol: str) 
             dict(item) for item in ((candidate_instrument.get("price") or {}).get("bars") or [])
         ]
         candidate_quality = (dataset.get("quality", {}).get("symbols", {}) or {}).get(str(candidate), {})
-        if candidate_bars and candidate_quality.get("status") not in {"missing", "conflicted"}:
+        if candidate_bars and candidate_quality.get("status") == "ok":
             benchmark = str(candidate)
             benchmark_bars = candidate_bars
             break

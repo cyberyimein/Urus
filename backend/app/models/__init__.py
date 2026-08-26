@@ -42,6 +42,12 @@ from app.models.daily_evidence import (
     DecisionChartProjectionModel,
 )
 from app.models.strategy_decision import DeterministicSynthesisModel, StrategyDecisionModel
+from app.models.observation import (
+    GroupDailySnapshotModel,
+    ObservationGroupVersionModel,
+    ObservationRunModel,
+    ObservationUniverseRevisionModel,
+)
 
 __all__ = [
     "RunModel",
@@ -84,4 +90,8 @@ __all__ = [
     "DecisionChartProjectionModel",
     "StrategyDecisionModel",
     "DeterministicSynthesisModel",
+    "ObservationGroupVersionModel",
+    "GroupDailySnapshotModel",
+    "ObservationRunModel",
+    "ObservationUniverseRevisionModel",
 ]

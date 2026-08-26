@@ -71,6 +71,7 @@ export interface DailyBarManifest {
 
 export interface DailyDecisionDataset {
   schema_version: string
+  feature_version: string
   dataset_id: string
   trading_date: string
   cutoff_time: string

@@ -118,7 +118,9 @@ class InstrumentUniverseRepository:
             return current
         return self._persist(default_universe(settings), source="environment")
 
-    def save(self, update: UniverseUpdate) -> InstrumentUniverseVersionModel:
+    def save(
+        self, update: UniverseUpdate, *, source: str = "runtime"
+    ) -> InstrumentUniverseVersionModel:
         current = self.active()
         if current is not None and update.base_version_id != current.id:
             raise AppError(
@@ -130,7 +132,7 @@ class InstrumentUniverseRepository:
         digest = self._digest(update.items)
         if current is not None and current.content_sha256 == digest:
             return current
-        return self._persist(update.items, source="runtime")
+        return self._persist(update.items, source=source)
 
     def list_versions(self, limit: int = 30) -> list[InstrumentUniverseVersionModel]:
         statement = (
@@ -166,6 +168,12 @@ class InstrumentUniverseRepository:
             [item.model_dump(mode="json") for item in items], ensure_ascii=False, sort_keys=True, separators=(",", ":")
         )
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def content_digest(items: list[InstrumentConfig]) -> str:
+        """Return the canonical digest used by Universe API responses."""
+
+        return InstrumentUniverseRepository._digest(items)
 
     @staticmethod
     def response(version: InstrumentUniverseVersionModel) -> UniverseResponse:

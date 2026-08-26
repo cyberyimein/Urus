@@ -281,11 +281,19 @@ def load_schedule_settings(base_url: str) -> dict[str, dict[str, Any]]:
 
 
 def slot_policy(
-    schedule: dict[str, dict[str, Any]], run_type: str
+    schedule: dict[str, dict[str, Any]],
+    run_type: str,
+    *,
+    ai_decision_enabled: bool | None = None,
 ) -> tuple[bool, bool]:
     policy = schedule.get(run_type, {})
     enabled = bool(policy.get("enabled", True))
     skip_ai = bool(policy.get("skip_ai_decision", run_type == "pre_close"))
+    if ai_decision_enabled is False:
+        # A deployment with the Urus agent disabled is deterministic-only;
+        # scheduled collection must not accidentally re-enable a model call
+        # because an older runtime schedule still says skip_ai=false.
+        skip_ai = True
     # This is a safety boundary, not a UI preference: pre_close never invokes
     # the decision agent because it is the raw tail-data collection slot.
     if run_type == "pre_close":
@@ -299,6 +307,37 @@ def collect(
     timeout: float,
     skip_ai_decision: bool = True,
 ) -> dict[str, Any]:
+    if run_type == "post_close_review":
+        logger.info("开始盘后确定性观察：同步 Universe 并冻结 Observation Run")
+        universe_sync = request_json(
+            f"{base_url}/observation/groups/sync",
+            method="POST",
+            payload={},
+            timeout=min(timeout, 60.0),
+        )
+        run_payload: dict[str, Any] = {"trigger_mode": "scheduled"}
+        if universe_sync.get("universe_revision_id"):
+            run_payload["universe_revision_id"] = universe_sync["universe_revision_id"]
+        if universe_sync.get("universe_freshness"):
+            run_payload["universe_freshness"] = universe_sync["universe_freshness"]
+        if universe_sync.get("source_url"):
+            run_payload["universe_source_url"] = universe_sync["source_url"]
+        result = request_json(
+            f"{base_url}/observation/runs",
+            method="POST",
+            payload=run_payload,
+            timeout=timeout,
+        )
+        result["universe_sync"] = universe_sync
+        logger.info(
+            "盘后确定性观察完成 run_id=%s status=%s groups=%s symbols=%s",
+            result.get("run_id"),
+            result.get("status"),
+            result.get("group_count", universe_sync.get("group_count")),
+            universe_sync.get("symbol_count"),
+        )
+        return result
+
     verify_skip_ai_contract(base_url)
     logger.info(
         "开始采集 phase=%s（skip_ai_decision=%s）", run_type, skip_ai_decision
@@ -408,7 +447,11 @@ def main(argv: list[str] | None = None) -> int:
     schedule = load_schedule_settings(base_url)
 
     if args.once:
-        enabled, skip_ai_decision = slot_policy(schedule, args.once)
+        enabled, skip_ai_decision = slot_policy(
+            schedule,
+            args.once,
+            ai_decision_enabled=settings.urus_agent_enabled,
+        )
         if not enabled:
             logger.info("phase=%s 已在设置中停用，本次不执行", args.once)
             return 0
@@ -452,7 +495,11 @@ def main(argv: list[str] | None = None) -> int:
                     # pause or bypass AI without restarting this long-running
                     # process.
                     schedule = load_schedule_settings(base_url)
-                    enabled, skip_ai_decision = slot_policy(schedule, run_type)
+                    enabled, skip_ai_decision = slot_policy(
+                        schedule,
+                        run_type,
+                        ai_decision_enabled=settings.urus_agent_enabled,
+                    )
                     if not enabled:
                         logger.info("phase=%s 已在设置中停用，本次跳过", run_type)
                         completed[key] = {

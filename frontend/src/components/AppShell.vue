@@ -13,8 +13,10 @@ import { RouterLink } from 'vue-router'
     </RouterLink>
     <nav class="topnav" aria-label="主导航">
       <RouterLink to="/" active-class="active">首页</RouterLink>
-      <RouterLink to="/research" active-class="active">研究中心</RouterLink>
-      <RouterLink to="/research/reports" active-class="active">历史报告</RouterLink>
+      <RouterLink to="/groups" active-class="active">组观察</RouterLink>
+      <RouterLink to="/indicators" active-class="active">指标扫描</RouterLink>
+      <RouterLink to="/strategies" active-class="active">策略扫描</RouterLink>
+      <RouterLink to="/research" active-class="active">旧研究中心</RouterLink>
       <RouterLink to="/settings" active-class="active">设置</RouterLink>
     </nav>
   </header>

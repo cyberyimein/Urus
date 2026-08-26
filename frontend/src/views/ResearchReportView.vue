@@ -103,7 +103,7 @@ async function focusEvidence(path: string) {
 <template>
   <AppShell />
   <main class="page-shell research-page">
-    <RouterLink class="back-link" :to="runId ? `/operations/runs/${runId}` : '/research/reports'">← {{ runId ? '返回开发工具' : '返回历史报告' }}</RouterLink>
+    <RouterLink class="back-link" :to="runId ? `/operations/runs/${runId}` : '/research/reports'">← {{ runId ? '返回开发工具' : '返回旧研究中心 · 历史报告' }}</RouterLink>
     <div v-if="store.error" class="error-banner" role="alert">{{ store.error }}</div>
     <div v-if="store.loading && !store.report" class="empty-panel"><p>正在载入 Stage 4B 研究会话…</p></div>
     <template v-else-if="store.report">
