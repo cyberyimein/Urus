@@ -19,20 +19,27 @@ class InstrumentCollectorStep:
         try:
             if context.moomoo_adapter is None:
                 raise RuntimeError("instrument adapter is not configured")
+            # The legacy ``instrument_symbols`` field is still used by mock
+            # mode and downstream decision payloads.  A live OpenD adapter may
+            # opt into the broader history scope introduced by Universe
+            # capacity admission.
+            collection_symbols = context.instrument_symbols
+            if getattr(context.moomoo_adapter, "is_live", False) and context.history_symbols:
+                collection_symbols = context.history_symbols
             collector = getattr(context.moomoo_adapter, "instrument_cards", None)
             if callable(collector):
-                collected = dict(collector(context.instrument_symbols))
+                collected = dict(collector(collection_symbols))
             else:
                 cards = [
                     dict(context.moomoo_adapter.instrument_card(symbol))
-                    for symbol in context.instrument_symbols
+                    for symbol in collection_symbols
                 ]
                 collected = {
                     "is_mock": all(bool(card.get("is_mock", True)) for card in cards),
                     "status": "available",
                     "available": bool(cards),
                     "data_state": "live" if cards else "unavailable",
-                    "requested_symbols": context.instrument_symbols,
+                    "requested_symbols": collection_symbols,
                     "unavailable_symbols": [],
                     "instruments": cards,
                     "quality_status": "ok",
@@ -90,7 +97,7 @@ class InstrumentCollectorStep:
                 "status": collected.get("status", "unavailable"),
                 "available": bool(collected.get("available", False)),
                 "data_state": "live" if is_live else "unavailable",
-                "requested_symbols": collected.get("requested_symbols", context.instrument_symbols),
+                "requested_symbols": collected.get("requested_symbols", collection_symbols),
                 "unavailable_symbols": collected.get("unavailable_symbols", []),
                 "provider": provider,
                 "source_mode": source_mode,

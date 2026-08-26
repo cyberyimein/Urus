@@ -1,10 +1,16 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 
 import { ApiError, api } from '@/api/client'
 import AppShell from '@/components/AppShell.vue'
-import type { AssetType, InstrumentConfig, UniverseResponse } from '@/types/universe'
+import type {
+  AssetType,
+  HistoryCollectionState,
+  InstrumentConfig,
+  UniverseCapacityPlan,
+  UniverseResponse,
+} from '@/types/universe'
 
 const universe = ref<UniverseResponse | null>(null)
 const items = ref<InstrumentConfig[]>([])
@@ -19,7 +25,11 @@ const selected = ref<InstrumentConfig | null>(null)
 const themeDraft = ref('')
 const confirming = ref(false)
 const pendingRemoval = ref<InstrumentConfig | null>(null)
+const capacityPlan = ref<UniverseCapacityPlan | null>(null)
+const capacityLoading = ref(false)
+const polling = ref(false)
 let fingerprint = ''
+let pollTimer: ReturnType<typeof setInterval> | undefined
 
 const dirty = computed(() => JSON.stringify(items.value) !== fingerprint)
 const watchlistOptions = computed(() => {
@@ -57,6 +67,16 @@ const summary = computed(() => ({
   options: items.value.filter((item) => item.enabled && item.collection.options).length,
   ai: items.value.filter((item) => item.enabled && item.roles.ai_candidate).length,
 }))
+const historyCollectionEnabled = computed(() => universe.value?.capacity?.enabled !== false)
+const pendingStates = computed(() => Object.values(universe.value?.collection_states ?? {})
+  .filter((state) => historyCollectionEnabled.value
+    && ['pending_quota', 'admitted', 'collecting', 'retry_wait'].includes(state.access_state)))
+const pendingCount = computed(() => pendingStates.value.filter((state) => state.access_state === 'pending_quota').length)
+const capacityWarning = computed(() => {
+  const capacity = universe.value?.capacity
+  if (!capacity || capacity.quality_status === 'ok' || capacity.quality_status === 'disabled') return ''
+  return capacity.warning || '无法读取 OpenD 历史 K 线额度；新增历史采集已安全暂停。'
+})
 
 function clone<T>(value: T): T { return JSON.parse(JSON.stringify(value)) as T }
 function normalizeItem(item: InstrumentConfig): InstrumentConfig {
@@ -74,6 +94,7 @@ function accept(payload: UniverseResponse) {
   selected.value = null
   themeDraft.value = ''
   confirming.value = false
+  capacityPlan.value = null
 }
 async function load() {
   loading.value = true; error.value = ''
@@ -84,9 +105,9 @@ async function load() {
 function addInstrument() {
   const item: InstrumentConfig = {
     symbol: '', display_name: '', asset_type: 'equity', theme: '个股观察', themes: ['个股观察'], enabled: true,
-    roles: { market_benchmark: false, equity_watchlist: false, cta_proxy: false, options_collection: false, event_tracking: true, ai_candidate: true },
+    roles: { market_benchmark: false, equity_watchlist: false, cta_proxy: false, options_collection: true, event_tracking: true, ai_candidate: true },
     benchmarks: { relative_strength: 'QQQ', cta_proxy_for: null },
-    collection: { quote: true, daily_history: true, options: false }, notes: '',
+    collection: { quote: true, daily_history: true, options: true }, notes: '',
   }
   items.value.push(item); selected.value = item
 }
@@ -167,12 +188,67 @@ function protectedItemsForSave() {
     },
   }))
 }
+function stateFor(symbol: string): HistoryCollectionState | undefined {
+  return universe.value?.collection_states?.[symbol]
+}
+function stateLabel(state: HistoryCollectionState | undefined): string {
+  if (!state) return ''
+  if (state.access_state === 'pending_quota') return '等待日线额度'
+  if (state.access_state === 'acquired' && state.quality_state === 'partial') return '日线已取得·样本偏短'
+  if (state.access_state === 'acquired') return '日线已就绪'
+  if (['admitted', 'collecting'].includes(state.access_state)) return '日线串行采集中'
+  if (state.access_state === 'retry_wait') return '日线稍后重试'
+  return state.access_state
+}
+function stateTone(state: HistoryCollectionState | undefined): string {
+  if (!state) return ''
+  if (state.access_state === 'pending_quota') return 'pending'
+  if (state.access_state === 'acquired') return state.quality_state === 'partial' ? 'partial' : 'ready'
+  return 'collecting'
+}
+async function refreshHistoryStatus() {
+  if (!universe.value || polling.value) return
+  polling.value = true
+  try {
+    const projection = await api.getUniverseHistoryStatus()
+    if (universe.value) {
+      universe.value = {
+        ...universe.value,
+        capacity: projection.capacity,
+        collection_states: projection.states,
+      }
+    }
+  } catch {
+    // The settings page already shows the last authoritative projection; a
+    // transient polling failure should not interrupt editing.
+  } finally {
+    polling.value = false
+  }
+}
+async function beginSave() {
+  if (!universe.value || saving.value || capacityLoading.value) return
+  confirming.value = true
+  capacityLoading.value = true
+  capacityPlan.value = null
+  error.value = ''
+  try {
+    capacityPlan.value = await api.createUniverseCapacityPlan({
+      base_version_id: universe.value.version_id,
+      items: protectedItemsForSave(),
+    })
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : '无法生成容量计划。'
+  } finally {
+    capacityLoading.value = false
+  }
+}
 async function save() {
-  if (!universe.value || saving.value) return
+  if (!universe.value || saving.value || capacityLoading.value || !capacityPlan.value) return
   saving.value = true; error.value = ''; notice.value = ''
   try {
     accept(await api.updateUniverse({ base_version_id: universe.value.version_id, items: protectedItemsForSave() }))
     notice.value = '标的 Universe 已保存为新版本；后续任务会冻结并使用这个版本。'
+    await refreshHistoryStatus()
   } catch (reason) {
     error.value = reason instanceof ApiError && reason.status === 409
       ? 'Universe 已被其他页面修改，请刷新后重试。'
@@ -180,7 +256,15 @@ async function save() {
   } finally { saving.value = false }
 }
 
-onMounted(load)
+onMounted(async () => {
+  await load()
+  pollTimer = setInterval(() => {
+    if (pendingStates.value.length > 0) void refreshHistoryStatus()
+  }, 30_000)
+})
+onUnmounted(() => {
+  if (pollTimer) clearInterval(pollTimer)
+})
 </script>
 
 <template>
@@ -203,6 +287,14 @@ onMounted(load)
         <span><strong>{{ summary.etf }}</strong> ETF</span><span><strong>{{ summary.equity }}</strong> 个股</span><span><strong>{{ summary.watchlist }}</strong> 指标推荐</span>
         <span><strong>{{ summary.options }}</strong> 期权</span><span><strong>{{ summary.ai }}</strong> AI 候选</span>
         <small>v{{ universe.revision }} · {{ universe.content_sha256.slice(0, 10) }}</small>
+      </section>
+      <section v-if="capacityWarning || pendingStates.length" class="capacity-banner" :data-warning="Boolean(capacityWarning)">
+        <div>
+          <strong>{{ capacityWarning ? 'OpenD 历史容量需要注意' : '历史日线正在慢速采集' }}</strong>
+          <p v-if="capacityWarning">{{ capacityWarning }}</p>
+          <p v-else>{{ pendingCount }} 个标的等待额度释放；后续每日串行采集会自动重试，配置不会被自动停用。</p>
+        </div>
+        <button type="button" class="secondary-button" :disabled="polling" @click="refreshHistoryStatus">{{ polling ? '刷新中…' : '刷新状态' }}</button>
       </section>
 
       <section class="watchlist-quickbar" aria-labelledby="watchlist-quickbar-title">
@@ -233,7 +325,7 @@ onMounted(load)
           <thead><tr><th>状态</th><th>标的</th><th>类型</th><th>所属关注列表</th><th>采集</th><th>策略角色</th><th>相对基准</th><th aria-label="操作"></th></tr></thead>
           <tbody>
             <tr v-for="item in filtered" :key="item.symbol || items.indexOf(item)" :data-disabled="!item.enabled" @click="selectInstrument(item)">
-              <td><span class="status-dot" :data-enabled="item.enabled"></span>{{ item.enabled ? '启用' : '停用' }}</td>
+              <td><span class="status-dot" :data-enabled="item.enabled"></span>{{ item.enabled ? '启用' : '停用' }}<span v-if="stateFor(item.symbol)" class="collection-badge" :data-tone="stateTone(stateFor(item.symbol))" :title="stateFor(item.symbol)?.message || undefined">{{ stateLabel(stateFor(item.symbol)) }}</span></td>
               <td><strong>{{ item.symbol || '未命名' }}</strong><small>{{ item.display_name || '待填写名称' }}</small></td>
               <td><span class="type-tag">{{ item.asset_type === 'market' ? '大盘' : item.asset_type === 'etf' ? 'ETF' : '个股' }}</span></td>
               <td><div class="table-theme-list"><span v-if="item.roles.equity_watchlist" class="table-theme-chip table-core-chip">指标推荐</span><span v-for="theme in (item.themes || [item.theme])" :key="theme" class="table-theme-chip">{{ theme }}</span></div></td>
@@ -249,7 +341,7 @@ onMounted(load)
       <div v-if="error" class="error-banner">{{ error }}</div><div v-if="notice" class="success-banner">{{ notice }}</div>
       <footer class="universe-actions">
         <span>{{ dirty ? '有未保存修改' : '已与当前版本同步' }}</span>
-        <div><button class="secondary-button" :disabled="!dirty || saving" @click="reset">撤销</button><button class="primary-button" :disabled="!dirty || saving" @click="confirming = true">保存新版本</button></div>
+        <div><button class="secondary-button" :disabled="!dirty || saving || capacityLoading" @click="reset">撤销</button><button class="primary-button" :disabled="!dirty || saving || capacityLoading" @click="beginSave">{{ capacityLoading ? '计算容量…' : '保存新版本' }}</button></div>
       </footer>
 
       <aside v-if="selected" class="instrument-drawer" aria-label="标的编辑面板">
@@ -290,7 +382,7 @@ onMounted(load)
         <label>备注<textarea v-model.trim="selected.notes" rows="3"></textarea></label>
       </aside>
 
-      <div v-if="confirming" class="confirm-backdrop" @click.self="confirming = false"><section class="confirm-card"><p class="eyebrow">CREATE IMMUTABLE VERSION</p><h2>保存 Universe 新版本？</h2><p>新任务将使用 {{ summary.enabled }} 个启用标的，其中 {{ summary.ai }} 个进入 AI 分析、{{ summary.options }} 个采集期权。正在运行和历史任务不会改变。</p><div><button class="secondary-button" @click="confirming = false">取消</button><button class="primary-button" :disabled="saving" @click="save">{{ saving ? '保存中…' : '确认保存' }}</button></div></section></div>
+      <div v-if="confirming" class="confirm-backdrop" @click.self="confirming = false"><section class="confirm-card"><p class="eyebrow">CREATE IMMUTABLE VERSION</p><h2>保存 Universe 新版本？</h2><p>新任务将使用 {{ summary.enabled }} 个启用标的，其中 {{ summary.ai }} 个进入 AI 分析、{{ summary.options }} 个进入每日期权队列。正在运行和历史任务不会改变。</p><div v-if="capacityLoading" class="capacity-plan-loading">正在读取 OpenD 额度并检查本地日线缓存…</div><template v-else-if="capacityPlan"><div class="capacity-plan-summary"><div><strong>{{ capacityPlan.summary.admitted_new_slot_count ?? 0 }}</strong><small>新增日线槽位已准入</small></div><div><strong>{{ capacityPlan.summary.pending_quota_count ?? 0 }}</strong><small>等待额度</small></div><div><strong>{{ capacityPlan.summary.cache_ready_count ?? 0 }}</strong><small>本地缓存命中</small></div></div><ul v-if="capacityPlan.symbols.some((item) => item.decision === 'pending_quota')" class="capacity-plan-pending"><li v-for="item in capacityPlan.symbols.filter((entry) => entry.decision === 'pending_quota')" :key="item.symbol"><strong>{{ item.symbol }}</strong> 等待历史 K 线额度释放</li></ul><p v-if="capacityPlan.warnings.length" class="capacity-plan-warning">{{ capacityPlan.warnings.join('；') }}</p></template><div><button class="secondary-button" @click="confirming = false">取消</button><button class="primary-button" :disabled="saving || capacityLoading || !capacityPlan" @click="save">{{ saving ? '保存中…' : '确认保存' }}</button></div></section></div>
       <div v-if="pendingRemoval" class="confirm-backdrop" @click.self="pendingRemoval = null"><section class="confirm-card"><p class="eyebrow">REMOVE FROM NEXT VERSION</p><h2>删除 {{ pendingRemoval.symbol || '这个新增标的' }}？</h2><p>它只会从待保存的新 Universe 版本移除。历史版本、已完成报告和正在运行的任务仍保留原配置。</p><div><button class="secondary-button" @click="pendingRemoval = null">取消</button><button class="danger-button" @click="removeInstrument">确认删除</button></div></section></div>
     </template>
   </main>
@@ -301,4 +393,5 @@ onMounted(load)
 .row-actions{text-align:right}.row-actions button{padding:5px 8px;border:1px solid transparent;border-radius:4px;background:transparent;color:var(--muted);font:10px monospace}.row-actions button:hover{border-color:var(--danger);color:var(--danger)}.danger-button{min-height:38px;padding:0 14px;border:1px solid var(--danger);border-radius:5px;background:rgba(176,65,55,.14);color:var(--danger);cursor:pointer}.theme-editor{display:grid;gap:8px;margin:13px 0;color:var(--muted);font:10px monospace}.theme-editor .field-label{color:var(--muted)}.theme-chip-list{display:flex;flex-wrap:wrap;gap:6px;min-height:28px}.theme-chip{display:inline-flex;align-items:center;gap:5px;padding:5px 8px;border:1px solid var(--accent);border-radius:999px;background:rgba(182,79,56,.1);color:var(--ink);font-size:11px}.theme-chip button{padding:0;border:0;background:transparent;color:var(--muted);font-size:15px;line-height:1;cursor:pointer}.theme-chip button:hover{color:var(--danger)}.theme-add-row{display:flex;gap:7px}.theme-add-row input{flex:1}.theme-add-row .secondary-button{min-height:36px;padding:0 12px}.theme-editor>small{color:var(--muted);line-height:1.5}.theme-list{max-width:250px;white-space:normal}
 .table-core-chip{border-color:var(--accent);background:rgba(182,79,56,.14);color:var(--ink)}
 .protected-role{display:grid;gap:4px;min-height:32px;padding:7px 8px;border:1px solid var(--accent);border-radius:5px;background:rgba(182,79,56,.08);color:var(--ink);font-size:11px}.protected-role small{color:var(--muted);font:9px/1.35 monospace}
+.capacity-banner{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-top:12px;padding:13px 16px;border:1px solid rgba(184,139,49,.55);border-radius:8px;background:rgba(184,139,49,.1);color:var(--ink)}.capacity-banner[data-warning="true"]{border-color:rgba(176,65,55,.65);background:rgba(176,65,55,.1)}.capacity-banner strong{font-size:12px}.capacity-banner p{margin:5px 0 0;color:var(--muted);font:10px/1.5 monospace}.collection-badge{display:inline-block;margin-top:4px;padding:3px 6px;border:1px solid var(--line);border-radius:999px;color:var(--muted);font:9px/1 monospace}.collection-badge[data-tone="pending"]{border-color:#b88b31;color:#a4761e;background:rgba(184,139,49,.12)}.collection-badge[data-tone="collecting"]{border-color:#5c7fa8;color:#486887;background:rgba(92,127,168,.12)}.collection-badge[data-tone="ready"]{border-color:#5b936f;color:#4b7b5d;background:rgba(91,147,111,.1)}.collection-badge[data-tone="partial"]{border-color:#b88b31;color:#a4761e;background:rgba(184,139,49,.1)}.capacity-plan-loading{margin:16px 0;padding:13px;border:1px dashed var(--line);color:var(--muted);font:11px monospace}.capacity-plan-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:16px 0}.capacity-plan-summary div{display:grid;gap:4px;padding:10px;border:1px solid var(--line);border-radius:6px;background:var(--surface-raised);text-align:center}.capacity-plan-summary strong{font-size:20px}.capacity-plan-summary small{color:var(--muted);font:9px monospace}.capacity-plan-pending{max-height:130px;overflow:auto;margin:0;padding:9px 10px 9px 25px;border:1px solid rgba(184,139,49,.45);border-radius:6px;background:rgba(184,139,49,.08);color:var(--soft-ink);font:10px/1.6 monospace}.capacity-plan-warning{padding:9px 10px;border-left:2px solid var(--danger);color:var(--danger)!important;font:10px/1.5 monospace!important}@media(max-width:800px){.capacity-banner{align-items:stretch;flex-direction:column}.capacity-plan-summary{grid-template-columns:1fr 1fr}.capacity-plan-summary div:last-child{grid-column:span 2}}
 </style>

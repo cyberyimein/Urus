@@ -47,6 +47,7 @@ def derive_scopes(items: list[InstrumentConfig]) -> UniverseDerivedScopes:
         option_symbols=[item.symbol for item in enabled if item.collection.options],
         event_symbols=[item.symbol for item in enabled if item.roles.event_tracking],
         ai_candidate_symbols=[item.symbol for item in enabled if item.roles.ai_candidate],
+        history_symbols=[item.symbol for item in enabled if item.collection.daily_history],
     )
 
 
@@ -63,6 +64,7 @@ def default_universe(settings: Settings) -> list[InstrumentConfig]:
     events = set(settings.event_instrument_symbol_list)
     cta = set(settings.cta_proxy_symbol_list)
     candidates = set(settings.instrument_validation_symbol_list) | set(settings.enabled_symbol_list)
+    configured_history = set(settings.instrument_validation_symbol_list) | set(settings.enabled_symbol_list) | {"QQQ"}
     items: list[InstrumentConfig] = []
     for symbol in ordered:
         asset_type = "market" if symbol in MARKET_SYMBOLS else "etf" if symbol in ETF_SYMBOLS else "equity"
@@ -85,7 +87,10 @@ def default_universe(settings: Settings) -> list[InstrumentConfig]:
                 "relative_strength": None if symbol == "QQQ" else "QQQ",
                 "cta_proxy_for": CTA_TARGETS.get(symbol) if symbol in cta else None,
             },
-            "collection": {"quote": True, "daily_history": True, "options": has_options},
+            # Market proxy ETFs remain snapshot-only by default.  QQQ and the
+            # configured technical universe receive daily history; a symbol
+            # added through the UI still defaults to daily_history=true.
+            "collection": {"quote": True, "daily_history": symbol in configured_history, "options": has_options},
             "notes": "由环境配置初始化",
         }))
     return items

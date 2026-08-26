@@ -23,7 +23,12 @@ import type {
   TraceNodeDetail,
 } from '@/types/research'
 import type { RuntimeSettingsResponse, RuntimeSettingsUpdate } from '@/types/settings'
-import type { UniverseResponse, UniverseUpdate } from '@/types/universe'
+import type {
+  HistoryCollectionProjection,
+  UniverseCapacityPlan,
+  UniverseResponse,
+  UniverseUpdate,
+} from '@/types/universe'
 import type {
   DailyEvidenceResponse,
   DecisionChartProjection,
@@ -95,6 +100,18 @@ export const api = {
       body: JSON.stringify(requestBody),
     }),
   getUniverse: () => request<UniverseResponse>('/settings/universe'),
+  createUniverseCapacityPlan: (requestBody: UniverseUpdate) =>
+    request<UniverseCapacityPlan>('/settings/universe/capacity-plan', {
+      method: 'POST',
+      body: JSON.stringify(requestBody),
+    }),
+  getUniverseHistoryStatus: () =>
+    request<HistoryCollectionProjection>('/settings/universe/history-status'),
+  refreshUniverseHistoryCapacity: () =>
+    request<HistoryCollectionProjection>('/settings/universe/history-capacity/refresh', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
   updateUniverse: (requestBody: UniverseUpdate) =>
     request<UniverseResponse>('/settings/universe', {
       method: 'PUT',

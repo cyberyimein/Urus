@@ -41,6 +41,10 @@ from app.models.daily_evidence import (
     DailyIndicatorSnapshotModel,
     DecisionChartProjectionModel,
 )
+from app.models.market_data_capacity import (
+    HistoryCollectionStateModel,
+    HistoryQuotaSnapshotModel,
+)
 from app.models.strategy_decision import DeterministicSynthesisModel, StrategyDecisionModel
 from app.models.observation import (
     GroupDailySnapshotModel,
@@ -88,6 +92,8 @@ __all__ = [
     "DailyIndicatorSnapshotModel",
     "DailyDecisionDatasetModel",
     "DecisionChartProjectionModel",
+    "HistoryQuotaSnapshotModel",
+    "HistoryCollectionStateModel",
     "StrategyDecisionModel",
     "DeterministicSynthesisModel",
     "ObservationGroupVersionModel",

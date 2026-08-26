@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 import pandas as pd
@@ -242,6 +242,34 @@ def test_option_universe_merges_core_etfs_with_watchlist() -> None:
         "INTC",
         "NVDA",
     ]
+
+
+def test_options_collection_forwards_the_configured_serial_scope() -> None:
+    calls: list[list[str] | None] = []
+
+    class RecordingOptionsAdapter:
+        def options_snapshot(self, symbols: list[str] | None = None) -> dict[str, object]:
+            calls.append(symbols)
+            return {
+                "is_mock": False,
+                "status": "available",
+                "available": True,
+                "provider": "test",
+                "symbols": [{"symbol": symbol} for symbol in symbols or []],
+            }
+
+    context = RunContext(
+        run_id="options-run",
+        run_type="pre_market",
+        cutoff_time=datetime(2026, 8, 4, tzinfo=UTC),
+        symbols=["QQQ"],
+        option_symbols=["QQQ", "INTC"],
+        options_adapter=RecordingOptionsAdapter(),
+    )
+    result = OptionsCollectorStep().execute(context)
+
+    assert result.status == StepStatus.SUCCEEDED
+    assert calls == [["QQQ", "INTC"]]
 
 
 class SnapshotContext:

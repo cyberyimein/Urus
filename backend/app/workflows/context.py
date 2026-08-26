@@ -23,6 +23,11 @@ class RunContext:
     cutoff_time: datetime
     symbols: list[str]
     instrument_symbols: list[str] = field(default_factory=lambda: ["INTC", "SMH"])
+    # Daily-history collection is broader than the legacy indicator/watchlist
+    # scope.  Keep both fields during the migration so mock/read-model output
+    # remains stable while live collectors can honour collection.daily_history.
+    history_symbols: list[str] = field(default_factory=list)
+    option_symbols: list[str] = field(default_factory=list)
     event_instrument_symbols: list[str] = field(default_factory=lambda: ["INTC"])
     simulate_macro_event: bool = False
     simulate_instrument_event: bool = False

@@ -33,8 +33,10 @@ def test_empty_database_can_migrate(tmp_path: Path) -> None:
         "observation_group_versions",
         "group_daily_snapshots",
         "observation_runs",
-        "observation_universe_revisions",
-    }.issubset(
+            "observation_universe_revisions",
+            "moomoo_history_quota_snapshots",
+            "history_collection_states",
+        }.issubset(
         set(inspector.get_table_names())
     )
     assert "prefetched" in {

@@ -20,8 +20,15 @@ class OptionsCollectorStep:
         try:
             if context.options_adapter is None:
                 raise RuntimeError("options adapter is not configured")
-            payload = context.options_adapter.options_snapshot()
-            for item in payload.get("symbols", []):
+            try:
+                payload = context.options_adapter.options_snapshot(context.option_symbols or None)
+            except TypeError:
+                # Preserve third-party/test adapters that implement the
+                # original no-argument protocol.
+                payload = context.options_adapter.options_snapshot()
+            payload_symbols = payload.get("symbols")
+            payload_symbols = payload_symbols if isinstance(payload_symbols, list) else []
+            for item in payload_symbols:
                 if not isinstance(item, dict):
                     continue
                 overview = item.get("overview")

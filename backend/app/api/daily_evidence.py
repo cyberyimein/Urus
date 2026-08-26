@@ -10,6 +10,8 @@ from app.core.config import Settings
 from app.core.errors import AppError
 from app.decision_harness.market_evidence import DailyMarketEvidenceService
 from app.integrations.moomoo import OpenDMarketAdapter
+from app.services.history_quota import HistoryAdmission
+from app.services.market_data_collection import MoomooCollectionCoordinator
 from app.schemas.daily_evidence import (
     DailyDatasetCreateRequest,
     DailyEvidenceResponse,
@@ -31,9 +33,15 @@ def create_daily_dataset(
     settings: Settings = Depends(get_settings),
 ) -> DailyEvidenceResponse:
     adapter = None
+    history_admission = None
+    collection_coordinator = None
     try:
         service = DailyMarketEvidenceService(db, settings)
         if settings.moomoo_enabled:
+            collection_coordinator = MoomooCollectionCoordinator(settings)
+            history_admission = HistoryAdmission(
+                db, settings, rate_limiter=collection_coordinator
+            )
             adapter = OpenDMarketAdapter(
                 settings.moomoo_host,
                 settings.moomoo_port,
@@ -41,6 +49,15 @@ def create_daily_dataset(
                 history_days=max(settings.moomoo_history_days, settings.daily_min_history_bars),
                 sdk_home=Path(settings.moomoo_sdk_home),
                 market_symbols=[item.strip() for item in settings.moomoo_market_symbols.split(",") if item.strip()],
+                history_admission=history_admission,
+                rate_limiter=collection_coordinator,
+                history_request_interval_seconds=settings.moomoo_history_request_interval_seconds,
+                snapshot_request_interval_seconds=settings.moomoo_snapshot_request_interval_seconds,
+            )
+            history_admission.bind_quota_reader(adapter.quota_snapshot)
+            history_admission.prepare_symbols(
+                [*payload.symbols, *payload.benchmark_symbols],
+                now=payload.cutoff_time,
             )
         result = service.freeze(
             scope_type=payload.scope_type,
@@ -55,6 +72,11 @@ def create_daily_dataset(
     except ValueError as exc:
         raise AppError(str(exc), code="daily_evidence_invalid", status_code=422) from exc
     finally:
+        if history_admission is not None:
+            try:
+                history_admission.release_unfinished()
+            except Exception:
+                db.rollback()
         if adapter is not None:
             adapter.close()
     return DailyEvidenceResponse(**result)

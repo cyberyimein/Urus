@@ -66,6 +66,16 @@ class Settings(BaseSettings):
     options_risk_free_rate_percent: float = 4.0
     options_dividend_yield_percent: float = 0.0
     moomoo_history_days: int = 260
+    # Historical candlestick capacity is account-dependent. Keep a safety
+    # reserve and fail closed when OpenD cannot report the live quota.
+    moomoo_history_quota_reserve_ratio: float = 0.20
+    moomoo_history_quota_reserve_absolute: int = 10
+    moomoo_capacity_snapshot_ttl_seconds: float = 300.0
+    moomoo_history_request_interval_seconds: float = 0.55
+    moomoo_snapshot_request_interval_seconds: float = 0.55
+    # One host-wide lock serializes the personal collector across workflow
+    # subprocesses. The lock file also remembers provider pacing timestamps.
+    moomoo_collection_lock_path: str = "data/moomoo_collection.lock"
     # Minimum completed daily bars required before a chart/evidence package is
     # considered ready for strategy evaluation.  Keep this independent from
     # the provider fetch window so another collector can satisfy the contract.

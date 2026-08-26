@@ -8,6 +8,7 @@ import threading
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
+from time import monotonic, sleep
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
@@ -107,6 +108,8 @@ class MockQuote:
 class MockMoomooAdapter:
     """Deterministic offline adapter used when live stage 1A is disabled."""
 
+    is_live = False
+
     def market_card(self, symbol: str) -> dict[str, object]:
         if symbol != "QQQ":
             raise ValueError(f"mock market adapter only supports QQQ, got {symbol}")
@@ -197,6 +200,7 @@ class OpenDMarketAdapter:
 
     _connect_timeout_seconds = 3.0
     _close_timeout_seconds = 2.0
+    is_live = True
 
     def __init__(
         self,
@@ -209,6 +213,12 @@ class OpenDMarketAdapter:
         market_symbols: list[str] | None = None,
         sdk: Any | None = None,
         quote_context: Any | None = None,
+        history_admission: Any | None = None,
+        rate_limiter: Any | None = None,
+        history_request_interval_seconds: float = 0.55,
+        snapshot_request_interval_seconds: float = 0.55,
+        monotonic_clock: Any = monotonic,
+        sleeper: Any = sleep,
     ) -> None:
         self.host = host
         self.port = port
@@ -219,6 +229,29 @@ class OpenDMarketAdapter:
         self.market_symbols = _unique_quote_codes(configured_symbols)
         self._sdk = sdk
         self._quote_ctx = quote_context
+        # Optional persistence-backed gate.  Keeping it at this seam means
+        # direct adapter tests and mock mode remain usable while every live
+        # history call can be refused before touching OpenD.
+        self._history_admission = history_admission
+        self._rate_limiter = rate_limiter
+        # 60 requests / 30 seconds is the OpenD ceiling for snapshot/history
+        # calls. Keep a small margin even when deployment settings are lower.
+        self.history_request_interval_seconds = max(0.51, float(history_request_interval_seconds))
+        self.snapshot_request_interval_seconds = max(0.51, float(snapshot_request_interval_seconds))
+        self._monotonic_clock = monotonic_clock
+        self._sleeper = sleeper
+        self._last_history_request_at: float | None = None
+        self._last_snapshot_request_at: float | None = None
+        # A single workflow can ask for QQQ once in 1A and again in 3A. Keep
+        # one immutable-in-run snapshot projection so that overlap does not
+        # consume another OpenD frequency slot.
+        self._snapshot_cache: dict[str, dict[str, Any]] = {}
+        self._history_cache: dict[str, list[dict[str, object]]] = {}
+
+    def quota_snapshot(self) -> dict[str, object]:
+        """Expose the read-only quota probe for Capacity Planning."""
+
+        return self._quota_snapshot()
 
     def close(self) -> None:
         if self._quote_ctx is None:
@@ -572,16 +605,32 @@ class OpenDMarketAdapter:
     def _collect_market_snapshot(self, quote_codes: list[str]) -> dict[str, object]:
         rows: list[dict[str, Any]] = []
         request_errors: list[str] = []
+        requested_codes = list(dict.fromkeys(quote_codes))
+        missing_codes = [code for code in requested_codes if code not in self._snapshot_cache]
         chunks = [
-            quote_codes[index : index + MAX_SNAPSHOT_CODES_PER_REQUEST]
-            for index in range(0, len(quote_codes), MAX_SNAPSHOT_CODES_PER_REQUEST)
+            missing_codes[index : index + MAX_SNAPSHOT_CODES_PER_REQUEST]
+            for index in range(0, len(missing_codes), MAX_SNAPSHOT_CODES_PER_REQUEST)
         ]
         for chunk in chunks:
             try:
-                rows.extend(_iter_rows(self._call("get_market_snapshot", chunk)))
+                self._pace(
+                    "_last_snapshot_request_at",
+                    self.snapshot_request_interval_seconds,
+                    # OpenD applies the 60/30s ceiling to the combined
+                    # snapshot/history request class, not to each adapter
+                    # instance. Keep both operations on one durable bucket.
+                    rate_class="moomoo_quote_history",
+                )
+                fetched = _iter_rows(self._call("get_market_snapshot", chunk))
+                rows.extend(fetched)
+                for row in fetched:
+                    code = str(row.get("code", "")).strip().upper()
+                    if code:
+                        self._snapshot_cache[code] = row
             except Exception as exc:
                 request_errors.append(f"{','.join(chunk)}：{exc}")
 
+        rows = [self._snapshot_cache[code] for code in requested_codes if code in self._snapshot_cache]
         by_code = {
             str(row.get("code", "")).strip().upper(): row
             for row in rows
@@ -628,6 +677,52 @@ class OpenDMarketAdapter:
         *,
         include_bars: bool = False,
     ) -> dict[str, object]:
+        cached_in_run = self._history_cache.get(quote_code)
+        if cached_in_run:
+            return _history_summary_from_bars(
+                cached_in_run,
+                previous_close=previous_close,
+                history_days=self.history_days,
+                include_bars=include_bars,
+            )
+        admission_decision: dict[str, object] | None = None
+        if self._history_admission is not None:
+            admission_decision = self._history_admission.acquire(quote_code)
+            if not bool(admission_decision.get("admitted")):
+                message = str(admission_decision.get("message") or "历史 K 线额度尚未准入。")
+                deferred: dict[str, object] = {
+                    "is_mock": False,
+                    "available": False,
+                    "access_state": str(admission_decision.get("access_state") or "pending_quota"),
+                    "requested_days": self.history_days,
+                    "returned_days": 0,
+                    "latest_completed_bar": None,
+                    "returns_percent": {},
+                    "moving_average": {},
+                    "technical_indicators": calculate_technical_indicators(
+                        [],
+                        source="moomoo_opend_history",
+                    ),
+                    "reference_previous_close": previous_close,
+                    "warnings": [message],
+                    "reason_code": admission_decision.get("reason_code"),
+                    "error": message,
+                }
+                if include_bars:
+                    deferred["bars"] = []
+                return deferred
+            if admission_decision.get("cached"):
+                cached_bars = admission_decision.get("bars")
+                if isinstance(cached_bars, list):
+                    self._history_cache[quote_code] = [
+                        dict(item) for item in cached_bars if isinstance(item, dict)
+                    ]
+                    return _history_summary_from_bars(
+                        cached_bars,
+                        previous_close=previous_close,
+                        history_days=self.history_days,
+                        include_bars=include_bars,
+                    )
         today = datetime.now(ZoneInfo(self.market_timezone)).date()
         start = today - timedelta(days=max(self.history_days * 2, 365))
         kwargs: dict[str, object] = {
@@ -642,58 +737,28 @@ class OpenDMarketAdapter:
             kwargs["autype"] = sdk.AuType.QFQ
 
         try:
+            self._pace(
+                "_last_history_request_at",
+                self.history_request_interval_seconds,
+                rate_class="moomoo_quote_history",
+            )
             rows = _iter_rows(self._call("request_history_kline", **kwargs))
             bars = _normalise_bars(rows)
             if not bars:
                 raise RuntimeError("OpenD returned no daily bars")
-            closes = [bar["close"] for bar in bars]
-            warnings: list[str] = []
-            if len(bars) < self.history_days:
-                warnings.append(
-                    f"OpenD 只返回 {len(bars)} 根日线，低于请求的 {self.history_days} 根。"
-                )
-            latest = bars[-1]
-            technical_indicators = calculate_technical_indicators(
+            self._history_cache[quote_code] = [dict(item) for item in bars]
+            return _history_summary_from_bars(
                 bars,
-                source="moomoo_opend_history",
+                previous_close=previous_close,
+                history_days=self.history_days,
+                include_bars=include_bars,
             )
-            warnings.extend(str(item) for item in technical_indicators.get("warnings", []))
-            technical_returns = technical_indicators.get("returns_percent")
-            returns_percent = (
-                dict(technical_returns)
-                if isinstance(technical_returns, dict)
-                else {
-                    "1d": _lookback_return(closes, 1),
-                    "5d": _lookback_return(closes, 5),
-                    "20d": _lookback_return(closes, 20),
-                }
-            )
-            technical_moving_average = technical_indicators.get("moving_average")
-            moving_average = (
-                dict(technical_moving_average)
-                if isinstance(technical_moving_average, dict)
-                else {
-                    "20d": _average(closes, 20),
-                    "50d": _average(closes, 50),
-                    "200d": _average(closes, 200),
-                }
-            )
-            result = {
-                "is_mock": False,
-                "available": True,
-                "requested_days": self.history_days,
-                "returned_days": len(bars),
-                "latest_completed_bar": latest,
-                "returns_percent": returns_percent,
-                "moving_average": moving_average,
-                "technical_indicators": technical_indicators,
-                "reference_previous_close": previous_close,
-                "warnings": warnings,
-            }
-            if include_bars:
-                result["bars"] = bars
-            return result
         except Exception as exc:
+            if self._history_admission is not None:
+                try:
+                    self._history_admission.mark_failure(quote_code, f"历史日线不可用：{exc}")
+                except Exception:
+                    logger.warning("failed to persist history admission failure", exc_info=True)
             result = {
                 "is_mock": False,
                 "available": False,
@@ -713,6 +778,33 @@ class OpenDMarketAdapter:
             if include_bars:
                 result["bars"] = []
             return result
+
+    def _pace(
+        self,
+        attribute: str,
+        interval_seconds: float,
+        *,
+        rate_class: str | None = None,
+    ) -> None:
+        if self._rate_limiter is not None and rate_class:
+            self._rate_limiter.acquire_rate_slot(
+                rate_class,
+                interval_seconds,
+                now=datetime.now(UTC),
+                sleeper=self._sleeper,
+            )
+            setattr(self, attribute, self._monotonic_clock())
+            return
+        if interval_seconds <= 0:
+            setattr(self, attribute, self._monotonic_clock())
+            return
+        now = self._monotonic_clock()
+        previous = getattr(self, attribute)
+        if previous is not None:
+            remaining = interval_seconds - (now - previous)
+            if remaining > 0:
+                self._sleeper(remaining)
+        setattr(self, attribute, self._monotonic_clock())
 
     def _quota_snapshot(self) -> dict[str, object]:
         """Read quota state without subscribing or changing OpenD state."""
@@ -1004,6 +1096,64 @@ def _lookback_return(values: list[float], periods: int) -> float | None:
 def _history_indicators_ok(history: dict[str, object]) -> bool:
     indicators = history.get("technical_indicators")
     return isinstance(indicators, dict) and indicators.get("quality_status") == "ok"
+
+
+def _history_summary_from_bars(
+    bars: list[dict[str, object]],
+    *,
+    previous_close: float,
+    history_days: int,
+    include_bars: bool,
+) -> dict[str, object]:
+    """Build the adapter history projection from fetched or canonical bars."""
+
+    closes = [float(bar["close"]) for bar in bars if isinstance(bar.get("close"), (int, float))]
+    if not bars or not closes:
+        raise RuntimeError("OpenD returned no daily bars")
+    warnings: list[str] = []
+    if len(bars) < history_days:
+        warnings.append(f"OpenD 只返回 {len(bars)} 根日线，低于请求的 {history_days} 根。")
+    latest = bars[-1]
+    technical_indicators = calculate_technical_indicators(
+        bars,
+        source="moomoo_opend_history",
+    )
+    warnings.extend(str(item) for item in technical_indicators.get("warnings", []))
+    technical_returns = technical_indicators.get("returns_percent")
+    returns_percent = (
+        dict(technical_returns)
+        if isinstance(technical_returns, dict)
+        else {
+            "1d": _lookback_return(closes, 1),
+            "5d": _lookback_return(closes, 5),
+            "20d": _lookback_return(closes, 20),
+        }
+    )
+    technical_moving_average = technical_indicators.get("moving_average")
+    moving_average = (
+        dict(technical_moving_average)
+        if isinstance(technical_moving_average, dict)
+        else {
+            "20d": _average(closes, 20),
+            "50d": _average(closes, 50),
+            "200d": _average(closes, 200),
+        }
+    )
+    result: dict[str, object] = {
+        "is_mock": False,
+        "available": True,
+        "requested_days": history_days,
+        "returned_days": len(bars),
+        "latest_completed_bar": latest,
+        "returns_percent": returns_percent,
+        "moving_average": moving_average,
+        "technical_indicators": technical_indicators,
+        "reference_previous_close": previous_close,
+        "warnings": warnings,
+    }
+    if include_bars:
+        result["bars"] = bars
+    return result
 
 
 def _trend_from_history(history: dict[str, object]) -> str:

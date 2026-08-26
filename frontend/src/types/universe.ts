@@ -26,6 +26,7 @@ export interface InstrumentConfig {
 export interface UniverseDerivedScopes {
   market_symbols: string[]
   instrument_symbols: string[]
+  history_symbols?: string[]
   cta_proxy_symbols: string[]
   option_symbols: string[]
   event_symbols: string[]
@@ -40,6 +41,71 @@ export interface UniverseResponse {
   created_at: string
   items: InstrumentConfig[]
   derived: UniverseDerivedScopes
+  capacity?: HistoryCapacitySnapshot
+  collection_states?: Record<string, HistoryCollectionState>
+}
+
+export interface HistoryCapacitySnapshot {
+  id?: string
+  provider?: string
+  enabled?: boolean
+  quota_kind?: string
+  available?: boolean
+  used?: number | null
+  remain?: number | null
+  total?: number | null
+  reserve?: number | null
+  quality_status?: string
+  warning?: string | null
+  captured_at?: string | null
+  expires_at?: string | null
+  [key: string]: unknown
+}
+
+export interface HistoryCollectionState {
+  symbol: string
+  provider?: string
+  access_state: string
+  quality_state?: string
+  reason_code?: string | null
+  message?: string | null
+  bar_count?: number
+  latest_bar_date?: string | null
+  required_through_date?: string | null
+  minimum_bar_count?: number
+  quota_cost?: number
+  updated_at?: string
+  [key: string]: unknown
+}
+
+export interface UniverseCapacityPlan {
+  schema_version: string
+  plan_id: string
+  provider: string
+  universe_content_sha256: string
+  captured_at: string
+  expires_at?: string | null
+  quota: HistoryCapacitySnapshot
+  summary: Record<string, number>
+  symbols: Array<{
+    symbol: string
+    cache_state?: string
+    bar_count?: number
+    latest_bar_date?: string | null
+    quota_cost?: number
+    decision: string
+    reason_code?: string | null
+    required_through_date?: string | null
+  }>
+  warnings: string[]
+}
+
+export interface HistoryCollectionProjection {
+  provider: string
+  captured_at?: string | null
+  capacity: HistoryCapacitySnapshot
+  states: Record<string, HistoryCollectionState>
+  warnings: string[]
 }
 
 export interface UniverseUpdate {

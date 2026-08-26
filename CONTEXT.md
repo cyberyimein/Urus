@@ -116,6 +116,16 @@ _Avoid_: Prompt wrapper, model memory
 质量状态形成的不可变证据包。它是日 K 产品线的数据集，不要求由盘前和收盘前两个 Workflow Run 配对组成。
 _Avoid_: Latest chart data, mutable indicator cache
 
+**Capacity Plan**:
+针对一个候选 Universe 版本，由确定性程序结合 OpenD 历史 K 线额度、本地日线新鲜度和安全余量形成的
+容量计划；它区分可直接复用、已准入和等待额度的 symbol。保存前计划用于解释影响，运行前仍须重新执行权威准入。
+_Avoid_: Fixed symbol limit, frontend estimate, reservation token
+
+**History Collection State**:
+独立于不可变 Universe 版本、按 provider 和 symbol 保存的日线采集进度与质量投影；等待额度、采集中和已取得
+属于运行状态，不会自动停用用户配置。只有历史 K 线成功写入并验证规范化 daily bars 后，等待额度标记才能自动取消。
+_Avoid_: Universe enabled flag, optimistic frontend badge, workflow step status
+
 **Decision Chart Projection**:
 由确定性程序从 Daily Decision Dataset、指标和 Strategy Decision 生成的只读图形投影，包含 K 线 series、指标
 pane、策略 overlay、状态时间段、事件和质量信息。它只负责可视化映射，不产生新的技术或交易判断。

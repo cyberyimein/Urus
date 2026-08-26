@@ -275,6 +275,7 @@ class ObservationRunService:
         request: ObservationRunCreateRequest,
         *,
         bar_source: Any | None = None,
+        history_admission: Any | None = None,
         universe_sync: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         cutoff = as_utc(request.cutoff_time or utc_now())
@@ -384,6 +385,14 @@ class ObservationRunService:
                     for symbol in list(group.benchmark_symbols or [])
                 )
             )
+            if history_admission is not None and bar_source is not None:
+                quota_reader = getattr(bar_source, "quota_snapshot", None)
+                if callable(quota_reader):
+                    history_admission.bind_quota_reader(quota_reader)
+                history_admission.prepare_symbols(
+                    [*requested_symbols, *benchmark_symbols],
+                    now=cutoff,
+                )
             evidence = self.daily.freeze(
                 scope_type="observation_run",
                 scope_id=run.id,
