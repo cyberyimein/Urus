@@ -757,7 +757,7 @@ workflow-bindings.json（不含 token）
 `ANOMALOHARIS_WORKFLOW_ALLOWED_REFS`。现有 `default` client 保留旧的
 `compute:models` / `compute:invoke` / `compute:read` 能力；新增 `urus-decision` client
 只拥有 `workflow:read`、`workflow:run`，client 与 Host 两层 allowlist 都只包含本节四个
-`@1` Ref。Urus 的专用运行 token 只写入本地 `.env` 和远端部署环境，不进入仓库、Binding
+`@2` Ref。Urus 的专用运行 token 只写入本地 `.env` 和远端部署环境，不进入仓库、Binding
 或日志。服务重启后已通过合法 token 的请求校验（400）、错误 token（401）和越权 Ref（403）
 探测；这些探测不会创建 Run。
 

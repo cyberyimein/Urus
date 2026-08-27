@@ -216,6 +216,12 @@ class HttpAnomaloWorkflowAdapter:
         elif response.status_code == 409:
             code = "idempotency_key_reused"
         try:
+            # ``start_stream`` hands us a streaming response.  httpx does not
+            # make ``response.json()`` available until the body has been
+            # consumed, so read the error body before decoding it.  Without
+            # this, a useful 401/403/404 from Anomalo is replaced by the
+            # misleading ``ResponseNotRead`` exception.
+            await response.aread()
             body = response.json()
         except ValueError:
             body = {}

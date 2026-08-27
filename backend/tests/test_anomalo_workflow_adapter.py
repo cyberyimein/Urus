@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 import httpx
 
-from app.integrations.anomalo_workflow import HttpAnomaloWorkflowAdapter
+from app.integrations.anomalo_workflow import HttpAnomaloWorkflowAdapter, WorkflowAdapterError
 
 
 def test_ndjson_decoder_handles_split_json_chunks() -> None:
@@ -84,4 +84,34 @@ async def test_http_stream_adapter_exposes_run_id_before_terminal_event() -> Non
     ]
     assert events[0]["run_id"] == "run-stream"
     assert seen[0].url.path == "/api/workflows/urus-review/versions/1/runs/stream"
+    await client.aclose()
+
+
+@pytest.mark.anyio
+async def test_http_stream_adapter_surfaces_streaming_error_body() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            403,
+            json={
+                "error_code": "workflow_ref_forbidden",
+                "message": "Workflow urus-review@2 is not allowed for this service client.",
+            },
+            request=request,
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    adapter = HttpAnomaloWorkflowAdapter("https://anomalo.test", "secret", client=client)
+    with pytest.raises(WorkflowAdapterError) as error:
+        _ = [
+            event
+            async for event in adapter.start_stream(
+                workflow_ref="urus-review@2",
+                input_payload={"ok": True},
+                idempotency_key="key-forbidden",
+                metadata={"source": "urus"},
+                compiled_hash="a" * 64,
+            )
+        ]
+    assert error.value.code == "workflow_ref_forbidden"
+    assert "not allowed for this service client" in error.value.message
     await client.aclose()
