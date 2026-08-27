@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import RemoteDecisionConfirmDialog from '@/components/decision/RemoteDecisionConfirmDialog.vue'
 import { useRemoteDecision } from '@/composables/useRemoteDecision'
@@ -26,8 +26,31 @@ const props = withDefaults(defineProps<{
 
 const confirmVisible = ref(false)
 const stopConfirmVisible = ref(false)
-const { preflight, run, loading, error, prepare, submit, stop, rerun, reset } = useRemoteDecision()
+const route = useRoute()
+const router = useRouter()
+const { preflight, run, loading, error, prepare, submit, restore, stop, rerun, reset } = useRemoteDecision()
 const blocker = computed(() => preflight.value?.blockers[0]?.message ?? '')
+const returnTo = computed(() => {
+  const query = { ...route.query }
+  if (props.intentType === 'instrument_arbitration' && props.source.dataset_id) {
+    // The normal instrument page creates a frozen dataset without putting its
+    // id in the URL. Carry it through the detail link so returning does not
+    // silently refreeze a different dataset and miss the restored Run.
+    query.dataset = props.source.dataset_id
+  }
+  if (
+    (props.intentType === 'group_arbitration' || props.intentType === 'indicator_attention' || props.intentType === 'strategy_attention')
+    && props.source.observation_run_id
+  ) {
+    query.run = props.source.observation_run_id
+  }
+  return router.resolve({ path: route.path, query, hash: route.hash }).fullPath
+})
+const detailRoute = computed(() => ({
+  name: 'remote-decision-run',
+  params: { localRunId: run.value?.local_run_id },
+  query: { return_to: returnTo.value },
+}))
 // ``succeeded`` is an Urus-internal hand-off state while Artifact validation
 // finishes; it is no longer stoppable even though polling must continue.
 const isTerminal = computed(() => ['succeeded', 'accepted', 'rejected_result', 'failed', 'stopped'].includes(run.value?.status ?? ''))
@@ -68,11 +91,17 @@ async function refreshPreflight() {
   }
 }
 
+async function restoreRun() {
+  if (props.disabled) return
+  await restore(props.intentType, props.source)
+}
+
 watch(() => [props.disabled, props.intentType, props.source], () => {
   confirmVisible.value = false
   stopConfirmVisible.value = false
   reset()
   void refreshPreflight()
+  void restoreRun()
 }, { deep: true, immediate: true })
 
 defineExpose({ open })
@@ -90,7 +119,7 @@ defineExpose({ open })
     <article v-if="run" class="remote-decision-run-summary">
       <header><span class="section-kicker">REMOTE DECISION RUN</span><strong>{{ run.status }}</strong></header>
       <p>{{ run.safe_error_message ?? (run.result?.summary ?? 'Workflow 正在读取冻结证据。') }}</p>
-      <div class="remote-decision-run-meta"><span>{{ run.local_run_id.slice(0, 12) }}…</span><span>events {{ run.latest_event_sequence }}</span><RouterLink :to="{ name: 'remote-decision-run', params: { localRunId: run.local_run_id } }">详情 →</RouterLink></div>
+      <div class="remote-decision-run-meta"><span>{{ run.local_run_id.slice(0, 12) }}…</span><span>events {{ run.latest_event_sequence }}</span><RouterLink :to="detailRoute">详情 →</RouterLink></div>
       <button v-if="!isTerminal" class="remote-stop-button" type="button" @click="requestStop">停止运行</button>
       <button v-if="isTerminal" class="remote-rerun-button" type="button" :disabled="loading" @click="rerunSameEvidence">用同一证据重新运行</button>
       <div v-if="run.result?.notable_cards?.length" class="remote-notable-cards">

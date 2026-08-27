@@ -15,6 +15,12 @@ let timer: ReturnType<typeof setInterval> | null = null
 let requestInFlight = false
 
 const runId = computed(() => String(route.params.localRunId ?? ''))
+const returnTo = computed(() => {
+  const target = route.query.return_to
+  // Only accept an in-app absolute path. This keeps the convenience link from
+  // becoming an open redirect when a run URL is shared or modified.
+  return typeof target === 'string' && target.startsWith('/') && !target.startsWith('//') ? target : '/'
+})
 
 async function load() {
   if (!runId.value || requestInFlight) return
@@ -52,7 +58,7 @@ onUnmounted(stopPolling)
 <template>
   <AppShell />
   <main class="remote-run-page">
-    <RouterLink class="remote-run-back" to="/">← 返回决策工作台</RouterLink>
+    <RouterLink class="remote-run-back" :to="returnTo">← 返回决策工作台</RouterLink>
     <section v-if="loading" class="empty-panel"><p>正在读取 AI Workflow Run…</p></section>
     <section v-else-if="error" class="error-banner" role="alert">{{ error }}</section>
     <template v-else-if="run">

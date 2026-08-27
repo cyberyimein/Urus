@@ -10,6 +10,40 @@ import type {
 
 const TERMINAL = new Set(['accepted', 'rejected_result', 'failed', 'stopped'])
 
+function restoreQuery(intentType: RemoteDecisionIntent, source: RemoteDecisionSource) {
+  if (intentType === 'instrument_arbitration' && source.symbol && source.dataset_id) {
+    return {
+      scope_type: 'instrument',
+      scope_id: source.symbol,
+      dataset_id: source.dataset_id,
+    }
+  }
+  if (intentType === 'group_arbitration' && source.dataset_id) {
+    return { scope_type: 'group', dataset_id: source.dataset_id }
+  }
+  if ((intentType === 'indicator_attention' || intentType === 'strategy_attention') && source.observation_run_id) {
+    return { scope_type: 'observation_run', scope_id: source.observation_run_id }
+  }
+  return null
+}
+
+function sourceMatches(run: RemoteDecisionRun, intentType: RemoteDecisionIntent, source: RemoteDecisionSource) {
+  if (run.intent_type !== intentType) return false
+  return Object.entries(source).every(([key, value]) => {
+    if (value === undefined || value === null || value === '') return true
+    return String(run.source?.[key as keyof RemoteDecisionSource] ?? '') === String(value)
+  })
+}
+
+function isNewer(candidate: RemoteDecisionRun, current: RemoteDecisionRun) {
+  const candidateTime = Date.parse(candidate.created_at)
+  const currentTime = Date.parse(current.created_at)
+  if (Number.isFinite(candidateTime) && Number.isFinite(currentTime) && candidateTime !== currentTime) {
+    return candidateTime > currentTime
+  }
+  return candidate.local_run_id !== current.local_run_id
+}
+
 export function useRemoteDecision() {
   const preflight = ref<RemoteDecisionPreflight | null>(null)
   const run = ref<RemoteDecisionRun | null>(null)
@@ -82,6 +116,39 @@ export function useRemoteDecision() {
     }
   }
 
+  /**
+   * Restore the most recent persisted run for the currently displayed frozen
+   * evidence. The panel is intentionally local state, so navigating to the
+   * run detail and back creates a new composable instance; without this lookup
+   * the completed decision disappears even though it is still in the API.
+   */
+  async function restore(intentType: RemoteDecisionIntent, source: RemoteDecisionSource) {
+    const query = restoreQuery(intentType, source)
+    if (!query) return null
+    const generation = stateGeneration
+    const runIdAtRequest = run.value?.local_run_id ?? null
+    try {
+      const candidates = await api.listRemoteDecisions({ ...query, limit: 50 })
+      if (generation !== stateGeneration) return null
+      const next = candidates.find((candidate) => sourceMatches(candidate, intentType, source))
+      if (!next) return null
+      // A user may submit while the history request is in flight. Keep the
+      // freshly submitted run instead of letting a stale list response win.
+      if (run.value && run.value.local_run_id !== runIdAtRequest) return run.value
+      if (run.value && run.value.local_run_id !== next.local_run_id && !isNewer(next, run.value)) {
+        return run.value
+      }
+      run.value = next
+      if (TERMINAL.has(next.status)) stopPolling()
+      else startPolling()
+      return next
+    } catch {
+      // Hydration is supplementary to the deterministic evidence page. A
+      // transient history request failure should not hide the page itself.
+      return null
+    }
+  }
+
   async function stop() {
     if (!run.value) return null
     const generation = stateGeneration
@@ -144,5 +211,5 @@ export function useRemoteDecision() {
   }
 
   onUnmounted(stopPolling)
-  return { preflight, run, loading, error, prepare, submit, refresh, stop, rerun, reset, startPolling, stopPolling }
+  return { preflight, run, loading, error, prepare, submit, refresh, restore, stop, rerun, reset, startPolling, stopPolling }
 }
