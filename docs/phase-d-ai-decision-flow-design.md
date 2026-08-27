@@ -72,10 +72,10 @@ V1 不证明 AI 比确定性基线更好；V1 先建立可审计、可回放、�
 
 | 页面 / 按钮 | 用户问题 | 冻结范围 | 拟发布 Workflow Ref | 期待结果 | 意义 |
 | --- | --- | --- | --- | --- | --- |
-| 个股页 / AI 策略仲裁 | 这个 symbol 当前应采信哪个策略，还是不行动？ | `instrument` | `urus-instrument-arbitration@2` | 一条 Strategy Arbitration Decision | 保留策略冲突并给出有界选择 |
-| 组页 / AI 评估整个组 | 这个组是真的广泛走强，还是少数个股驱动？ | `group` + group version | `urus-group-arbitration@2` | 组级判断、组内优先项、风险项 | 检查组内一致性并缩小下钻范围 |
-| 指标页 / AI 寻找指标异常 | 当前指标卡片中哪些数值、变化或组内分歧异常并值得关注？ | `observation_run` + indicator lens | `urus-indicator-review@2` | 按重要度排序的异常卡片和下钻对象 | 从卡片堆中筛选值得看的值，不产生交易结论 |
-| 策略页 / AI 寻找策略关注项 | 当前策略卡片中哪些 setup、异常或状态突变值得关注？ | `observation_run` + strategy lens | `urus-strategy-review@2` | 按重要度排序的策略卡片和下钻对象 | 从卡片堆中筛选研究对象，不重算策略 |
+| 个股页 / AI 策略仲裁 | 这个 symbol 当前应采信哪个策略，还是不行动？ | `instrument` | `urus-instrument-arbitration@3` | 一条 Strategy Arbitration Decision | 保留策略冲突并给出有界选择 |
+| 组页 / AI 评估整个组 | 这个组是真的广泛走强，还是少数个股驱动？ | `group` + group version | `urus-group-arbitration@3` | 组级判断、组内优先项、风险项 | 检查组内一致性并缩小下钻范围 |
+| 指标页 / AI 寻找指标异常 | 当前指标卡片中哪些数值、变化或组内分歧异常并值得关注？ | `observation_run` + indicator lens | `urus-indicator-review@3` | 按重要度排序的异常卡片和下钻对象 | 从卡片堆中筛选值得看的值，不产生交易结论 |
+| 策略页 / AI 寻找策略关注项 | 当前策略卡片中哪些 setup、异常或状态突变值得关注？ | `observation_run` + strategy lens | `urus-strategy-review@3` | 按重要度排序的策略卡片和下钻对象 | 从卡片堆中筛选研究对象，不重算策略 |
 
 ### 4.1 与 Phase C 页面颗粒度的对齐结论
 
@@ -715,7 +715,7 @@ V1 直接保存 Anomalo 实际收到的 `input_json` 和 `metadata_json`；不�
 | Phase C 个股、组、指标/策略横截面 read model | 已完成 | 作为冻结输入权威来源 |
 | Anomalo Workflow Runtime 管理面与运行面 | 已完成 | 按正式合同接入 |
 | Urus Workflow Adapter、运行账本、事件恢复 | 已实现本地骨架 | D4 真实环境联调 |
-| 四个 Urus 业务 Workflow Definition | 已绑定 `urus-arbitration@4` / `urus-attention@5`，四个 `@2` Ref 已发布 | D0 继续做真实运行联调 |
+| 四个 Urus 业务 Workflow Definition | 已绑定 `urus-arbitration@5` / `urus-attention@6`，四个 `@3` Ref 已发布 | D0 继续做真实运行联调 |
 | 决策专用 Preset Model / workflow-callable serializer | 已配置两个 Preset Model Ref：仲裁 `@3`、关注 `@4` | D0 保存 Manifest hash；若输入端口不接受 message，再按 Manifest 增加 serializer |
 | 四个 published Workflow Ref / compiled hash | 已发布并写入 `backend/workflow-bindings.json` | D4 用相同 Ref/hash 做真实运行联调 |
 | Urus workflow service token 与 Ref allowlist | 已配置 `workflow:read` / `workflow:run`，仅允许四个 Ref；已通过 401/400/403 auth smoke | D4 继续做真实运行联调；secret 仅留在部署环境与本地 `.env` |
@@ -739,7 +739,7 @@ workflow-bindings.json（不含 token）
 ```json
 {
   "intent_type": "instrument_arbitration",
-  "workflow_ref": "urus-instrument-arbitration@2",
+  "workflow_ref": "urus-instrument-arbitration@3",
   "definition_hash": "sha256:...",
   "compiled_hash": "sha256:...",
   "capability_manifest_hash": "sha256:...",
@@ -797,7 +797,7 @@ workflow-bindings.json（不含 token）
     "quality_status": "partial"
   },
   "binding": {
-    "workflow_ref": "urus-indicator-review@2",
+    "workflow_ref": "urus-indicator-review@3",
     "compiled_hash": "sha256:..."
   },
   "input_sha256": "<64-lowercase-hex>",
@@ -1030,7 +1030,7 @@ Module 规则：
 
 本分支已落地 Phase D 的 Urus 侧运行骨架：四类 source locator/preflight/指纹、`0024` 持久化、严格 Artifact 验收、Anomalo Workflow HTTP/Fake Adapter、受限队列 Supervisor/重启恢复、横截面 attention features、组快照精确查询，以及阶段 C 页面和统一 Remote Decision Run 面板。Observation Run 仍是 deterministic-only。
 
-Anomalo 生产联调仍受 D4 fixture gate 约束：四个 Urus Workflow Ref（`urus-instrument-arbitration@2`、`urus-group-arbitration@2`、`urus-indicator-review@2`、`urus-strategy-review@2`）已通过远端管理面发布，并绑定到带 Artifact 输出契约的 `urus-arbitration@4` / `urus-attention@5`；compiled hash 与 Capability Manifest hash 已保存到 `backend/workflow-bindings.json` 并加载进本地数据库。远端已配置独立 `urus-decision` service client，仅授予 `workflow:read` / `workflow:run`，并同时受四个 Ref 的 client/Host allowlist 限制；不合法 token 和未允许 Ref 的 smoke 已分别得到 401 与 403，合法 token 在不创建 Run 的无效请求探测中得到 400。当前剩余门槛是逐条真实运行 fixture；在这些确认前，生产部署仍应由显式 `anomalo_workflow_enabled` 开关控制，本地 `.env` 已开启以支持联调。`register_decision_workflows.py` 只负责管理期 validate/import/publish 和生成不含 token 的 Binding 审计文件；日常 Urus 运行时仍不持有管理 token。
+Anomalo 生产联调仍受 D4 fixture gate 约束：四个 Urus Workflow Ref（`urus-instrument-arbitration@3`、`urus-group-arbitration@3`、`urus-indicator-review@3`、`urus-strategy-review@3`）已通过远端管理面发布，并绑定到带 Artifact 输出契约的 `urus-arbitration@5` / `urus-attention@6`；compiled hash 与 Capability Manifest hash 已保存到 `backend/workflow-bindings.json` 并加载进本地数据库。远端已配置独立 `urus-decision` service client，仅授予 `workflow:read` / `workflow:run`，并同时受四个 Ref 的 client/Host allowlist 限制；不合法 token 和未允许 Ref 的 smoke 已分别得到 401 与 403，合法 token 在不创建 Run 的无效请求探测中得到 400。当前剩余门槛是逐条真实运行 fixture；在这些确认前，生产部署仍应由显式 `anomalo_workflow_enabled` 开关控制，本地 `.env` 已开启以支持联调。`register_decision_workflows.py` 只负责管理期 validate/import/publish 和生成不含 token 的 Binding 审计文件；日常 Urus 运行时仍不持有管理 token。
 
 ### 22.1 后端自动测试
 

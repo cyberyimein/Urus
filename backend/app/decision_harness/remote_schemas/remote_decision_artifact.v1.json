@@ -4,7 +4,7 @@
   "title": "Urus Remote Decision Artifact",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "intent_type", "scope", "input_sha256", "completeness", "decision", "warnings", "evidence_refs"],
+  "required": ["schema_version", "intent_type", "scope", "dataset_id", "input_sha256", "completeness", "decision", "warnings", "evidence_refs"],
   "properties": {
     "schema_version": {"const": "urus.remote_decision_artifact.v1"},
     "intent_type": {"enum": ["instrument_arbitration", "group_arbitration", "indicator_attention", "strategy_attention"]},

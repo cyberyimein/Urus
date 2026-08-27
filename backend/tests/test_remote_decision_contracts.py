@@ -53,6 +53,20 @@ def test_artifact_rejects_unknown_fields_and_invalid_confidence() -> None:
         )
 
 
+def test_artifact_requires_top_level_dataset_id() -> None:
+    with pytest.raises(ValidationError):
+        RemoteDecisionArtifact(
+            schema_version="urus.remote_decision_artifact.v1",
+            intent_type=RemoteDecisionIntent.INSTRUMENT_ARBITRATION,
+            scope={"scope_type": "instrument", "scope_id": "INTC", "symbol": "INTC"},
+            input_sha256="a" * 64,
+            completeness="complete",
+            decision={"decision": "no_action"},
+            warnings=[],
+            evidence_refs=[],
+        )
+
+
 def test_attention_features_use_midrank_and_null_small_samples() -> None:
     rows = [
         {"id": str(index), "group_id": "g", "valid": True, "value": value, "change": value / 10, "transition": None}

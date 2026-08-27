@@ -150,7 +150,9 @@ class RemoteDecisionArtifact(BaseModel):
     schema_version: str = Field(min_length=1, max_length=128)
     intent_type: RemoteDecisionIntent
     scope: dict[str, Any]
-    dataset_id: str | None = None
+    # The key is required even for cross-section artifacts, where its value is
+    # null because one projection may span multiple datasets.
+    dataset_id: str | None
     input_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     completeness: Literal["complete", "partial", "insufficient_evidence"]
     decision: dict[str, Any]

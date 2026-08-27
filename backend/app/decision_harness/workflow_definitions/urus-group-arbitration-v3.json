@@ -1,0 +1,19 @@
+{
+  "api_version": "anomaloharis.dev/workflow/v1",
+  "kind": "Workflow",
+  "metadata": {"name": "urus-group-arbitration", "version": 3, "description": "Evaluate one frozen group snapshot with the Urus Artifact contract.", "labels": {"owner": "urus", "contract": "remote_decision_artifact.v1"}},
+  "spec": {
+    "input_schema": {"$ref": "remote_decision_input.v1"},
+    "output_schema": {"$ref": "remote_decision_artifact.v1"},
+    "nodes": [
+      {"id": "input", "type": "input", "type_version": 1, "config": {}},
+      {"id": "decision", "type": "preset_model", "type_version": 1, "config": {"model_ref": "urus-arbitration@5", "input_mode": "message", "session_mode": "isolated"}},
+      {"id": "output", "type": "output", "type_version": 1, "config": {}}
+    ],
+    "edges": [
+      {"from": {"node": "input", "port": "data"}, "to": {"node": "decision", "port": "input"}},
+      {"from": {"node": "decision", "port": "output"}, "to": {"node": "output", "port": "result"}}
+    ],
+    "policy": {"timeout_seconds": 1200, "max_parallelism": 1, "failure_mode": "fail_fast"}
+  }
+}

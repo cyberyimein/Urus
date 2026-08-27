@@ -30,10 +30,10 @@ INPUT_SCHEMA_VERSION = "urus.remote_decision_input.v1"
 ARTIFACT_SCHEMA_VERSION = "urus.remote_decision_artifact.v1"
 
 WORKFLOW_REFS: dict[str, str] = {
-    RemoteDecisionIntent.INSTRUMENT_ARBITRATION.value: "urus-instrument-arbitration@2",
-    RemoteDecisionIntent.GROUP_ARBITRATION.value: "urus-group-arbitration@2",
-    RemoteDecisionIntent.INDICATOR_ATTENTION.value: "urus-indicator-review@2",
-    RemoteDecisionIntent.STRATEGY_ATTENTION.value: "urus-strategy-review@2",
+    RemoteDecisionIntent.INSTRUMENT_ARBITRATION.value: "urus-instrument-arbitration@3",
+    RemoteDecisionIntent.GROUP_ARBITRATION.value: "urus-group-arbitration@3",
+    RemoteDecisionIntent.INDICATOR_ATTENTION.value: "urus-indicator-review@3",
+    RemoteDecisionIntent.STRATEGY_ATTENTION.value: "urus-strategy-review@3",
 }
 
 
