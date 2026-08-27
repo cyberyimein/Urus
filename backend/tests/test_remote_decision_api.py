@@ -65,7 +65,7 @@ def test_preflight_submit_and_idempotency_with_fake_adapter(tmp_path) -> None:
             RemoteDecisionRepository(session).save_binding(
                 {
                     "intent_type": "instrument_arbitration",
-                    "workflow_ref": "urus-instrument-arbitration@1",
+                    "workflow_ref": "urus-instrument-arbitration@2",
                     "status": "active",
                     "definition_hash": "1" * 64,
                     "compiled_hash": "2" * 64,

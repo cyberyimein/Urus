@@ -22,10 +22,10 @@ import httpx
 ROOT = Path(__file__).resolve().parents[1]
 DEFINITION_DIR = ROOT / "app" / "decision_harness" / "workflow_definitions"
 DEFAULT_FILES = (
-    "urus-instrument-arbitration-v1.json",
-    "urus-group-arbitration-v1.json",
-    "urus-indicator-review-v1.json",
-    "urus-strategy-review-v1.json",
+    "urus-instrument-arbitration-v2.json",
+    "urus-group-arbitration-v2.json",
+    "urus-indicator-review-v2.json",
+    "urus-strategy-review-v2.json",
 )
 
 

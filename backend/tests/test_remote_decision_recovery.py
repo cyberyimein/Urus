@@ -65,7 +65,7 @@ def _create_run(session: Session, *, status: str = "queued", remote_id: str | No
             "scope_id": "INTC",
             "dataset_id": "dataset-1",
             "source_locator_json": {"dataset_id": "dataset-1", "symbol": "INTC"},
-            "workflow_ref": "urus-instrument-arbitration@1",
+            "workflow_ref": "urus-instrument-arbitration@2",
             "definition_hash": "1" * 64,
             "compiled_hash": "2" * 64,
             "input_schema_version": "urus.remote_decision_input.v1",
@@ -91,7 +91,7 @@ def test_supervisor_recovers_run_after_remote_id(tmp_path) -> None:
     payload = _input_payload()
     receipt = asyncio.run(
         adapter.start(
-            workflow_ref="urus-instrument-arbitration@1",
+            workflow_ref="urus-instrument-arbitration@2",
             input_payload=payload,
             idempotency_key="remote-key",
             metadata={"source": "test"},
@@ -127,7 +127,7 @@ def test_supervisor_recovers_succeeded_run_before_artifact_finalisation(tmp_path
     payload = _input_payload()
     receipt = asyncio.run(
         adapter.start(
-            workflow_ref="urus-instrument-arbitration@1",
+            workflow_ref="urus-instrument-arbitration@2",
             input_payload=payload,
             idempotency_key="succeeded-recovery-key",
             metadata={"source": "test"},

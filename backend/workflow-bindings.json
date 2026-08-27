@@ -2,24 +2,25 @@
   "bindings": [
     {
       "intent_type": "instrument_arbitration",
-      "workflow_ref": "urus-instrument-arbitration@1",
+      "workflow_ref": "urus-instrument-arbitration@2",
       "status": "active",
-      "definition_hash": "3419ac2b861aae9ab5abfde64ae3c54c023f84563d25366c5b97696db0f34f9c",
-      "compiled_hash": "740bcacd1a341db500c8342537e03fcdab391bcdbb684724bbc60a52ebb88c95",
-      "capability_manifest_hash": "714a4d6689e942ec3fe9f1df202911e210440939f22c21f7e21dae99e0479229",
+      "definition_hash": "d5d926bab081743f944a789a40c0ef80d3467e64ef1fa71939818928b780351e",
+      "compiled_hash": "e8fd965d96f08b280d77eb5e35ad7720d862b66200e3f62f28cc2817610375e2",
+      "capability_manifest_hash": "0152919355ef485da4c90aebe2c3f78f1536caaf8645349c76a850f1d4ce5757",
       "input_schema_version": "urus.remote_decision_input.v1",
       "output_schema_version": "urus.remote_decision_artifact.v1",
-      "published_at": "2026-08-27T06:37:26.829Z",
-      "verified_at": "2026-08-27T06:37:26.829Z",
+      "published_at": "2026-08-27T11:44:56.767Z",
+      "verified_at": "2026-08-27T11:44:56.767Z",
       "definition_json": {
         "api_version": "anomaloharis.dev/workflow/v1",
         "kind": "Workflow",
         "metadata": {
           "name": "urus-instrument-arbitration",
-          "version": 1,
-          "description": "Evaluate one frozen instrument evidence package.",
+          "version": 2,
+          "description": "Evaluate one frozen instrument evidence package with the Urus Artifact contract.",
           "labels": {
-            "owner": "urus"
+            "owner": "urus",
+            "contract": "remote_decision_artifact.v1"
           }
         },
         "spec": {
@@ -234,7 +235,7 @@
               "type": "preset_model",
               "type_version": 1,
               "config": {
-                "model_ref": "urus-arbitration@3",
+                "model_ref": "urus-arbitration@4",
                 "input_mode": "message",
                 "session_mode": "isolated"
               }
@@ -281,7 +282,7 @@
           }
         },
         "compatibility": {
-          "authored_against_manifest_hash": "sha256:eff9bdb75c8a2fda29d4b36714dd2db45c427cd2feff98d2071b35fb20f7ebbe"
+          "authored_against_manifest_hash": "sha256:9d77a92da40bacef188fe8eeecc513f89f132950e7eadbcb1e7129a005326b5c"
         }
       },
       "manifest_json": {
@@ -508,15 +509,15 @@
             "plugin_lock_hash": "sha256:62e40e1a6fdcfc55f4d0d082d823847c77a31ea0a630485b5a9325fc6512651f"
           },
           {
-            "ref": "urus-arbitration@3",
-            "description": "urus-arbitration",
-            "compiled_hash": "sha256:1fe1441164dcc7ec1b7935ee767bc2a0e252154bdbb503b1f07bda5906b1ec7d",
+            "ref": "urus-arbitration@4",
+            "description": "urus-arbitration Artifact contract v4",
+            "compiled_hash": "sha256:cd4cc92b36d612d469f60effb2c1f7e1bdf2c49c3eedc044927f25e5a20e0d1e",
             "plugin_lock_hash": "sha256:1a8ffc2f548593725f3fae766695ad5c381e34883777bcfd5cf7fb3672651f4a"
           },
           {
-            "ref": "urus-attention@4",
-            "description": "urus-attention",
-            "compiled_hash": "sha256:b44c63ac5ba7489038743556ca435bc60863d54560a8855a8e3fd2f77430c8b3",
+            "ref": "urus-attention@5",
+            "description": "urus-attention Artifact contract v5",
+            "compiled_hash": "sha256:5dd1ce3dd0b4a2ceb47dd8fd3db53d7411917f1cad201f9b40dc2ab9a9470cc2",
             "plugin_lock_hash": "sha256:1a8ffc2f548593725f3fae766695ad5c381e34883777bcfd5cf7fb3672651f4a"
           }
         ],
@@ -527,30 +528,31 @@
           "subworkflow",
           "wait"
         ],
-        "generated_at": "2026-08-27T06:41:03.400Z",
-        "manifest_hash": "sha256:714a4d6689e942ec3fe9f1df202911e210440939f22c21f7e21dae99e0479229"
+        "generated_at": "2026-08-27T11:44:56.678Z",
+        "manifest_hash": "sha256:0152919355ef485da4c90aebe2c3f78f1536caaf8645349c76a850f1d4ce5757"
       }
     },
     {
       "intent_type": "group_arbitration",
-      "workflow_ref": "urus-group-arbitration@1",
+      "workflow_ref": "urus-group-arbitration@2",
       "status": "active",
-      "definition_hash": "5b3f8d0094150ff317865647be3ff4f1e5b0a95da36f7114ba020986e0329d32",
-      "compiled_hash": "95b9489f1af04e0baae602ff277b66ebd53add456adca30358d92d7036a036cd",
-      "capability_manifest_hash": "714a4d6689e942ec3fe9f1df202911e210440939f22c21f7e21dae99e0479229",
+      "definition_hash": "0109e74ccc0c43e228dbaa94798287ceb7ef55030797df71bfcbf28e48403888",
+      "compiled_hash": "44b1989a1c3e288a91714f89a33d6db8838ca144973a12583f9130a3fa9057de",
+      "capability_manifest_hash": "0152919355ef485da4c90aebe2c3f78f1536caaf8645349c76a850f1d4ce5757",
       "input_schema_version": "urus.remote_decision_input.v1",
       "output_schema_version": "urus.remote_decision_artifact.v1",
-      "published_at": "2026-08-27T06:39:01.436Z",
-      "verified_at": "2026-08-27T06:39:01.436Z",
+      "published_at": "2026-08-27T11:44:56.817Z",
+      "verified_at": "2026-08-27T11:44:56.817Z",
       "definition_json": {
         "api_version": "anomaloharis.dev/workflow/v1",
         "kind": "Workflow",
         "metadata": {
           "name": "urus-group-arbitration",
-          "version": 1,
-          "description": "Evaluate one frozen group snapshot.",
+          "version": 2,
+          "description": "Evaluate one frozen group snapshot with the Urus Artifact contract.",
           "labels": {
-            "owner": "urus"
+            "owner": "urus",
+            "contract": "remote_decision_artifact.v1"
           }
         },
         "spec": {
@@ -765,7 +767,7 @@
               "type": "preset_model",
               "type_version": 1,
               "config": {
-                "model_ref": "urus-arbitration@3",
+                "model_ref": "urus-arbitration@4",
                 "input_mode": "message",
                 "session_mode": "isolated"
               }
@@ -812,7 +814,7 @@
           }
         },
         "compatibility": {
-          "authored_against_manifest_hash": "sha256:f00b85783507805b13f5b331cc9aab95fc1d9e35c692d6f80eb6fdc89ad7f087"
+          "authored_against_manifest_hash": "sha256:9d77a92da40bacef188fe8eeecc513f89f132950e7eadbcb1e7129a005326b5c"
         }
       },
       "manifest_json": {
@@ -1039,15 +1041,15 @@
             "plugin_lock_hash": "sha256:62e40e1a6fdcfc55f4d0d082d823847c77a31ea0a630485b5a9325fc6512651f"
           },
           {
-            "ref": "urus-arbitration@3",
-            "description": "urus-arbitration",
-            "compiled_hash": "sha256:1fe1441164dcc7ec1b7935ee767bc2a0e252154bdbb503b1f07bda5906b1ec7d",
+            "ref": "urus-arbitration@4",
+            "description": "urus-arbitration Artifact contract v4",
+            "compiled_hash": "sha256:cd4cc92b36d612d469f60effb2c1f7e1bdf2c49c3eedc044927f25e5a20e0d1e",
             "plugin_lock_hash": "sha256:1a8ffc2f548593725f3fae766695ad5c381e34883777bcfd5cf7fb3672651f4a"
           },
           {
-            "ref": "urus-attention@4",
-            "description": "urus-attention",
-            "compiled_hash": "sha256:b44c63ac5ba7489038743556ca435bc60863d54560a8855a8e3fd2f77430c8b3",
+            "ref": "urus-attention@5",
+            "description": "urus-attention Artifact contract v5",
+            "compiled_hash": "sha256:5dd1ce3dd0b4a2ceb47dd8fd3db53d7411917f1cad201f9b40dc2ab9a9470cc2",
             "plugin_lock_hash": "sha256:1a8ffc2f548593725f3fae766695ad5c381e34883777bcfd5cf7fb3672651f4a"
           }
         ],
@@ -1058,30 +1060,31 @@
           "subworkflow",
           "wait"
         ],
-        "generated_at": "2026-08-27T06:41:03.400Z",
-        "manifest_hash": "sha256:714a4d6689e942ec3fe9f1df202911e210440939f22c21f7e21dae99e0479229"
+        "generated_at": "2026-08-27T11:44:56.678Z",
+        "manifest_hash": "sha256:0152919355ef485da4c90aebe2c3f78f1536caaf8645349c76a850f1d4ce5757"
       }
     },
     {
       "intent_type": "indicator_attention",
-      "workflow_ref": "urus-indicator-review@1",
+      "workflow_ref": "urus-indicator-review@2",
       "status": "active",
-      "definition_hash": "368b4af985313bde06318fdce3500039732144660f63641fb56a5bc3e9188a77",
-      "compiled_hash": "a47e76fecfc2a2457d2f711a96f44d19fd4792be8517c64c302e40c6dd18b6de",
-      "capability_manifest_hash": "714a4d6689e942ec3fe9f1df202911e210440939f22c21f7e21dae99e0479229",
+      "definition_hash": "9b125fdf5b2981cdae5148213ef957800fe28fd0bf58067c2e2dc67a05c4dc7a",
+      "compiled_hash": "f4fe39dc9ceb9d013c6723ae6af2b5e3b5a1009a085c2f87a031cc5e058ceaaf",
+      "capability_manifest_hash": "0152919355ef485da4c90aebe2c3f78f1536caaf8645349c76a850f1d4ce5757",
       "input_schema_version": "urus.remote_decision_input.v1",
       "output_schema_version": "urus.remote_decision_artifact.v1",
-      "published_at": "2026-08-27T06:39:01.488Z",
-      "verified_at": "2026-08-27T06:39:01.488Z",
+      "published_at": "2026-08-27T11:44:56.859Z",
+      "verified_at": "2026-08-27T11:44:56.859Z",
       "definition_json": {
         "api_version": "anomaloharis.dev/workflow/v1",
         "kind": "Workflow",
         "metadata": {
           "name": "urus-indicator-review",
-          "version": 1,
-          "description": "Find notable indicator cards in one frozen cross-section.",
+          "version": 2,
+          "description": "Find notable indicator cards in one frozen cross-section with the Urus Artifact contract.",
           "labels": {
-            "owner": "urus"
+            "owner": "urus",
+            "contract": "remote_decision_artifact.v1"
           }
         },
         "spec": {
@@ -1296,7 +1299,7 @@
               "type": "preset_model",
               "type_version": 1,
               "config": {
-                "model_ref": "urus-attention@4",
+                "model_ref": "urus-attention@5",
                 "input_mode": "message",
                 "session_mode": "isolated"
               }
@@ -1343,7 +1346,7 @@
           }
         },
         "compatibility": {
-          "authored_against_manifest_hash": "sha256:f00b85783507805b13f5b331cc9aab95fc1d9e35c692d6f80eb6fdc89ad7f087"
+          "authored_against_manifest_hash": "sha256:9d77a92da40bacef188fe8eeecc513f89f132950e7eadbcb1e7129a005326b5c"
         }
       },
       "manifest_json": {
@@ -1570,15 +1573,15 @@
             "plugin_lock_hash": "sha256:62e40e1a6fdcfc55f4d0d082d823847c77a31ea0a630485b5a9325fc6512651f"
           },
           {
-            "ref": "urus-arbitration@3",
-            "description": "urus-arbitration",
-            "compiled_hash": "sha256:1fe1441164dcc7ec1b7935ee767bc2a0e252154bdbb503b1f07bda5906b1ec7d",
+            "ref": "urus-arbitration@4",
+            "description": "urus-arbitration Artifact contract v4",
+            "compiled_hash": "sha256:cd4cc92b36d612d469f60effb2c1f7e1bdf2c49c3eedc044927f25e5a20e0d1e",
             "plugin_lock_hash": "sha256:1a8ffc2f548593725f3fae766695ad5c381e34883777bcfd5cf7fb3672651f4a"
           },
           {
-            "ref": "urus-attention@4",
-            "description": "urus-attention",
-            "compiled_hash": "sha256:b44c63ac5ba7489038743556ca435bc60863d54560a8855a8e3fd2f77430c8b3",
+            "ref": "urus-attention@5",
+            "description": "urus-attention Artifact contract v5",
+            "compiled_hash": "sha256:5dd1ce3dd0b4a2ceb47dd8fd3db53d7411917f1cad201f9b40dc2ab9a9470cc2",
             "plugin_lock_hash": "sha256:1a8ffc2f548593725f3fae766695ad5c381e34883777bcfd5cf7fb3672651f4a"
           }
         ],
@@ -1589,30 +1592,31 @@
           "subworkflow",
           "wait"
         ],
-        "generated_at": "2026-08-27T06:41:03.400Z",
-        "manifest_hash": "sha256:714a4d6689e942ec3fe9f1df202911e210440939f22c21f7e21dae99e0479229"
+        "generated_at": "2026-08-27T11:44:56.678Z",
+        "manifest_hash": "sha256:0152919355ef485da4c90aebe2c3f78f1536caaf8645349c76a850f1d4ce5757"
       }
     },
     {
       "intent_type": "strategy_attention",
-      "workflow_ref": "urus-strategy-review@1",
+      "workflow_ref": "urus-strategy-review@2",
       "status": "active",
-      "definition_hash": "b8e4ebc52a40e33d0a37d7bdfb7a3c772886bbe956a9413a1b8357d475dce1ff",
-      "compiled_hash": "27e782560115b6bf09b65795f4f19ba294709b59ccfe3742b19aab5a276f78cf",
-      "capability_manifest_hash": "714a4d6689e942ec3fe9f1df202911e210440939f22c21f7e21dae99e0479229",
+      "definition_hash": "5f6689f475cde542d70a45783c58d3765192409f045013a917d5e1aad30107ca",
+      "compiled_hash": "8805844498fd001b89c19e248bf5fa20801c545a50560c139f58e2b6c5c7b185",
+      "capability_manifest_hash": "0152919355ef485da4c90aebe2c3f78f1536caaf8645349c76a850f1d4ce5757",
       "input_schema_version": "urus.remote_decision_input.v1",
       "output_schema_version": "urus.remote_decision_artifact.v1",
-      "published_at": "2026-08-27T06:39:01.535Z",
-      "verified_at": "2026-08-27T06:39:01.535Z",
+      "published_at": "2026-08-27T11:44:56.905Z",
+      "verified_at": "2026-08-27T11:44:56.905Z",
       "definition_json": {
         "api_version": "anomaloharis.dev/workflow/v1",
         "kind": "Workflow",
         "metadata": {
           "name": "urus-strategy-review",
-          "version": 1,
-          "description": "Find notable strategy cards in one frozen cross-section.",
+          "version": 2,
+          "description": "Find notable strategy cards in one frozen cross-section with the Urus Artifact contract.",
           "labels": {
-            "owner": "urus"
+            "owner": "urus",
+            "contract": "remote_decision_artifact.v1"
           }
         },
         "spec": {
@@ -1827,7 +1831,7 @@
               "type": "preset_model",
               "type_version": 1,
               "config": {
-                "model_ref": "urus-attention@4",
+                "model_ref": "urus-attention@5",
                 "input_mode": "message",
                 "session_mode": "isolated"
               }
@@ -1874,7 +1878,7 @@
           }
         },
         "compatibility": {
-          "authored_against_manifest_hash": "sha256:f00b85783507805b13f5b331cc9aab95fc1d9e35c692d6f80eb6fdc89ad7f087"
+          "authored_against_manifest_hash": "sha256:9d77a92da40bacef188fe8eeecc513f89f132950e7eadbcb1e7129a005326b5c"
         }
       },
       "manifest_json": {
@@ -2101,15 +2105,15 @@
             "plugin_lock_hash": "sha256:62e40e1a6fdcfc55f4d0d082d823847c77a31ea0a630485b5a9325fc6512651f"
           },
           {
-            "ref": "urus-arbitration@3",
-            "description": "urus-arbitration",
-            "compiled_hash": "sha256:1fe1441164dcc7ec1b7935ee767bc2a0e252154bdbb503b1f07bda5906b1ec7d",
+            "ref": "urus-arbitration@4",
+            "description": "urus-arbitration Artifact contract v4",
+            "compiled_hash": "sha256:cd4cc92b36d612d469f60effb2c1f7e1bdf2c49c3eedc044927f25e5a20e0d1e",
             "plugin_lock_hash": "sha256:1a8ffc2f548593725f3fae766695ad5c381e34883777bcfd5cf7fb3672651f4a"
           },
           {
-            "ref": "urus-attention@4",
-            "description": "urus-attention",
-            "compiled_hash": "sha256:b44c63ac5ba7489038743556ca435bc60863d54560a8855a8e3fd2f77430c8b3",
+            "ref": "urus-attention@5",
+            "description": "urus-attention Artifact contract v5",
+            "compiled_hash": "sha256:5dd1ce3dd0b4a2ceb47dd8fd3db53d7411917f1cad201f9b40dc2ab9a9470cc2",
             "plugin_lock_hash": "sha256:1a8ffc2f548593725f3fae766695ad5c381e34883777bcfd5cf7fb3672651f4a"
           }
         ],
@@ -2120,8 +2124,8 @@
           "subworkflow",
           "wait"
         ],
-        "generated_at": "2026-08-27T06:41:03.400Z",
-        "manifest_hash": "sha256:714a4d6689e942ec3fe9f1df202911e210440939f22c21f7e21dae99e0479229"
+        "generated_at": "2026-08-27T11:44:56.678Z",
+        "manifest_hash": "sha256:0152919355ef485da4c90aebe2c3f78f1536caaf8645349c76a850f1d4ce5757"
       }
     }
   ]
