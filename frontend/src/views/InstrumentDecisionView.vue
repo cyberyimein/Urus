@@ -5,6 +5,7 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { api } from '@/api/client'
 import AppShell from '@/components/AppShell.vue'
 import DecisionChartWorkspace from '@/components/decision/DecisionChartWorkspace.vue'
+import RemoteDecisionPanel from '@/components/decision/RemoteDecisionPanel.vue'
 import type {
   ChartPoint,
   ChartSeries,
@@ -15,6 +16,7 @@ import type {
   DeterministicSynthesis,
   StrategyDecision,
 } from '@/types/dailyEvidence'
+import type { RemoteDecisionSource } from '@/types/remoteDecision'
 
 type LayerKey = 'ma20' | 'ma50' | 'ma200' | 'bollinger' | 'volume' | 'rsi' | 'macd' | 'relative'
 type WatchGroup = {
@@ -40,7 +42,7 @@ const projection = ref<DecisionChartProjection | null>(null)
 const strategyDecisions = ref<StrategyDecision[]>([])
 const deterministicSynthesis = ref<DeterministicSynthesis>({})
 const activeStrategy = ref<string | null>(null)
-const aiNotice = ref('')
+const instrumentRemotePanel = ref<{ open: () => void } | null>(null)
 const showTechnicalDetails = ref(false)
 const layers = reactive<Record<LayerKey, boolean>>({
   ma20: true,
@@ -197,6 +199,12 @@ const strategyActionLabels: Record<string, string> = {
 }
 const strategyStanceLabels: Record<string, string> = { bullish: '偏多', bearish: '偏空', neutral: '中性', insufficient_data: '不可用' }
 const historicalDatasetId = computed(() => typeof route.query.dataset === 'string' ? route.query.dataset : '')
+const instrumentAiSource = computed<RemoteDecisionSource>(() => ({
+  dataset_id: dataset.value?.dataset_id,
+  symbol: selectedSymbol.value,
+  content_sha256: dataset.value?.content_sha256,
+}))
+const instrumentAiDisabled = computed(() => !dataset.value || Boolean(demoReason.value) || String(dataset.value?.schema_version ?? '').includes('local-demo'))
 
 function formatPrice(value: number | null | undefined) {
   if (value === null || value === undefined || !Number.isFinite(value)) return '—'
@@ -308,12 +316,8 @@ function selectStrategy(strategyName: string) {
   activeStrategy.value = activeStrategy.value === strategyName ? null : strategyName
 }
 
-function showAiPlaceholder() {
-  aiNotice.value = 'Phase B 确定性策略已完成；AI 仲裁仍由后续 Anomalo Workflow 接入，当前不会在 Urus 本地伪造结果。'
-}
-
-function closeAiNotice() {
-  aiNotice.value = ''
+function openInstrumentAi() {
+  if (!instrumentAiDisabled.value) instrumentRemotePanel.value?.open()
 }
 
 function movingAverage(values: number[], window: number): Array<number | null> {
@@ -555,7 +559,7 @@ onMounted(() => {
           </div>
           <div class="decision-actions">
             <div class="connection-state" :data-demo="demoReason ? 'demo' : 'api'"><i></i><span>{{ demoReason ? 'LOCAL DEMO' : 'EVIDENCE API' }}</span></div>
-            <button class="ai-action" type="button" @click="showAiPlaceholder">AI 评估 <small>未接入</small></button>
+            <button class="ai-action" type="button" :disabled="instrumentAiDisabled" @click="openInstrumentAi">AI 仲裁</button>
           </div>
         </section>
 
@@ -619,9 +623,8 @@ onMounted(() => {
 
             <article class="insight-card ai-card">
               <div class="insight-card-head"><div><span class="section-kicker">AI ARBITRATION</span><h2>AI 决策</h2></div><span class="not-run">NOT RUN</span></div>
-              <p>AI 只能在用户主动发起后评估这份冻结证据。执行能力将通过 Anomalo Workflow 接入。</p>
-              <button class="ai-placeholder-button" type="button" @click="showAiPlaceholder">主动发起 AI 评估 <span>→</span></button>
-              <div v-if="aiNotice" class="ai-notice"><button type="button" aria-label="关闭提示" @click="closeAiNotice">×</button>{{ aiNotice }}</div>
+              <p>AI 只读取当前个股的冻结 Daily Decision Dataset、图表投影和确定性策略结果。</p>
+              <RemoteDecisionPanel ref="instrumentRemotePanel" intent-type="instrument_arbitration" :source="instrumentAiSource" title="确认个股 AI 仲裁" label="主动发起 AI 仲裁" :disabled="instrumentAiDisabled" preflight-on-mount />
             </article>
           </aside>
         </section>

@@ -45,6 +45,13 @@ import type {
   CrossSectionCatalogItem,
   CrossSectionProjection,
 } from '@/types/crossSection'
+import type {
+  RemoteDecisionEvent,
+  RemoteDecisionIntent,
+  RemoteDecisionPreflight,
+  RemoteDecisionRun,
+  RemoteDecisionSource,
+} from '@/types/remoteDecision'
 
 // Local Vite serves `/api` through the dev proxy, which keeps browser requests
 // same-origin and avoids loopback cross-port restrictions. Deployments can
@@ -229,4 +236,32 @@ export const api = {
     request<CrossSectionProjection>(
       `/observation/runs/${encodeURIComponent(runId)}/strategies/${encodeURIComponent(strategyId)}`,
     ),
+  getObservationRunGroupSnapshot: (runId: string, groupId: string) =>
+    request<{ observation_run_id: string; group_id: string; snapshot_id: string; dataset_id: string; group_version_id: string; snapshot: any }>(
+      `/observation/runs/${encodeURIComponent(runId)}/groups/${encodeURIComponent(groupId)}`,
+    ),
+  preflightRemoteDecision: (requestBody: { intent_type: RemoteDecisionIntent; source: RemoteDecisionSource }) =>
+    request<RemoteDecisionPreflight>('/remote-decisions/preflight', {
+      method: 'POST',
+      body: JSON.stringify(requestBody),
+    }),
+  submitRemoteDecision: (requestBody: { intent_type: RemoteDecisionIntent; source: RemoteDecisionSource; preflight_fingerprint: string; request_intent_id: string }) =>
+    request<RemoteDecisionRun>('/remote-decisions', {
+      method: 'POST',
+      body: JSON.stringify(requestBody),
+    }),
+  listRemoteDecisions: (query: { scope_type?: string; scope_id?: string; dataset_id?: string; limit?: number } = {}) => {
+    const params = new URLSearchParams()
+    Object.entries(query).forEach(([key, value]) => { if (value !== undefined) params.set(key, String(value)) })
+    const suffix = params.toString() ? `?${params.toString()}` : ''
+    return request<RemoteDecisionRun[]>(`/remote-decisions${suffix}`)
+  },
+  getRemoteDecision: (localRunId: string) =>
+    request<RemoteDecisionRun>(`/remote-decisions/${encodeURIComponent(localRunId)}`),
+  getRemoteDecisionEvents: (localRunId: string, afterSequence = 0) =>
+    request<RemoteDecisionEvent[]>(`/remote-decisions/${encodeURIComponent(localRunId)}/events?after_sequence=${encodeURIComponent(String(afterSequence))}`),
+  stopRemoteDecision: (localRunId: string) =>
+    request<RemoteDecisionRun>(`/remote-decisions/${encodeURIComponent(localRunId)}/stop`, { method: 'POST', body: JSON.stringify({}) }),
+  rerunRemoteDecision: (localRunId: string, requestIntentId?: string) =>
+    request<RemoteDecisionRun>(`/remote-decisions/${encodeURIComponent(localRunId)}/rerun`, { method: 'POST', body: JSON.stringify(requestIntentId ? { request_intent_id: requestIntentId } : {}) }),
 }

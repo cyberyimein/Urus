@@ -111,6 +111,7 @@
 .cross-section-symbol-card[data-tone="positive"] { border-color: rgba(196, 122, 80, .42); }.cross-section-symbol-card[data-tone="positive"]::before { background: var(--success); }
 .cross-section-symbol-card[data-tone="negative"] { border-color: rgba(219, 101, 82, .42); }.cross-section-symbol-card[data-tone="negative"]::before { background: var(--danger); }
 .cross-section-symbol-card:hover, .cross-section-symbol-card:focus-visible { border-color: var(--accent); background: rgba(182, 79, 56, .13); transform: translateY(-1px); outline: none; }
+.cross-section-symbol-card:target { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(182, 79, 56, .28), inset 0 0 0 1px var(--accent); }
 .cross-section-symbol-card.is-transition { box-shadow: inset 0 0 0 1px rgba(182, 79, 56, .18); }
 .cross-section-symbol-card-head { display: flex; align-items: center; justify-content: space-between; gap: 7px; min-width: 0; }
 .cross-section-symbol-card-head strong { overflow: hidden; color: var(--ink); font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }

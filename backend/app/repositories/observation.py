@@ -300,6 +300,37 @@ class ObservationRepository:
 
         return self.session.get(GroupDailySnapshotModel, snapshot_id)
 
+    def snapshot_for_run(
+        self,
+        run_id: str,
+        *,
+        group_id: str | None = None,
+        snapshot_id: str | None = None,
+    ) -> tuple[ObservationRunModel, GroupDailySnapshotModel] | None:
+        """Resolve an immutable snapshot only through the exact Run manifest."""
+
+        run = self.get_run(run_id)
+        if run is None:
+            return None
+        for item in list((run.payload_json or {}).get("group_snapshots") or []):
+            if item.get("status") != "succeeded" or not item.get("snapshot_id"):
+                continue
+            if snapshot_id is not None and str(item.get("snapshot_id")) != str(snapshot_id):
+                continue
+            if group_id is not None and str(item.get("group_id")) != str(group_id):
+                continue
+            snapshot = self.get_snapshot(str(item["snapshot_id"]))
+            if snapshot is None:
+                continue
+            if group_id is not None and snapshot.group_id != group_id:
+                continue
+            if item.get("dataset_id") and str(item.get("dataset_id")) != str(snapshot.dataset_id):
+                continue
+            if item.get("group_version_id") and str(item.get("group_version_id")) != str(snapshot.group_version_id):
+                continue
+            return run, snapshot
+        return None
+
     def get_by_idempotency(self, key: str) -> ObservationRunModel | None:
         return self.session.scalar(
             select(ObservationRunModel).where(ObservationRunModel.idempotency_key == key)

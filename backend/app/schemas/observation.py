@@ -76,6 +76,17 @@ class ObservationGroupDetailResponse(BaseModel):
     latest_snapshot: dict[str, Any] | None = None
 
 
+class ObservationRunGroupSnapshotResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    observation_run_id: str
+    group_id: str
+    snapshot_id: str
+    dataset_id: str
+    group_version_id: str
+    snapshot: dict[str, Any]
+
+
 class ObservationGroupSyncResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

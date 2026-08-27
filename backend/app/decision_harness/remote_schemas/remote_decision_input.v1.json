@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://urus.dev/schemas/remote_decision_input.v1.json",
+  "title": "Urus Remote Decision Input",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "intent", "scope", "dataset", "evidence", "strategy_decisions", "deterministic_synthesis", "quality", "constraints", "rows", "evidence_refs", "input_sha256"],
+  "properties": {
+    "schema_version": {"const": "urus.remote_decision_input.v1"},
+    "intent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "trigger_mode", "trigger_source"],
+      "properties": {
+        "type": {"enum": ["instrument_arbitration", "group_arbitration", "indicator_attention", "strategy_attention"]},
+        "request_intent_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "trigger_mode": {"const": "user"},
+        "trigger_source": {"type": "string"}
+      }
+    },
+    "scope": {"type": "object"},
+    "dataset": {"type": "object"},
+    "input_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "strategy_decisions": {"type": "array"},
+    "deterministic_synthesis": {"type": "object"},
+    "quality": {"type": "object"},
+    "constraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed_symbols", "allow_latest_data_lookup", "allow_symbol_expansion"],
+      "properties": {
+        "allowed_symbols": {"type": "array", "items": {"type": "string"}},
+        "allow_latest_data_lookup": {"const": false},
+        "allow_symbol_expansion": {"const": false}
+      }
+    },
+    "rows": {"type": "array"},
+    "evidence": {"type": "object"},
+    "evidence_refs": {"type": "array"}
+  }
+}

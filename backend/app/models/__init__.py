@@ -52,6 +52,12 @@ from app.models.observation import (
     ObservationRunModel,
     ObservationUniverseRevisionModel,
 )
+from app.models.remote_decision import (
+    DecisionWorkflowBindingModel,
+    RemoteDecisionArtifactModel,
+    RemoteDecisionEventModel,
+    RemoteDecisionRunModel,
+)
 
 __all__ = [
     "RunModel",
@@ -100,4 +106,8 @@ __all__ = [
     "GroupDailySnapshotModel",
     "ObservationRunModel",
     "ObservationUniverseRevisionModel",
+    "DecisionWorkflowBindingModel",
+    "RemoteDecisionRunModel",
+    "RemoteDecisionEventModel",
+    "RemoteDecisionArtifactModel",
 ]

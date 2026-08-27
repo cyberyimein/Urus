@@ -85,6 +85,7 @@ export interface CrossSectionRow {
   reasons?: Array<Record<string, any>>
   evidence_refs: Array<Record<string, any>>
   warnings: string[]
+  attention_features?: Record<string, number | boolean | string | null>
 }
 
 export interface CrossSectionGroupSummary {

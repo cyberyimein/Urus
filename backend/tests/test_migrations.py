@@ -35,7 +35,11 @@ def test_empty_database_can_migrate(tmp_path: Path) -> None:
         "observation_runs",
             "observation_universe_revisions",
             "moomoo_history_quota_snapshots",
-            "history_collection_states",
+        "history_collection_states",
+            "decision_workflow_bindings",
+            "remote_decision_runs",
+            "remote_decision_events",
+            "remote_decision_artifacts",
         }.issubset(
         set(inspector.get_table_names())
     )

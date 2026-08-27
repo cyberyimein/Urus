@@ -3,8 +3,10 @@ import { computed, onMounted, ref } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import AppShell from '@/components/AppShell.vue'
+import RemoteDecisionPanel from '@/components/decision/RemoteDecisionPanel.vue'
 import { api } from '@/api/client'
 import type { GroupDailySnapshot, ObservationGroup } from '@/types/api'
+import type { RemoteDecisionSource } from '@/types/remoteDecision'
 
 const route = useRoute()
 const router = useRouter()
@@ -15,12 +17,23 @@ const running = ref(false)
 const error = ref('')
 const runNotice = ref('')
 const selectedSymbol = ref('')
+const exactRunId = ref('')
+const exactSnapshotId = ref('')
+const groupRemotePanel = ref<{ open: () => void } | null>(null)
 
 const selectedGroupId = computed(() => String(route.params.groupId ?? groups.value[0]?.group_id ?? ''))
 const group = computed(() => detail.value?.group ?? groups.value.find((item) => item.group_id === selectedGroupId.value) ?? null)
 const indicatorGroups = computed(() => groups.value.filter(isIndicatorGroup))
 const themeGroups = computed(() => groups.value.filter((item) => !isIndicatorGroup(item)))
 const snapshot = computed(() => detail.value?.latest_snapshot ?? null)
+const groupAiSource = computed<RemoteDecisionSource>(() => ({
+  observation_run_id: exactRunId.value || undefined,
+  snapshot_id: exactSnapshotId.value || undefined,
+  dataset_id: snapshot.value?.dataset_id,
+  group_version_id: snapshot.value?.group?.version_id,
+  content_sha256: snapshot.value?.content_sha256,
+}))
+const groupAiDisabled = computed(() => !snapshot.value || !exactRunId.value || !exactSnapshotId.value)
 const features = computed(() => snapshot.value?.features ?? null)
 const decision = computed(() => snapshot.value?.group_decision ?? null)
 const relativeSeries = computed(() => snapshot.value?.charts.relative_strength.series ?? [])
@@ -142,6 +155,20 @@ async function loadGroup(groupId: string) {
   try {
     const response = await api.getObservationGroup(groupId)
     detail.value = { ...response, group: normalizeGroup(response.group) }
+    exactRunId.value = ''
+    exactSnapshotId.value = ''
+    const requestedRun = typeof route.query.run === 'string' ? route.query.run : ''
+    if (requestedRun) {
+      try {
+        const exact = await api.getObservationRunGroupSnapshot(requestedRun, groupId)
+        detail.value.latest_snapshot = exact.snapshot
+        exactRunId.value = exact.observation_run_id
+        exactSnapshotId.value = exact.snapshot_id
+      } catch {
+        // A Run may not contain every group visible in the current Universe.
+        // Keep deterministic latest data visible, but do not offer AI on it.
+      }
+    }
     const available = detail.value.latest_snapshot?.symbols.map(item => String(item.symbol)) ?? []
     if (!available.includes(selectedSymbol.value)) {
       selectedSymbol.value = available[0] ?? ''
@@ -173,7 +200,7 @@ async function load() {
 
 async function chooseGroup(groupId: string) {
   runNotice.value = ''
-  await router.push({ name: 'group-observation', params: { groupId } })
+  await router.push({ name: 'group-observation', params: { groupId }, query: {} })
   await loadGroup(groupId)
 }
 
@@ -189,6 +216,7 @@ async function runObservation() {
       request_intent_id: `group-page:${group.value.group_id}:${Date.now()}`,
     })
     runNotice.value = `Observation Run ${result.status} · ${result.run_id.slice(0, 8)}…`
+    await router.replace({ name: 'group-observation', params: { groupId: group.value.group_id }, query: { run: result.run_id } })
     await loadGroup(group.value.group_id)
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : 'Observation Run 执行失败。'
@@ -320,7 +348,7 @@ onMounted(() => { void load() })
 
         <section class="phase-c-lower-grid">
           <article class="phase-c-card phase-c-ranking-card"><div class="phase-c-card-head"><div><span class="section-kicker">LEADERS / LAGGARDS</span><h3>组内排名</h3></div><small>20D return</small></div><div class="phase-c-rank-columns"><div><span class="rank-label positive">LEADERS</span><button v-for="row in features?.leaders" :key="`leader-${row.symbol}`" type="button" @click="selectSymbol(row.symbol)"><strong>{{ row.symbol }}</strong><b>{{ formatPercent(row.return_percent) }}</b></button></div><div><span class="rank-label negative">LAGGARDS</span><button v-for="row in features?.laggards" :key="`laggard-${row.symbol}`" type="button" @click="selectSymbol(row.symbol)"><strong>{{ row.symbol }}</strong><b>{{ formatPercent(row.return_percent) }}</b></button></div></div></article>
-          <article class="phase-c-card phase-c-decision-card"><div class="phase-c-card-head"><div><span class="section-kicker">GROUP DECISION</span><h3>确定性组建议</h3></div><span class="phase-c-decision-pill" :data-tone="decision?.stance">{{ actionLabels[decision?.action ?? ''] ?? decision?.action }}</span></div><p>{{ decision?.reasons?.[0] ?? '等待足够的组级证据。' }}</p><small>AI 仲裁暂未执行；当前只展示冻结证据和确定性组判断。</small></article>
+          <article class="phase-c-card phase-c-decision-card"><div class="phase-c-card-head"><div><span class="section-kicker">GROUP DECISION</span><h3>确定性组建议</h3></div><span class="phase-c-decision-pill" :data-tone="decision?.stance">{{ actionLabels[decision?.action ?? ''] ?? decision?.action }}</span></div><p>{{ decision?.reasons?.[0] ?? '等待足够的组级证据。' }}</p><small v-if="!exactRunId">请先从某次 Observation Run 打开本组的精确快照，才能发起 AI 仲裁。</small><RemoteDecisionPanel ref="groupRemotePanel" intent-type="group_arbitration" :source="groupAiSource" title="确认组级 AI 仲裁" label="主动发起组级 AI 仲裁" :disabled="groupAiDisabled" preflight-on-mount /></article>
         </section>
 
         <section class="phase-c-card phase-c-small-multiples">

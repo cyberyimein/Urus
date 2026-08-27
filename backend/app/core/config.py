@@ -105,6 +105,22 @@ class Settings(BaseSettings):
     # Agent web-search runs can take several minutes; keep connection failure
     # handling separate in the HTTP adapter while allowing a long read window.
     anomalo_timeout_seconds: float = 600.0
+    # Phase D Workflow runtime is intentionally independent from the legacy
+    # chat/event adapter above.  Keep it disabled until a published Workflow
+    # Binding and a scoped service token are configured.
+    anomalo_workflow_enabled: bool = False
+    anomalo_workflow_token: str | None = None
+    anomalo_workflow_connect_timeout_seconds: float = 10.0
+    anomalo_workflow_read_timeout_seconds: float = 1200.0
+    anomalo_workflow_fake_adapter: bool = False
+    remote_decision_max_input_bytes: int = 500000
+    remote_decision_max_cross_section_rows: int = 1000
+    remote_decision_max_notable_cards: int = 20
+    remote_decision_event_poll_limit: int = 500
+    # A 0.25s poll interval should cover the Workflow read timeout (20 min)
+    # after a Urus restart, rather than failing a still-running remote Run
+    # after the old one-minute window.
+    remote_decision_max_polls: int = 4800
     # Scheduled events are opt-in during validation. The breaking/news agent
     # remains defined but disabled until its source policy is finalized.
     expected_events_enabled: bool = False

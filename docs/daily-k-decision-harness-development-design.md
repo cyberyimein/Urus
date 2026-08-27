@@ -3,7 +3,8 @@
 > 状态：已确认方向，等待分阶段实现  
 > 适用范围：Urus 日 K 数据、指标可视化、算法策略、个股/组/观测组决策，以及未来 Anomalo Workflow 执行接入  
 > 不包含：直接预测今日大盘方向的 AI、自动交易、当前阶段的 AI 执行代码、动态更新 Skill 代码  
-> 上位概念：[三层决策 AI：策略仲裁与双向再学习路径](decision-ai-learning-loop-design.md)
+> Phase D 按钮、输入输出与实际 Anomalo 运行 Interface：
+> [Phase D AI 决策流程与按钮设计](phase-d-ai-decision-flow-design.md)
 
 ## 1. 本文结论
 
@@ -54,8 +55,8 @@ Workflow Interface 形成明确 Seam。
 
 - 从个股页面主动发起单股 AI 决策；
 - 从组页面主动发起组级 AI 决策；
-- 让唯一的收市后计划任务提交一份多组 Decision Workflow Definition；
-- 查看远端对齐状态、执行状态、结构化结果和失败原因；
+- 从指标和策略横截面的卡片中主动筛选异常值、状态突变和值得关注的对象；
+- 查看 Workflow Binding、执行状态、结构化结果和失败原因；
 - 对同一冻结输入重跑不同 Workflow、Skill 或模型版本，而不覆盖旧结果。
 
 ### 2.2 非目标
@@ -125,7 +126,7 @@ Urus 只验证远端回执的身份、hash 和输出 Schema，不重复执行 AI
 │  Decision Workspace Module                                          │
 │  个股页面 / 组页面 / Observation Group / 收市后确定性报告            │
 │                          │                                           │
-│             用户主动触发或唯一收市后计划任务                          │
+│                     用户主动触发 AI                                  │
 │                          ▼                                           │
 │  Remote Workflow Module                                             │
 │  编译 Workflow JSON → 对齐 → 提交 → 跟踪 → 验收 → 持久化             │
@@ -151,7 +152,7 @@ Urus 只验证远端回执的身份、hash 和输出 Schema，不重复执行 AI
 | Daily Market Evidence | `freeze(scope, trading_date) -> Daily Decision Dataset` | 数据源、补数、复权、质量、指标、组聚合 | 所有页面和策略共享同一事实定义 |
 | Strategy Registry | `evaluate(dataset, scope) -> Strategy Decision[]` | 策略发现、适用性、版本、顺序、异常隔离 | 策略可独立新增、回放和评分 |
 | Decision Workspace | `get_view(scope, dataset_id)` | 个股/组/计划任务的查询和展示投影 | 页面不自行拼装决策事实 |
-| Remote Workflow | `submit(definition, input_manifest) -> Remote Decision Run` | JSON 编译、对齐、幂等、远端状态、回执验收 | Anomalo 替换和测试集中在一个 Seam |
+| Remote Workflow | `submit(binding, frozen_input) -> Remote Decision Run` | Binding 校验、幂等、远端状态、事件恢复和结果验收 | Anomalo 替换和测试集中在一个 Seam |
 | Decision Ledger | `record/open/resolve` | 不可变决策、结果追加、评价窗口、血缘 | 后续案例和学习不污染在线路径 |
 
 Remote Workflow Seam 至少有两个 Adapter：
@@ -491,9 +492,9 @@ Events     ● earnings        ! risk event
 | --- | --- | --- |
 | 决策 | K 线、MA20/50/200、策略 Overlay、Volume、状态时间带 | 日常快速寻找时机 |
 | 技术 | K 线、可编辑指标窗格、完整图层菜单 | 深入技术检查 |
-| 复盘 | 决策时点、当时可见数据、horizon 和后续 outcome | Phase F 案例回放 |
+| 复盘 | 决策时点、当时可见数据、horizon 和后续 outcome | Phase E 案例回放 |
 
-V1 实现“决策”和“技术”；“复盘”先保留数据契约，Phase F 再启用。图层和窗口预设保存在用户设置中，不写入
+V1 实现“决策”和“技术”；“复盘”先保留数据契约，Phase E 再启用。图层和窗口预设保存在用户设置中，不写入
 Decision Dataset，也不改变策略输出。
 
 ### 7.12 Chart Projection Interface
@@ -828,7 +829,7 @@ symbol × group / date 热力图
 刚进入 / 刚离开阈值的 symbol
 数据缺失、过期和不可比标记
 跳转个股页与所属组页
-“AI 评估当前指标”占位按钮
+“AI 寻找指标异常”占位按钮
 ```
 
 核心展示规则：
@@ -890,7 +891,7 @@ trigger、确认位、失效位和距离
 策略内领涨、掉队、刚触发和接近触发列表
 质量失败、策略异常和不适用原因
 Evidence Reference 与个股图表跳转
-“AI 评估当前策略”占位按钮
+“AI 寻找策略关注项”占位按钮
 ```
 
 核心展示规则：
@@ -965,7 +966,7 @@ quality：有效、缺失、过期、冲突和不可比计数
 不能静默选择“最新版本”。
 
 Phase C 只实现确定性投影和 AI 按钮占位。按钮必须显示“尚未接入”或 disabled 状态，点击不得调用现有聊天接口、不得生成
-模拟结果，也不得创建未完成定义的远端运行。Phase D 冻结 Workflow Definition，Phase E 才启用真实提交和结果展示。
+模拟结果，也不得创建未完成定义的远端运行。Phase D 冻结 Workflow Definition，并启用真实提交和结果展示。
 
 ## 11. 三种用户流程
 
@@ -997,9 +998,9 @@ Phase C 只实现确定性投影和 AI 按钮占位。按钮必须显示“尚�
 组内 symbol 数量过大时，由 Workflow Definition 明确 map 并发上限和汇总节点；Urus 不拆成 N 次互不关联的
 模型调用。
 
-### 11.3 收市后观测组工作流
+### 11.3 收市后观测组数据采集工作流
 
-系统只有一个正式自动入口：收市后的 Observation Run。
+系统只有一个正式自动数据入口：收市后的 Observation Run。它不自动调用 AI。
 
 ```text
 确认交易日已收市
@@ -1011,8 +1012,6 @@ Phase C 只实现确定性投影和 AI 按钮占位。按钮必须显示“尚�
   → 运行全部适用策略
   → 与上一交易日比较
   → 保存 deterministic-only 报告
-  → 若未来启用 AI：提交一份 observation_run Workflow JSON
-  → 保存远端结果并生成新报告版本
 ```
 
 计划时间必须基于目标市场交易日历、`market_timezone`、正式收盘时间和可配置的数据到齐缓冲，而不是简单按服务器本地日期运行。
@@ -1027,7 +1026,7 @@ Phase C 只实现确定性投影和 AI 按钮占位。按钮必须显示“尚�
 - 哪些判断因数据质量不足不能形成；
 - 哪些策略出现显著冲突。
 
-远端 AI 失败不能使确定性报告失败。
+Observation Run 的结束条件是数据、策略和 deterministic-only 报告完成；它不创建 Remote Decision Run。指标和策略横截面页可以在之后由用户主动使用这份冻结证据寻找异常卡片和关注项。
 
 ### 11.4 已部署系统的关注列表是自动运行的上游事实源
 
@@ -1137,6 +1136,12 @@ Decision ID，不能按组重复采集或得到不同的“同日事实”。
 
 ## 13. Decision Workflow Definition
 
+> **实现警告**：第 13—15 节保留了 Anomalo Workflow Runtime 完成前的早期协议草案，其中
+> `urus.decision_workflow.v1`、逐次 alignment、请求内携带 Definition 和自定义 Result Envelope 均不是当前远端 Interface。
+> Phase D 实现必须使用 Anomalo `docs/integrations/urus-workflow.md` 的正式合同：
+> `anomaloharis.dev/workflow/v1`、管理期 validate/import/publish、运行期按精确 `name@version` 调用，以及统一 Run Control。
+> 可执行设计以 [Phase D AI 决策流程与按钮设计](phase-d-ai-decision-flow-design.md) 第 9 节为准；不得复制下面的早期 JSON 进入代码。
+
 ### 13.1 顶层结构
 
 建议的 V1 JSON：
@@ -1245,9 +1250,9 @@ Decision ID，不能按组重复采集或得到不同的“同日事实”。
 - 把模型自由文本当作下游结构化输入；
 - Workflow 执行时修改自己的 Definition。
 
-### 13.3 三种 Workflow 模板
+### 13.3 四种 Workflow 模板
 
-V1 设计三个模板，共享节点能力：
+V1 设计四个用户主动触发的模板，共享节点能力：
 
 ```text
 instrument-decision.v1
@@ -1256,8 +1261,11 @@ instrument-decision.v1
 group-decision.v1
   load evidence → [map instrument context] → group arbitrate → result
 
-post-close-observation.v1
-  load all groups → parallel group reviews → cross-group synthesis → result
+indicator-cross-section-review.v1
+  load frozen indicator cards → find notable cards → result
+
+strategy-cross-section-review.v1
+  load frozen strategy cards → find notable cards → result
 ```
 
 模板属于 Urus 仓库并接受 code review。Anomalo 只对齐和执行，不成为模板源代码的唯一保存位置。
@@ -1348,7 +1356,7 @@ execute(the exact aligned definition + input manifest) → remote run
 小型 instrument 输入允许 `evidence_manifest.mode=inline`。组和 observation_run 优先使用 URI + hash，避免把多组
 日线重复嵌入 Workflow JSON。远端每个 run 只拉取一次并在 run 范围内缓存。
 
-同一次用户操作或计划任务的网络重试复用 `request_intent_id`，因此命中同一个 idempotency key；用户明确点击
+同一次用户操作的网络重试复用 `request_intent_id`，因此命中同一个 idempotency key；用户明确点击
 “重新运行”时创建新的 `request_intent_id`，从而生成新的 Remote Decision Run，但仍引用原 dataset 和 definition。
 
 ### 14.5 Execution Receipt 和状态
@@ -1521,11 +1529,10 @@ Observation Run 页面按回答顺序展示：
 异常强 / 异常弱个股
 策略冲突和数据问题
 每个组详情
-远端 AI 结果（若已启用）
 运行和证据详情
 ```
 
-AI 结果是确定性报告的附加版本，不覆盖原报告。
+Observation Run 页面只展示数据采集、确定性分析和证据详情。需要 AI 筛选时，用户进入绑定同一 run 的指标或策略横截面页主动发起。
 
 ### 16.4 收市后可视总览
 
@@ -1688,11 +1695,11 @@ Interface 是主要测试面。
 - 选择组内 symbol 后，相关图形和详情联动；
 - 数据质量和缺失状态可见；
 - 页面刷新不自动发起新 Workflow；
-- Observation Run 正确展示 deterministic-only 与 AI-enhanced 两种版本。
+- Observation Run 始终展示 deterministic-only 报告，不出现 AI-enhanced 版本。
 - 指标页和策略页只读取同一 Observation Run 的横向投影，不在前端重算指标或策略；
 - 同一 symbol 出现在多个组时引用同一个底层 snapshot/decision，组成员关系可以重复展示但证据不能复制成不同版本；
 - 不同 feature version、strategy version、implementation hash 或 benchmark 的结果不会被静默混排；
-- 指标/策略 AI 按钮在 Phase C 保持 disabled，Phase E 接入后也不会因页面刷新自动提交。
+- 指标/策略 AI 按钮在 Phase C 保持 disabled，Phase D 接入后也不会因页面刷新自动提交。
 
 ## 23. 分阶段开发计划
 
@@ -1831,22 +1838,24 @@ uv run python scripts/schedule_market_data_collection.py \
 实时响应一致，所有组引用同一共享 dataset，报告具备稳定 hash，且日志中不存在 AI 调用。真实地址和凭据只放本地环境变量，
 不能提交到文档、fixture 或版本库。
 
-### Phase D：Anomalo Workflow 设计冻结
+### Phase D：AI 决策流程与远端接入
 
-当前阶段只完成文档和双方协议评审：
+Anomalo Workflow Runtime 的开发已经完成，本阶段在 Urus 侧完成 AI 决策产品流程、运行期接入和结果投影。详细基线见
+[Phase D AI 决策流程与按钮设计](phase-d-ai-decision-flow-design.md)。首先冻结并核对：
 
 - Workflow JSON Schema；
 - capability 命名和版本规则；
 - alignment/execution/result 契约；
 - evidence bundle 读取方式；
 - idempotency、超时、重试和 trace 规则；
-- 个股、组、Observation Run 三个基础 Workflow 模板；
+- 个股和组两个仲裁 Workflow 模板；
 - 指标横向评估和策略横向评估的 observation_run lens 契约；
 - `indicator-cross-section-review` 与 `strategy-cross-section-review` Workflow 模板；
-- 两类页面按钮的 trigger source、确认信息、输入 manifest 和 Result Schema；
+- 四类页面按钮的 trigger source、确认信息、输入 manifest 和 Result Schema；
 - Anomalo 对齐测试样例。
 
-退出条件：同一 JSON 在 Urus 和 Anomalo 计算出相同 hash；Anomalo 能对每个节点明确返回 aligned 或具体不兼容原因。
+Workflow Definition 在发布期通过 Anomalo capability manifest 完成 validate、import 和 publish；日常运行按精确 Workflow Ref
+调用，不在用户点击时动态发布或逐次 alignment。
 
 指标/策略横向评估 Workflow 必须继续使用 `observation_run` scope。输入 manifest 固定包含本次运行的 group snapshot、indicator
 snapshot 或 Strategy Decision ID、版本/hash、质量状态和 Evidence Reference。Workflow 不允许重新查询“最新数据”，也不允许
@@ -1859,28 +1868,26 @@ workflow_id / workflow_version
 request_intent_id
 ```
 
-指标横向评估的结构化输出重点是跨组异常、状态转换、极端值是否具有组内一致性以及需要继续下钻的 symbol；策略横向评估的
-结构化输出重点是策略适用性、setup 质量、组间差异、确认/失效风险和策略自身的异常判断。两者都只能解释和排序已有证据，
-不能改写指标、Strategy Decision 或 Deterministic Synthesis。
+指标横向 Workflow 必须从当前页面卡片中按重要度找出异常绝对值、异常变化、状态转换、组内分歧和质量可疑项；策略横向
+Workflow 必须找出 setup 阶段突变、score 异常、接近确认、新失效、组间分歧和质量可疑项。两者的结果都必须回指具体卡片、
+group、symbol 和 Evidence Reference，只能筛选和排序已有证据，不能改写指标、Strategy Decision 或 Deterministic Synthesis。
 
-### Phase E：远端 AI 接入
-
-仅在 Anomalo Interface 可用后实施：
+本阶段实施：
 
 - `AnomaloWorkflowAdapter`；
 - 主动个股/组触发；
-- 启用指标页“AI 评估当前指标”和策略页“AI 评估当前策略”；
+- 启用指标页“AI 寻找指标异常”和策略页“AI 寻找策略关注项”；
 - 提交前确认 observation run、lens、覆盖组数、symbol 数、数据质量和 Workflow 版本；
 - indicator/strategy cross-section 远端状态轮询与结构化结果投影；
-- 收市后 observation_run 提交；
 - 状态轮询和结果投影；
 - Fake/production Adapter contract tests。
 
 按钮只有在以下条件全部满足时才启用：绑定的 Observation Run 已完成、lens 对应版本唯一、必要 snapshot/decision 可读、
-Workflow alignment receipt 有效。提交后页面保留原确定性横向视图，并在独立 AI 区域显示 queued/alignment/running/
-succeeded/partial/failed 状态。AI 结果保存为附加 artifact，不覆盖原横向排名；远端失败时指标页和策略页仍完整可用。
+active Workflow Binding 有效。提交后页面保留原确定性横向视图，并在独立 AI 区域显示 queued/submitting/running/
+succeeded/failed/stopping/stopped 状态。部分结论记录在成功 artifact 的 completeness 中，不伪造成远端 `partial` 状态；AI 结果
+保存为附加 artifact，不覆盖原横向排名，远端失败时指标页和策略页仍完整可用。
 
-### Phase F：案例、回放和 Skill 演化
+### Phase E：案例、回放和 Skill 演化
 
 最后实施：
 
@@ -1890,7 +1897,7 @@ succeeded/partial/failed 状态。AI 结果保存为附加 artifact，不覆盖�
 - 历史回放、walk-forward 和 shadow；
 - Skill 候选生成、批准、发布和回滚。
 
-Phase F 虽然后做，Phase B 开始就保存其所需的决策账本字段。
+Phase E 虽然后做，Phase B 开始就保存其所需的决策账本字段。
 
 ## 24. 后续学习设计
 
@@ -1934,8 +1941,8 @@ Anomalo 尚无动态 Skill 更新 Interface 时，Urus 只生成版本化候选�
 2. 正式判断只使用完整日 K，并明确 trading date、cutoff 和 horizon；
 3. 每个 Strategy Decision 独立、版本化、可回放；
 4. 组级判断使用真实组级特征，而不是个股分数平均；
-5. 用户主动触发个股和组 AI，页面加载不会自动运行；
-6. 系统只有一个正式自动 AI 入口：收市后 Observation Run；
+5. 用户主动触发个股、组或横截面 AI，页面加载不会自动运行；
+6. Observation Run 只负责收市数据采集、冻结和确定性报告，不手动或自动调用 AI；
 7. Urus 保存 Workflow JSON，Anomalo 对齐并执行相同 hash；
 8. Urus 不复制 Anomalo 的 AI DAG 执行能力；
 9. 远端失败不影响确定性结果；
@@ -1953,7 +1960,7 @@ Anomalo 尚无动态 Skill 更新 Interface 时，Urus 只生成版本化候选�
 - 暂停直接预测今日大盘方向的 AI；
 - V1 以完整日 K 为基准；
 - 算法策略先于 AI，并已能给出页面建议；
-- AI 只能主动发起，外加唯一的收市后计划任务；
+- AI 只能在个股、组、指标横截面和策略横截面由用户主动发起；
 - 个股、组、跨组 Observation Run 是三种 Decision Scope；
 - 指标页和策略页是 Observation Run 的横向 lens，不新增 Decision Scope；
 - AI Workflow 执行能力集中在 Anomalo；

@@ -47,6 +47,10 @@ from app.models import (  # noqa: F401
     GroupDailySnapshotModel,
     ObservationRunModel,
     ObservationUniverseRevisionModel,
+    DecisionWorkflowBindingModel,
+    RemoteDecisionRunModel,
+    RemoteDecisionEventModel,
+    RemoteDecisionArtifactModel,
 )
 
 config = context.config

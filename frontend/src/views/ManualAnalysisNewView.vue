@@ -23,8 +23,8 @@ async function checkRuntime() {
     runtimeMessage.value = aiEnabled.value
       ? `AI 已就绪 · ${settings.models.ai_decision_model}`
       : !settings.capabilities.ai_decision_enabled
-        ? 'AI 运行时未启用，请先到运行设置启用后端 AI。'
-        : 'OpenRouter 凭据未配置，无法生成 AI 现状分析。'
+        ? '旧版手动 AI 分析入口已停用；请从个股、组或横截面页面发起 Phase D 评估。'
+        : '旧版手动 AI 分析入口已停用；请从个股、组或横截面页面发起 Phase D 评估。'
   } catch {
     aiEnabled.value = false
     runtimeMessage.value = '无法确认 AI 状态，请检查后端连接。'
@@ -76,7 +76,7 @@ onMounted(checkRuntime)
       <div class="analysis-runtime-note" :data-ready="aiEnabled">
         <span class="status-dot" aria-hidden="true"></span>
         <span>{{ runtimeMessage }}</span>
-        <RouterLink v-if="!checkingRuntime && !aiEnabled" to="/settings">打开运行设置</RouterLink>
+        <RouterLink v-if="!checkingRuntime && !aiEnabled" to="/">返回决策工作台</RouterLink>
       </div>
       <div v-if="error" class="error-banner" role="alert">{{ error }}</div>
       <div class="analysis-launch-actions">

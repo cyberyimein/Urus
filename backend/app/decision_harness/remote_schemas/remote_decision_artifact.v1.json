@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://urus.dev/schemas/remote_decision_artifact.v1.json",
+  "title": "Urus Remote Decision Artifact",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "intent_type", "scope", "input_sha256", "completeness", "decision", "warnings", "evidence_refs"],
+  "properties": {
+    "schema_version": {"const": "urus.remote_decision_artifact.v1"},
+    "intent_type": {"enum": ["instrument_arbitration", "group_arbitration", "indicator_attention", "strategy_attention"]},
+    "scope": {"type": "object"},
+    "dataset_id": {"type": ["string", "null"]},
+    "input_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "completeness": {"enum": ["complete", "partial", "insufficient_evidence"]},
+    "decision": {"type": "object"},
+    "summary": {"type": ["string", "null"], "maxLength": 1000},
+    "confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+    "notable_cards": {"type": "array", "maxItems": 20},
+    "coverage_gaps": {"type": "array"},
+    "warnings": {"type": "array", "maxItems": 50},
+    "evidence_refs": {"type": "array"},
+    "usage": {"type": "object"},
+    "trace_ref": {"type": ["string", "null"], "maxLength": 256},
+    "generated_at": {"type": ["string", "null"]}
+  }
+}

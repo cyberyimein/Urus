@@ -1,0 +1,2128 @@
+{
+  "bindings": [
+    {
+      "intent_type": "instrument_arbitration",
+      "workflow_ref": "urus-instrument-arbitration@1",
+      "status": "active",
+      "definition_hash": "3419ac2b861aae9ab5abfde64ae3c54c023f84563d25366c5b97696db0f34f9c",
+      "compiled_hash": "740bcacd1a341db500c8342537e03fcdab391bcdbb684724bbc60a52ebb88c95",
+      "capability_manifest_hash": "714a4d6689e942ec3fe9f1df202911e210440939f22c21f7e21dae99e0479229",
+      "input_schema_version": "urus.remote_decision_input.v1",
+      "output_schema_version": "urus.remote_decision_artifact.v1",
+      "published_at": "2026-08-27T06:37:26.829Z",
+      "verified_at": "2026-08-27T06:37:26.829Z",
+      "definition_json": {
+        "api_version": "anomaloharis.dev/workflow/v1",
+        "kind": "Workflow",
+        "metadata": {
+          "name": "urus-instrument-arbitration",
+          "version": 1,
+          "description": "Evaluate one frozen instrument evidence package.",
+          "labels": {
+            "owner": "urus"
+          }
+        },
+        "spec": {
+          "input_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "https://urus.dev/schemas/remote_decision_input.v1.json",
+            "title": "Urus Remote Decision Input",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "schema_version",
+              "intent",
+              "scope",
+              "dataset",
+              "evidence",
+              "strategy_decisions",
+              "deterministic_synthesis",
+              "quality",
+              "constraints",
+              "rows",
+              "evidence_refs",
+              "input_sha256"
+            ],
+            "properties": {
+              "schema_version": {
+                "const": "urus.remote_decision_input.v1"
+              },
+              "intent": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type",
+                  "trigger_mode",
+                  "trigger_source"
+                ],
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "instrument_arbitration",
+                      "group_arbitration",
+                      "indicator_attention",
+                      "strategy_attention"
+                    ]
+                  },
+                  "request_intent_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "trigger_mode": {
+                    "const": "user"
+                  },
+                  "trigger_source": {
+                    "type": "string"
+                  }
+                }
+              },
+              "scope": {
+                "type": "object"
+              },
+              "dataset": {
+                "type": "object"
+              },
+              "input_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "strategy_decisions": {
+                "type": "array"
+              },
+              "deterministic_synthesis": {
+                "type": "object"
+              },
+              "quality": {
+                "type": "object"
+              },
+              "constraints": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "allowed_symbols",
+                  "allow_latest_data_lookup",
+                  "allow_symbol_expansion"
+                ],
+                "properties": {
+                  "allowed_symbols": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "allow_latest_data_lookup": {
+                    "const": false
+                  },
+                  "allow_symbol_expansion": {
+                    "const": false
+                  }
+                }
+              },
+              "rows": {
+                "type": "array"
+              },
+              "evidence": {
+                "type": "object"
+              },
+              "evidence_refs": {
+                "type": "array"
+              }
+            }
+          },
+          "output_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "https://urus.dev/schemas/remote_decision_artifact.v1.json",
+            "title": "Urus Remote Decision Artifact",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "schema_version",
+              "intent_type",
+              "scope",
+              "input_sha256",
+              "completeness",
+              "decision",
+              "warnings",
+              "evidence_refs"
+            ],
+            "properties": {
+              "schema_version": {
+                "const": "urus.remote_decision_artifact.v1"
+              },
+              "intent_type": {
+                "enum": [
+                  "instrument_arbitration",
+                  "group_arbitration",
+                  "indicator_attention",
+                  "strategy_attention"
+                ]
+              },
+              "scope": {
+                "type": "object"
+              },
+              "dataset_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "input_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "completeness": {
+                "enum": [
+                  "complete",
+                  "partial",
+                  "insufficient_evidence"
+                ]
+              },
+              "decision": {
+                "type": "object"
+              },
+              "summary": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 1000
+              },
+              "confidence": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 1
+              },
+              "notable_cards": {
+                "type": "array",
+                "maxItems": 20
+              },
+              "coverage_gaps": {
+                "type": "array"
+              },
+              "warnings": {
+                "type": "array",
+                "maxItems": 50
+              },
+              "evidence_refs": {
+                "type": "array"
+              },
+              "usage": {
+                "type": "object"
+              },
+              "trace_ref": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 256
+              },
+              "generated_at": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          "nodes": [
+            {
+              "id": "decision",
+              "type": "preset_model",
+              "type_version": 1,
+              "config": {
+                "model_ref": "urus-arbitration@3",
+                "input_mode": "message",
+                "session_mode": "isolated"
+              }
+            },
+            {
+              "id": "input",
+              "type": "input",
+              "type_version": 1,
+              "config": {}
+            },
+            {
+              "id": "output",
+              "type": "output",
+              "type_version": 1,
+              "config": {}
+            }
+          ],
+          "edges": [
+            {
+              "from": {
+                "node": "decision",
+                "port": "output"
+              },
+              "to": {
+                "node": "output",
+                "port": "result"
+              }
+            },
+            {
+              "from": {
+                "node": "input",
+                "port": "data"
+              },
+              "to": {
+                "node": "decision",
+                "port": "input"
+              }
+            }
+          ],
+          "policy": {
+            "timeout_seconds": 1200,
+            "max_parallelism": 1,
+            "failure_mode": "fail_fast"
+          }
+        },
+        "compatibility": {
+          "authored_against_manifest_hash": "sha256:eff9bdb75c8a2fda29d4b36714dd2db45c427cd2feff98d2071b35fb20f7ebbe"
+        }
+      },
+      "manifest_json": {
+        "api_version": "anomaloharis.dev/workflow-capabilities/v1",
+        "engine": {
+          "runtime_id": "workflow-runtime",
+          "runtime_version": "1.0.0",
+          "adapter_version": "1.0.0",
+          "package_hash": "sha256:31b55222f494e871d5f973eb9c1f10e55e59e06e193076227564f30085fff373",
+          "definition_api_version": "anomaloharis.dev/workflow/v1"
+        },
+        "limits": {
+          "graph": "dag",
+          "max_nodes": 100,
+          "max_edges": 400,
+          "max_parallelism": 8,
+          "max_duration_seconds": 3600
+        },
+        "node_types": [
+          {
+            "type": "condition",
+            "type_version": 1,
+            "description": "Selects a true or false branch using a restricted expression AST.",
+            "config_schema": {
+              "type": "object",
+              "required": [
+                "expression"
+              ],
+              "properties": {
+                "expression": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              },
+              "additionalProperties": false
+            },
+            "inputs": [
+              {
+                "name": "input",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "true",
+                "schema": {},
+                "cardinality": "single"
+              },
+              {
+                "name": "false",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ]
+          },
+          {
+            "type": "input",
+            "type_version": 1,
+            "description": "The single workflow input boundary.",
+            "config_schema": {
+              "type": "object",
+              "additionalProperties": false
+            },
+            "inputs": [],
+            "outputs": [
+              {
+                "name": "data",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ]
+          },
+          {
+            "type": "join",
+            "type_version": 1,
+            "description": "Joins all declared branch inputs in stable order.",
+            "config_schema": {
+              "type": "object",
+              "additionalProperties": false
+            },
+            "inputs": [
+              {
+                "name": "input",
+                "schema": {},
+                "cardinality": "many"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "output",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ]
+          },
+          {
+            "type": "output",
+            "type_version": 1,
+            "description": "The single workflow output boundary.",
+            "config_schema": {
+              "type": "object",
+              "additionalProperties": false
+            },
+            "inputs": [
+              {
+                "name": "result",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ],
+            "outputs": []
+          },
+          {
+            "type": "parallel",
+            "type_version": 1,
+            "description": "Explicitly fans out one value under the workflow parallelism limit.",
+            "config_schema": {
+              "type": "object",
+              "additionalProperties": false
+            },
+            "inputs": [
+              {
+                "name": "input",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "output",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ]
+          },
+          {
+            "type": "plugin_operation",
+            "type_version": 1,
+            "description": "Calls one exact workflow-callable Plugin Operation.",
+            "config_schema": {
+              "type": "object",
+              "properties": {
+                "operation_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "operation_version": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "required": [
+                "operation_id",
+                "operation_version"
+              ],
+              "additionalProperties": false
+            },
+            "inputs": [
+              {
+                "name": "input",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "output",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ]
+          },
+          {
+            "type": "preset_model",
+            "type_version": 1,
+            "description": "Runs an exact published Preset Model through the Agent Runtime Adapter.",
+            "config_schema": {
+              "type": "object",
+              "properties": {
+                "model_ref": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9._-]{0,63}@[1-9][0-9]{0,8}$"
+                },
+                "input_mode": {
+                  "const": "message"
+                },
+                "session_mode": {
+                  "const": "isolated"
+                }
+              },
+              "required": [
+                "model_ref"
+              ],
+              "additionalProperties": false
+            },
+            "inputs": [
+              {
+                "name": "input",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "output",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ]
+          }
+        ],
+        "preset_models": [
+          {
+            "ref": "anomaloharis@1",
+            "description": "The built-in AnomaloHaris Agent preset model.",
+            "compiled_hash": "sha256:91ea5677035311143a23df3f1ffce147bb8c544ab778c72569439f92e7f6cc3e",
+            "plugin_lock_hash": "sha256:316ed0bacbb9fffb6639659907452c996531aae4354658f7f42dd8ae92c23aa0"
+          },
+          {
+            "ref": "scheduled-event-investigator@1",
+            "description": "The Urus scheduled-event web retrieval Agent.",
+            "compiled_hash": "sha256:7116a8fb8798221853a65869074c3c8778e1eafa69601036b40dee1c84c29d8c",
+            "plugin_lock_hash": "sha256:62e40e1a6fdcfc55f4d0d082d823847c77a31ea0a630485b5a9325fc6512651f"
+          },
+          {
+            "ref": "urus-arbitration@3",
+            "description": "urus-arbitration",
+            "compiled_hash": "sha256:1fe1441164dcc7ec1b7935ee767bc2a0e252154bdbb503b1f07bda5906b1ec7d",
+            "plugin_lock_hash": "sha256:1a8ffc2f548593725f3fae766695ad5c381e34883777bcfd5cf7fb3672651f4a"
+          },
+          {
+            "ref": "urus-attention@4",
+            "description": "urus-attention",
+            "compiled_hash": "sha256:b44c63ac5ba7489038743556ca435bc60863d54560a8855a8e3fd2f77430c8b3",
+            "plugin_lock_hash": "sha256:1a8ffc2f548593725f3fae766695ad5c381e34883777bcfd5cf7fb3672651f4a"
+          }
+        ],
+        "plugin_operations": [],
+        "unsupported_features": [
+          "approval",
+          "loop",
+          "subworkflow",
+          "wait"
+        ],
+        "generated_at": "2026-08-27T06:41:03.400Z",
+        "manifest_hash": "sha256:714a4d6689e942ec3fe9f1df202911e210440939f22c21f7e21dae99e0479229"
+      }
+    },
+    {
+      "intent_type": "group_arbitration",
+      "workflow_ref": "urus-group-arbitration@1",
+      "status": "active",
+      "definition_hash": "5b3f8d0094150ff317865647be3ff4f1e5b0a95da36f7114ba020986e0329d32",
+      "compiled_hash": "95b9489f1af04e0baae602ff277b66ebd53add456adca30358d92d7036a036cd",
+      "capability_manifest_hash": "714a4d6689e942ec3fe9f1df202911e210440939f22c21f7e21dae99e0479229",
+      "input_schema_version": "urus.remote_decision_input.v1",
+      "output_schema_version": "urus.remote_decision_artifact.v1",
+      "published_at": "2026-08-27T06:39:01.436Z",
+      "verified_at": "2026-08-27T06:39:01.436Z",
+      "definition_json": {
+        "api_version": "anomaloharis.dev/workflow/v1",
+        "kind": "Workflow",
+        "metadata": {
+          "name": "urus-group-arbitration",
+          "version": 1,
+          "description": "Evaluate one frozen group snapshot.",
+          "labels": {
+            "owner": "urus"
+          }
+        },
+        "spec": {
+          "input_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "https://urus.dev/schemas/remote_decision_input.v1.json",
+            "title": "Urus Remote Decision Input",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "schema_version",
+              "intent",
+              "scope",
+              "dataset",
+              "evidence",
+              "strategy_decisions",
+              "deterministic_synthesis",
+              "quality",
+              "constraints",
+              "rows",
+              "evidence_refs",
+              "input_sha256"
+            ],
+            "properties": {
+              "schema_version": {
+                "const": "urus.remote_decision_input.v1"
+              },
+              "intent": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type",
+                  "trigger_mode",
+                  "trigger_source"
+                ],
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "instrument_arbitration",
+                      "group_arbitration",
+                      "indicator_attention",
+                      "strategy_attention"
+                    ]
+                  },
+                  "request_intent_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "trigger_mode": {
+                    "const": "user"
+                  },
+                  "trigger_source": {
+                    "type": "string"
+                  }
+                }
+              },
+              "scope": {
+                "type": "object"
+              },
+              "dataset": {
+                "type": "object"
+              },
+              "input_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "strategy_decisions": {
+                "type": "array"
+              },
+              "deterministic_synthesis": {
+                "type": "object"
+              },
+              "quality": {
+                "type": "object"
+              },
+              "constraints": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "allowed_symbols",
+                  "allow_latest_data_lookup",
+                  "allow_symbol_expansion"
+                ],
+                "properties": {
+                  "allowed_symbols": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "allow_latest_data_lookup": {
+                    "const": false
+                  },
+                  "allow_symbol_expansion": {
+                    "const": false
+                  }
+                }
+              },
+              "rows": {
+                "type": "array"
+              },
+              "evidence": {
+                "type": "object"
+              },
+              "evidence_refs": {
+                "type": "array"
+              }
+            }
+          },
+          "output_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "https://urus.dev/schemas/remote_decision_artifact.v1.json",
+            "title": "Urus Remote Decision Artifact",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "schema_version",
+              "intent_type",
+              "scope",
+              "input_sha256",
+              "completeness",
+              "decision",
+              "warnings",
+              "evidence_refs"
+            ],
+            "properties": {
+              "schema_version": {
+                "const": "urus.remote_decision_artifact.v1"
+              },
+              "intent_type": {
+                "enum": [
+                  "instrument_arbitration",
+                  "group_arbitration",
+                  "indicator_attention",
+                  "strategy_attention"
+                ]
+              },
+              "scope": {
+                "type": "object"
+              },
+              "dataset_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "input_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "completeness": {
+                "enum": [
+                  "complete",
+                  "partial",
+                  "insufficient_evidence"
+                ]
+              },
+              "decision": {
+                "type": "object"
+              },
+              "summary": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 1000
+              },
+              "confidence": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 1
+              },
+              "notable_cards": {
+                "type": "array",
+                "maxItems": 20
+              },
+              "coverage_gaps": {
+                "type": "array"
+              },
+              "warnings": {
+                "type": "array",
+                "maxItems": 50
+              },
+              "evidence_refs": {
+                "type": "array"
+              },
+              "usage": {
+                "type": "object"
+              },
+              "trace_ref": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 256
+              },
+              "generated_at": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          "nodes": [
+            {
+              "id": "decision",
+              "type": "preset_model",
+              "type_version": 1,
+              "config": {
+                "model_ref": "urus-arbitration@3",
+                "input_mode": "message",
+                "session_mode": "isolated"
+              }
+            },
+            {
+              "id": "input",
+              "type": "input",
+              "type_version": 1,
+              "config": {}
+            },
+            {
+              "id": "output",
+              "type": "output",
+              "type_version": 1,
+              "config": {}
+            }
+          ],
+          "edges": [
+            {
+              "from": {
+                "node": "decision",
+                "port": "output"
+              },
+              "to": {
+                "node": "output",
+                "port": "result"
+              }
+            },
+            {
+              "from": {
+                "node": "input",
+                "port": "data"
+              },
+              "to": {
+                "node": "decision",
+                "port": "input"
+              }
+            }
+          ],
+          "policy": {
+            "timeout_seconds": 1200,
+            "max_parallelism": 1,
+            "failure_mode": "fail_fast"
+          }
+        },
+        "compatibility": {
+          "authored_against_manifest_hash": "sha256:f00b85783507805b13f5b331cc9aab95fc1d9e35c692d6f80eb6fdc89ad7f087"
+        }
+      },
+      "manifest_json": {
+        "api_version": "anomaloharis.dev/workflow-capabilities/v1",
+        "engine": {
+          "runtime_id": "workflow-runtime",
+          "runtime_version": "1.0.0",
+          "adapter_version": "1.0.0",
+          "package_hash": "sha256:31b55222f494e871d5f973eb9c1f10e55e59e06e193076227564f30085fff373",
+          "definition_api_version": "anomaloharis.dev/workflow/v1"
+        },
+        "limits": {
+          "graph": "dag",
+          "max_nodes": 100,
+          "max_edges": 400,
+          "max_parallelism": 8,
+          "max_duration_seconds": 3600
+        },
+        "node_types": [
+          {
+            "type": "condition",
+            "type_version": 1,
+            "description": "Selects a true or false branch using a restricted expression AST.",
+            "config_schema": {
+              "type": "object",
+              "required": [
+                "expression"
+              ],
+              "properties": {
+                "expression": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              },
+              "additionalProperties": false
+            },
+            "inputs": [
+              {
+                "name": "input",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "true",
+                "schema": {},
+                "cardinality": "single"
+              },
+              {
+                "name": "false",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ]
+          },
+          {
+            "type": "input",
+            "type_version": 1,
+            "description": "The single workflow input boundary.",
+            "config_schema": {
+              "type": "object",
+              "additionalProperties": false
+            },
+            "inputs": [],
+            "outputs": [
+              {
+                "name": "data",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ]
+          },
+          {
+            "type": "join",
+            "type_version": 1,
+            "description": "Joins all declared branch inputs in stable order.",
+            "config_schema": {
+              "type": "object",
+              "additionalProperties": false
+            },
+            "inputs": [
+              {
+                "name": "input",
+                "schema": {},
+                "cardinality": "many"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "output",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ]
+          },
+          {
+            "type": "output",
+            "type_version": 1,
+            "description": "The single workflow output boundary.",
+            "config_schema": {
+              "type": "object",
+              "additionalProperties": false
+            },
+            "inputs": [
+              {
+                "name": "result",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ],
+            "outputs": []
+          },
+          {
+            "type": "parallel",
+            "type_version": 1,
+            "description": "Explicitly fans out one value under the workflow parallelism limit.",
+            "config_schema": {
+              "type": "object",
+              "additionalProperties": false
+            },
+            "inputs": [
+              {
+                "name": "input",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "output",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ]
+          },
+          {
+            "type": "plugin_operation",
+            "type_version": 1,
+            "description": "Calls one exact workflow-callable Plugin Operation.",
+            "config_schema": {
+              "type": "object",
+              "properties": {
+                "operation_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "operation_version": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "required": [
+                "operation_id",
+                "operation_version"
+              ],
+              "additionalProperties": false
+            },
+            "inputs": [
+              {
+                "name": "input",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "output",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ]
+          },
+          {
+            "type": "preset_model",
+            "type_version": 1,
+            "description": "Runs an exact published Preset Model through the Agent Runtime Adapter.",
+            "config_schema": {
+              "type": "object",
+              "properties": {
+                "model_ref": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9._-]{0,63}@[1-9][0-9]{0,8}$"
+                },
+                "input_mode": {
+                  "const": "message"
+                },
+                "session_mode": {
+                  "const": "isolated"
+                }
+              },
+              "required": [
+                "model_ref"
+              ],
+              "additionalProperties": false
+            },
+            "inputs": [
+              {
+                "name": "input",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "output",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ]
+          }
+        ],
+        "preset_models": [
+          {
+            "ref": "anomaloharis@1",
+            "description": "The built-in AnomaloHaris Agent preset model.",
+            "compiled_hash": "sha256:91ea5677035311143a23df3f1ffce147bb8c544ab778c72569439f92e7f6cc3e",
+            "plugin_lock_hash": "sha256:316ed0bacbb9fffb6639659907452c996531aae4354658f7f42dd8ae92c23aa0"
+          },
+          {
+            "ref": "scheduled-event-investigator@1",
+            "description": "The Urus scheduled-event web retrieval Agent.",
+            "compiled_hash": "sha256:7116a8fb8798221853a65869074c3c8778e1eafa69601036b40dee1c84c29d8c",
+            "plugin_lock_hash": "sha256:62e40e1a6fdcfc55f4d0d082d823847c77a31ea0a630485b5a9325fc6512651f"
+          },
+          {
+            "ref": "urus-arbitration@3",
+            "description": "urus-arbitration",
+            "compiled_hash": "sha256:1fe1441164dcc7ec1b7935ee767bc2a0e252154bdbb503b1f07bda5906b1ec7d",
+            "plugin_lock_hash": "sha256:1a8ffc2f548593725f3fae766695ad5c381e34883777bcfd5cf7fb3672651f4a"
+          },
+          {
+            "ref": "urus-attention@4",
+            "description": "urus-attention",
+            "compiled_hash": "sha256:b44c63ac5ba7489038743556ca435bc60863d54560a8855a8e3fd2f77430c8b3",
+            "plugin_lock_hash": "sha256:1a8ffc2f548593725f3fae766695ad5c381e34883777bcfd5cf7fb3672651f4a"
+          }
+        ],
+        "plugin_operations": [],
+        "unsupported_features": [
+          "approval",
+          "loop",
+          "subworkflow",
+          "wait"
+        ],
+        "generated_at": "2026-08-27T06:41:03.400Z",
+        "manifest_hash": "sha256:714a4d6689e942ec3fe9f1df202911e210440939f22c21f7e21dae99e0479229"
+      }
+    },
+    {
+      "intent_type": "indicator_attention",
+      "workflow_ref": "urus-indicator-review@1",
+      "status": "active",
+      "definition_hash": "368b4af985313bde06318fdce3500039732144660f63641fb56a5bc3e9188a77",
+      "compiled_hash": "a47e76fecfc2a2457d2f711a96f44d19fd4792be8517c64c302e40c6dd18b6de",
+      "capability_manifest_hash": "714a4d6689e942ec3fe9f1df202911e210440939f22c21f7e21dae99e0479229",
+      "input_schema_version": "urus.remote_decision_input.v1",
+      "output_schema_version": "urus.remote_decision_artifact.v1",
+      "published_at": "2026-08-27T06:39:01.488Z",
+      "verified_at": "2026-08-27T06:39:01.488Z",
+      "definition_json": {
+        "api_version": "anomaloharis.dev/workflow/v1",
+        "kind": "Workflow",
+        "metadata": {
+          "name": "urus-indicator-review",
+          "version": 1,
+          "description": "Find notable indicator cards in one frozen cross-section.",
+          "labels": {
+            "owner": "urus"
+          }
+        },
+        "spec": {
+          "input_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "https://urus.dev/schemas/remote_decision_input.v1.json",
+            "title": "Urus Remote Decision Input",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "schema_version",
+              "intent",
+              "scope",
+              "dataset",
+              "evidence",
+              "strategy_decisions",
+              "deterministic_synthesis",
+              "quality",
+              "constraints",
+              "rows",
+              "evidence_refs",
+              "input_sha256"
+            ],
+            "properties": {
+              "schema_version": {
+                "const": "urus.remote_decision_input.v1"
+              },
+              "intent": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type",
+                  "trigger_mode",
+                  "trigger_source"
+                ],
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "instrument_arbitration",
+                      "group_arbitration",
+                      "indicator_attention",
+                      "strategy_attention"
+                    ]
+                  },
+                  "request_intent_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "trigger_mode": {
+                    "const": "user"
+                  },
+                  "trigger_source": {
+                    "type": "string"
+                  }
+                }
+              },
+              "scope": {
+                "type": "object"
+              },
+              "dataset": {
+                "type": "object"
+              },
+              "input_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "strategy_decisions": {
+                "type": "array"
+              },
+              "deterministic_synthesis": {
+                "type": "object"
+              },
+              "quality": {
+                "type": "object"
+              },
+              "constraints": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "allowed_symbols",
+                  "allow_latest_data_lookup",
+                  "allow_symbol_expansion"
+                ],
+                "properties": {
+                  "allowed_symbols": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "allow_latest_data_lookup": {
+                    "const": false
+                  },
+                  "allow_symbol_expansion": {
+                    "const": false
+                  }
+                }
+              },
+              "rows": {
+                "type": "array"
+              },
+              "evidence": {
+                "type": "object"
+              },
+              "evidence_refs": {
+                "type": "array"
+              }
+            }
+          },
+          "output_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "https://urus.dev/schemas/remote_decision_artifact.v1.json",
+            "title": "Urus Remote Decision Artifact",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "schema_version",
+              "intent_type",
+              "scope",
+              "input_sha256",
+              "completeness",
+              "decision",
+              "warnings",
+              "evidence_refs"
+            ],
+            "properties": {
+              "schema_version": {
+                "const": "urus.remote_decision_artifact.v1"
+              },
+              "intent_type": {
+                "enum": [
+                  "instrument_arbitration",
+                  "group_arbitration",
+                  "indicator_attention",
+                  "strategy_attention"
+                ]
+              },
+              "scope": {
+                "type": "object"
+              },
+              "dataset_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "input_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "completeness": {
+                "enum": [
+                  "complete",
+                  "partial",
+                  "insufficient_evidence"
+                ]
+              },
+              "decision": {
+                "type": "object"
+              },
+              "summary": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 1000
+              },
+              "confidence": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 1
+              },
+              "notable_cards": {
+                "type": "array",
+                "maxItems": 20
+              },
+              "coverage_gaps": {
+                "type": "array"
+              },
+              "warnings": {
+                "type": "array",
+                "maxItems": 50
+              },
+              "evidence_refs": {
+                "type": "array"
+              },
+              "usage": {
+                "type": "object"
+              },
+              "trace_ref": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 256
+              },
+              "generated_at": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          "nodes": [
+            {
+              "id": "decision",
+              "type": "preset_model",
+              "type_version": 1,
+              "config": {
+                "model_ref": "urus-attention@4",
+                "input_mode": "message",
+                "session_mode": "isolated"
+              }
+            },
+            {
+              "id": "input",
+              "type": "input",
+              "type_version": 1,
+              "config": {}
+            },
+            {
+              "id": "output",
+              "type": "output",
+              "type_version": 1,
+              "config": {}
+            }
+          ],
+          "edges": [
+            {
+              "from": {
+                "node": "decision",
+                "port": "output"
+              },
+              "to": {
+                "node": "output",
+                "port": "result"
+              }
+            },
+            {
+              "from": {
+                "node": "input",
+                "port": "data"
+              },
+              "to": {
+                "node": "decision",
+                "port": "input"
+              }
+            }
+          ],
+          "policy": {
+            "timeout_seconds": 1200,
+            "max_parallelism": 1,
+            "failure_mode": "fail_fast"
+          }
+        },
+        "compatibility": {
+          "authored_against_manifest_hash": "sha256:f00b85783507805b13f5b331cc9aab95fc1d9e35c692d6f80eb6fdc89ad7f087"
+        }
+      },
+      "manifest_json": {
+        "api_version": "anomaloharis.dev/workflow-capabilities/v1",
+        "engine": {
+          "runtime_id": "workflow-runtime",
+          "runtime_version": "1.0.0",
+          "adapter_version": "1.0.0",
+          "package_hash": "sha256:31b55222f494e871d5f973eb9c1f10e55e59e06e193076227564f30085fff373",
+          "definition_api_version": "anomaloharis.dev/workflow/v1"
+        },
+        "limits": {
+          "graph": "dag",
+          "max_nodes": 100,
+          "max_edges": 400,
+          "max_parallelism": 8,
+          "max_duration_seconds": 3600
+        },
+        "node_types": [
+          {
+            "type": "condition",
+            "type_version": 1,
+            "description": "Selects a true or false branch using a restricted expression AST.",
+            "config_schema": {
+              "type": "object",
+              "required": [
+                "expression"
+              ],
+              "properties": {
+                "expression": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              },
+              "additionalProperties": false
+            },
+            "inputs": [
+              {
+                "name": "input",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "true",
+                "schema": {},
+                "cardinality": "single"
+              },
+              {
+                "name": "false",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ]
+          },
+          {
+            "type": "input",
+            "type_version": 1,
+            "description": "The single workflow input boundary.",
+            "config_schema": {
+              "type": "object",
+              "additionalProperties": false
+            },
+            "inputs": [],
+            "outputs": [
+              {
+                "name": "data",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ]
+          },
+          {
+            "type": "join",
+            "type_version": 1,
+            "description": "Joins all declared branch inputs in stable order.",
+            "config_schema": {
+              "type": "object",
+              "additionalProperties": false
+            },
+            "inputs": [
+              {
+                "name": "input",
+                "schema": {},
+                "cardinality": "many"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "output",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ]
+          },
+          {
+            "type": "output",
+            "type_version": 1,
+            "description": "The single workflow output boundary.",
+            "config_schema": {
+              "type": "object",
+              "additionalProperties": false
+            },
+            "inputs": [
+              {
+                "name": "result",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ],
+            "outputs": []
+          },
+          {
+            "type": "parallel",
+            "type_version": 1,
+            "description": "Explicitly fans out one value under the workflow parallelism limit.",
+            "config_schema": {
+              "type": "object",
+              "additionalProperties": false
+            },
+            "inputs": [
+              {
+                "name": "input",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "output",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ]
+          },
+          {
+            "type": "plugin_operation",
+            "type_version": 1,
+            "description": "Calls one exact workflow-callable Plugin Operation.",
+            "config_schema": {
+              "type": "object",
+              "properties": {
+                "operation_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "operation_version": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "required": [
+                "operation_id",
+                "operation_version"
+              ],
+              "additionalProperties": false
+            },
+            "inputs": [
+              {
+                "name": "input",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "output",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ]
+          },
+          {
+            "type": "preset_model",
+            "type_version": 1,
+            "description": "Runs an exact published Preset Model through the Agent Runtime Adapter.",
+            "config_schema": {
+              "type": "object",
+              "properties": {
+                "model_ref": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9._-]{0,63}@[1-9][0-9]{0,8}$"
+                },
+                "input_mode": {
+                  "const": "message"
+                },
+                "session_mode": {
+                  "const": "isolated"
+                }
+              },
+              "required": [
+                "model_ref"
+              ],
+              "additionalProperties": false
+            },
+            "inputs": [
+              {
+                "name": "input",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "output",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ]
+          }
+        ],
+        "preset_models": [
+          {
+            "ref": "anomaloharis@1",
+            "description": "The built-in AnomaloHaris Agent preset model.",
+            "compiled_hash": "sha256:91ea5677035311143a23df3f1ffce147bb8c544ab778c72569439f92e7f6cc3e",
+            "plugin_lock_hash": "sha256:316ed0bacbb9fffb6639659907452c996531aae4354658f7f42dd8ae92c23aa0"
+          },
+          {
+            "ref": "scheduled-event-investigator@1",
+            "description": "The Urus scheduled-event web retrieval Agent.",
+            "compiled_hash": "sha256:7116a8fb8798221853a65869074c3c8778e1eafa69601036b40dee1c84c29d8c",
+            "plugin_lock_hash": "sha256:62e40e1a6fdcfc55f4d0d082d823847c77a31ea0a630485b5a9325fc6512651f"
+          },
+          {
+            "ref": "urus-arbitration@3",
+            "description": "urus-arbitration",
+            "compiled_hash": "sha256:1fe1441164dcc7ec1b7935ee767bc2a0e252154bdbb503b1f07bda5906b1ec7d",
+            "plugin_lock_hash": "sha256:1a8ffc2f548593725f3fae766695ad5c381e34883777bcfd5cf7fb3672651f4a"
+          },
+          {
+            "ref": "urus-attention@4",
+            "description": "urus-attention",
+            "compiled_hash": "sha256:b44c63ac5ba7489038743556ca435bc60863d54560a8855a8e3fd2f77430c8b3",
+            "plugin_lock_hash": "sha256:1a8ffc2f548593725f3fae766695ad5c381e34883777bcfd5cf7fb3672651f4a"
+          }
+        ],
+        "plugin_operations": [],
+        "unsupported_features": [
+          "approval",
+          "loop",
+          "subworkflow",
+          "wait"
+        ],
+        "generated_at": "2026-08-27T06:41:03.400Z",
+        "manifest_hash": "sha256:714a4d6689e942ec3fe9f1df202911e210440939f22c21f7e21dae99e0479229"
+      }
+    },
+    {
+      "intent_type": "strategy_attention",
+      "workflow_ref": "urus-strategy-review@1",
+      "status": "active",
+      "definition_hash": "b8e4ebc52a40e33d0a37d7bdfb7a3c772886bbe956a9413a1b8357d475dce1ff",
+      "compiled_hash": "27e782560115b6bf09b65795f4f19ba294709b59ccfe3742b19aab5a276f78cf",
+      "capability_manifest_hash": "714a4d6689e942ec3fe9f1df202911e210440939f22c21f7e21dae99e0479229",
+      "input_schema_version": "urus.remote_decision_input.v1",
+      "output_schema_version": "urus.remote_decision_artifact.v1",
+      "published_at": "2026-08-27T06:39:01.535Z",
+      "verified_at": "2026-08-27T06:39:01.535Z",
+      "definition_json": {
+        "api_version": "anomaloharis.dev/workflow/v1",
+        "kind": "Workflow",
+        "metadata": {
+          "name": "urus-strategy-review",
+          "version": 1,
+          "description": "Find notable strategy cards in one frozen cross-section.",
+          "labels": {
+            "owner": "urus"
+          }
+        },
+        "spec": {
+          "input_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "https://urus.dev/schemas/remote_decision_input.v1.json",
+            "title": "Urus Remote Decision Input",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "schema_version",
+              "intent",
+              "scope",
+              "dataset",
+              "evidence",
+              "strategy_decisions",
+              "deterministic_synthesis",
+              "quality",
+              "constraints",
+              "rows",
+              "evidence_refs",
+              "input_sha256"
+            ],
+            "properties": {
+              "schema_version": {
+                "const": "urus.remote_decision_input.v1"
+              },
+              "intent": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type",
+                  "trigger_mode",
+                  "trigger_source"
+                ],
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "instrument_arbitration",
+                      "group_arbitration",
+                      "indicator_attention",
+                      "strategy_attention"
+                    ]
+                  },
+                  "request_intent_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "trigger_mode": {
+                    "const": "user"
+                  },
+                  "trigger_source": {
+                    "type": "string"
+                  }
+                }
+              },
+              "scope": {
+                "type": "object"
+              },
+              "dataset": {
+                "type": "object"
+              },
+              "input_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "strategy_decisions": {
+                "type": "array"
+              },
+              "deterministic_synthesis": {
+                "type": "object"
+              },
+              "quality": {
+                "type": "object"
+              },
+              "constraints": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "allowed_symbols",
+                  "allow_latest_data_lookup",
+                  "allow_symbol_expansion"
+                ],
+                "properties": {
+                  "allowed_symbols": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "allow_latest_data_lookup": {
+                    "const": false
+                  },
+                  "allow_symbol_expansion": {
+                    "const": false
+                  }
+                }
+              },
+              "rows": {
+                "type": "array"
+              },
+              "evidence": {
+                "type": "object"
+              },
+              "evidence_refs": {
+                "type": "array"
+              }
+            }
+          },
+          "output_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "https://urus.dev/schemas/remote_decision_artifact.v1.json",
+            "title": "Urus Remote Decision Artifact",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "schema_version",
+              "intent_type",
+              "scope",
+              "input_sha256",
+              "completeness",
+              "decision",
+              "warnings",
+              "evidence_refs"
+            ],
+            "properties": {
+              "schema_version": {
+                "const": "urus.remote_decision_artifact.v1"
+              },
+              "intent_type": {
+                "enum": [
+                  "instrument_arbitration",
+                  "group_arbitration",
+                  "indicator_attention",
+                  "strategy_attention"
+                ]
+              },
+              "scope": {
+                "type": "object"
+              },
+              "dataset_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "input_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "completeness": {
+                "enum": [
+                  "complete",
+                  "partial",
+                  "insufficient_evidence"
+                ]
+              },
+              "decision": {
+                "type": "object"
+              },
+              "summary": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 1000
+              },
+              "confidence": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 1
+              },
+              "notable_cards": {
+                "type": "array",
+                "maxItems": 20
+              },
+              "coverage_gaps": {
+                "type": "array"
+              },
+              "warnings": {
+                "type": "array",
+                "maxItems": 50
+              },
+              "evidence_refs": {
+                "type": "array"
+              },
+              "usage": {
+                "type": "object"
+              },
+              "trace_ref": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 256
+              },
+              "generated_at": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          "nodes": [
+            {
+              "id": "decision",
+              "type": "preset_model",
+              "type_version": 1,
+              "config": {
+                "model_ref": "urus-attention@4",
+                "input_mode": "message",
+                "session_mode": "isolated"
+              }
+            },
+            {
+              "id": "input",
+              "type": "input",
+              "type_version": 1,
+              "config": {}
+            },
+            {
+              "id": "output",
+              "type": "output",
+              "type_version": 1,
+              "config": {}
+            }
+          ],
+          "edges": [
+            {
+              "from": {
+                "node": "decision",
+                "port": "output"
+              },
+              "to": {
+                "node": "output",
+                "port": "result"
+              }
+            },
+            {
+              "from": {
+                "node": "input",
+                "port": "data"
+              },
+              "to": {
+                "node": "decision",
+                "port": "input"
+              }
+            }
+          ],
+          "policy": {
+            "timeout_seconds": 1200,
+            "max_parallelism": 1,
+            "failure_mode": "fail_fast"
+          }
+        },
+        "compatibility": {
+          "authored_against_manifest_hash": "sha256:f00b85783507805b13f5b331cc9aab95fc1d9e35c692d6f80eb6fdc89ad7f087"
+        }
+      },
+      "manifest_json": {
+        "api_version": "anomaloharis.dev/workflow-capabilities/v1",
+        "engine": {
+          "runtime_id": "workflow-runtime",
+          "runtime_version": "1.0.0",
+          "adapter_version": "1.0.0",
+          "package_hash": "sha256:31b55222f494e871d5f973eb9c1f10e55e59e06e193076227564f30085fff373",
+          "definition_api_version": "anomaloharis.dev/workflow/v1"
+        },
+        "limits": {
+          "graph": "dag",
+          "max_nodes": 100,
+          "max_edges": 400,
+          "max_parallelism": 8,
+          "max_duration_seconds": 3600
+        },
+        "node_types": [
+          {
+            "type": "condition",
+            "type_version": 1,
+            "description": "Selects a true or false branch using a restricted expression AST.",
+            "config_schema": {
+              "type": "object",
+              "required": [
+                "expression"
+              ],
+              "properties": {
+                "expression": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              },
+              "additionalProperties": false
+            },
+            "inputs": [
+              {
+                "name": "input",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "true",
+                "schema": {},
+                "cardinality": "single"
+              },
+              {
+                "name": "false",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ]
+          },
+          {
+            "type": "input",
+            "type_version": 1,
+            "description": "The single workflow input boundary.",
+            "config_schema": {
+              "type": "object",
+              "additionalProperties": false
+            },
+            "inputs": [],
+            "outputs": [
+              {
+                "name": "data",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ]
+          },
+          {
+            "type": "join",
+            "type_version": 1,
+            "description": "Joins all declared branch inputs in stable order.",
+            "config_schema": {
+              "type": "object",
+              "additionalProperties": false
+            },
+            "inputs": [
+              {
+                "name": "input",
+                "schema": {},
+                "cardinality": "many"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "output",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ]
+          },
+          {
+            "type": "output",
+            "type_version": 1,
+            "description": "The single workflow output boundary.",
+            "config_schema": {
+              "type": "object",
+              "additionalProperties": false
+            },
+            "inputs": [
+              {
+                "name": "result",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ],
+            "outputs": []
+          },
+          {
+            "type": "parallel",
+            "type_version": 1,
+            "description": "Explicitly fans out one value under the workflow parallelism limit.",
+            "config_schema": {
+              "type": "object",
+              "additionalProperties": false
+            },
+            "inputs": [
+              {
+                "name": "input",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "output",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ]
+          },
+          {
+            "type": "plugin_operation",
+            "type_version": 1,
+            "description": "Calls one exact workflow-callable Plugin Operation.",
+            "config_schema": {
+              "type": "object",
+              "properties": {
+                "operation_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "operation_version": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "required": [
+                "operation_id",
+                "operation_version"
+              ],
+              "additionalProperties": false
+            },
+            "inputs": [
+              {
+                "name": "input",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "output",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ]
+          },
+          {
+            "type": "preset_model",
+            "type_version": 1,
+            "description": "Runs an exact published Preset Model through the Agent Runtime Adapter.",
+            "config_schema": {
+              "type": "object",
+              "properties": {
+                "model_ref": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9._-]{0,63}@[1-9][0-9]{0,8}$"
+                },
+                "input_mode": {
+                  "const": "message"
+                },
+                "session_mode": {
+                  "const": "isolated"
+                }
+              },
+              "required": [
+                "model_ref"
+              ],
+              "additionalProperties": false
+            },
+            "inputs": [
+              {
+                "name": "input",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "output",
+                "schema": {},
+                "cardinality": "single"
+              }
+            ]
+          }
+        ],
+        "preset_models": [
+          {
+            "ref": "anomaloharis@1",
+            "description": "The built-in AnomaloHaris Agent preset model.",
+            "compiled_hash": "sha256:91ea5677035311143a23df3f1ffce147bb8c544ab778c72569439f92e7f6cc3e",
+            "plugin_lock_hash": "sha256:316ed0bacbb9fffb6639659907452c996531aae4354658f7f42dd8ae92c23aa0"
+          },
+          {
+            "ref": "scheduled-event-investigator@1",
+            "description": "The Urus scheduled-event web retrieval Agent.",
+            "compiled_hash": "sha256:7116a8fb8798221853a65869074c3c8778e1eafa69601036b40dee1c84c29d8c",
+            "plugin_lock_hash": "sha256:62e40e1a6fdcfc55f4d0d082d823847c77a31ea0a630485b5a9325fc6512651f"
+          },
+          {
+            "ref": "urus-arbitration@3",
+            "description": "urus-arbitration",
+            "compiled_hash": "sha256:1fe1441164dcc7ec1b7935ee767bc2a0e252154bdbb503b1f07bda5906b1ec7d",
+            "plugin_lock_hash": "sha256:1a8ffc2f548593725f3fae766695ad5c381e34883777bcfd5cf7fb3672651f4a"
+          },
+          {
+            "ref": "urus-attention@4",
+            "description": "urus-attention",
+            "compiled_hash": "sha256:b44c63ac5ba7489038743556ca435bc60863d54560a8855a8e3fd2f77430c8b3",
+            "plugin_lock_hash": "sha256:1a8ffc2f548593725f3fae766695ad5c381e34883777bcfd5cf7fb3672651f4a"
+          }
+        ],
+        "plugin_operations": [],
+        "unsupported_features": [
+          "approval",
+          "loop",
+          "subworkflow",
+          "wait"
+        ],
+        "generated_at": "2026-08-27T06:41:03.400Z",
+        "manifest_hash": "sha256:714a4d6689e942ec3fe9f1df202911e210440939f22c21f7e21dae99e0479229"
+      }
+    }
+  ]
+}

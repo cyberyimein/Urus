@@ -16,7 +16,7 @@ CROSS_SECTION_SCHEMA = "urus.cross_section_projection.v1"
 AI_DISABLED = {
     "available": False,
     "status": "disabled",
-    "reason": "Phase E 才启用 AI 横向评估；当前页面只展示确定性投影。",
+    "reason": "AI 横截面评估需要用户主动确认当前冻结 Observation Run。",
 }
 
 
@@ -172,6 +172,7 @@ class CrossSectionService:
             groups.append(_group_summary(group, context, group_rows, value_key="value"))
 
         rows.sort(key=_row_sort_key)
+        _attach_attention_features(rows, kind="indicator")
         transitions.sort(key=_transition_sort_key)
         payload = _base_projection(run, contexts, failed_groups, lens={
             "type": "indicator",
@@ -224,6 +225,7 @@ class CrossSectionService:
             groups.append(_group_summary(group, context, group_rows, value_key="score"))
 
         rows.sort(key=_row_sort_key)
+        _attach_attention_features(rows, kind="strategy")
         transitions.sort(key=_transition_sort_key)
         payload = _base_projection(run, contexts, failed_groups, lens={
             "type": "strategy",
@@ -939,6 +941,118 @@ def _delta(current: float | None, previous: float | None) -> float | None:
 
 def _round(value: float | None) -> float | None:
     return round(value, 4) if value is not None else None
+
+
+def _attach_attention_features(rows: list[dict[str, Any]], *, kind: str) -> None:
+    """Add deterministic comparison coordinates without filtering cards."""
+
+    valid_rows = [row for row in rows if row.get("valid")]
+    if len(valid_rows) < 4:
+        for row in rows:
+            row["attention_features"] = _empty_attention_features(row, kind=kind)
+        return
+    if kind == "indicator":
+        values = [_number(row.get("value")) for row in valid_rows]
+        changes = [_number(row.get("change")) for row in valid_rows]
+        distances = [_number(row.get("threshold_distance")) for row in valid_rows]
+        value_percentiles = _midrank_percentiles(values)
+        change_percentiles = _midrank_percentiles([abs(item) if item is not None else None for item in changes])
+        distance_percentiles = _midrank_percentiles(distances)
+        for index, row in enumerate(valid_rows):
+            value = values[index]
+            distance = distances[index]
+            row["attention_features"] = {
+                "global_percentile": value_percentiles.get(index),
+                "within_group_percentile": _group_percentile(row, rows, "value"),
+                # ``change_percentile`` is the public contract name. Keep the
+                # explicit absolute alias for clients that want to distinguish
+                # direction from magnitude without changing the ranking rule.
+                "change_percentile": change_percentiles.get(index),
+                "absolute_change_percentile": change_percentiles.get(index),
+                "threshold_distance": distance,
+                "threshold_distance_percentile": distance_percentiles.get(index),
+                "is_transition": bool(row.get("transition")),
+                "quality_flag": "ok" if row.get("valid") else "missing",
+            }
+    else:
+        scores = [_number(row.get("score")) for row in valid_rows]
+        changes = [_number(row.get("change")) for row in valid_rows]
+        distances = [_number((row.get("setup_progress") or {}).get("confirmation_distance_atr")) for row in valid_rows]
+        score_percentiles = _midrank_percentiles(scores)
+        change_percentiles = _midrank_percentiles([abs(item) if item is not None else None for item in changes])
+        distance_percentiles = _midrank_percentiles(distances)
+        for index, row in enumerate(valid_rows):
+            transition = dict(row.get("transition") or {})
+            row["attention_features"] = {
+                # The contract calls these score/score-change percentiles;
+                # absolute aliases make the magnitude-only calculation clear.
+                "score_percentile": score_percentiles.get(index),
+                "score_change_percentile": change_percentiles.get(index),
+                "absolute_score_percentile": score_percentiles.get(index),
+                "absolute_score_change_percentile": change_percentiles.get(index),
+                "confirmation_distance_rank": distance_percentiles.get(index),
+                "is_stage_transition": bool(transition),
+                "is_new_invalidation": transition.get("to") == "invalidated",
+                "quality_flag": "ok" if row.get("valid") else "missing",
+            }
+    invalid = [row for row in rows if not row.get("valid")]
+    for row in invalid:
+        row["attention_features"] = _empty_attention_features(row, kind=kind)
+
+
+def _empty_attention_features(row: dict[str, Any], *, kind: str) -> dict[str, Any]:
+    if kind == "indicator":
+        return {
+            "global_percentile": None,
+            "within_group_percentile": None,
+            "change_percentile": None,
+            "absolute_change_percentile": None,
+            "threshold_distance": _number(row.get("threshold_distance")),
+            "threshold_distance_percentile": None,
+            "is_transition": bool(row.get("transition")),
+            "quality_flag": "missing",
+        }
+    return {
+        "score_percentile": None,
+        "score_change_percentile": None,
+        "absolute_score_percentile": None,
+        "absolute_score_change_percentile": None,
+        "confirmation_distance_rank": None,
+        "is_stage_transition": bool(row.get("transition")),
+        "is_new_invalidation": False,
+        "quality_flag": "missing",
+    }
+
+
+def _midrank_percentiles(values: list[float | None]) -> dict[int, float | None]:
+    valid = [(index, value) for index, value in enumerate(values) if value is not None]
+    if len(valid) < 4:
+        return {index: None for index in range(len(values))}
+    ordered = sorted(valid, key=lambda item: (float(item[1]), item[0]))
+    result: dict[int, float | None] = {index: None for index in range(len(values))}
+    position = 0
+    while position < len(ordered):
+        end = position + 1
+        while end < len(ordered) and ordered[end][1] == ordered[position][1]:
+            end += 1
+        # Mid-rank is the average 1-based position, normalised to [0, 1].
+        rank = ((position + 1) + end) / 2
+        percentile = round((rank - 1) / (len(ordered) - 1), 4)
+        for index, _ in ordered[position:end]:
+            result[index] = percentile
+        position = end
+    return result
+
+
+def _group_percentile(row: dict[str, Any], rows: list[dict[str, Any]], field: str) -> float | None:
+    group_rows = [item for item in rows if item.get("group_id") == row.get("group_id") and item.get("valid")]
+    values = [_number(item.get(field)) for item in group_rows]
+    if len([value for value in values if value is not None]) < 4:
+        return None
+    index = next((index for index, item in enumerate(group_rows) if item.get("id") == row.get("id")), None)
+    if index is None:
+        return None
+    return _midrank_percentiles(values).get(index)
 
 
 def _with_digest(payload: dict[str, Any]) -> dict[str, Any]:

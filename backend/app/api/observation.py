@@ -19,6 +19,7 @@ from app.schemas.observation import (
     ObservationGroupSyncResponse,
     ObservationRunCreateRequest,
     ObservationRunResponse,
+    ObservationRunGroupSnapshotResponse,
 )
 from app.services.observation import ObservationGroupSyncService, ObservationRunService
 from app.services.history_quota import HistoryAdmission
@@ -213,6 +214,26 @@ def get_indicator_cross_section(
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     return CrossSectionService(db).indicator_projection(run_id, indicator_id)
+
+
+@router.get("/runs/{run_id}/groups/{group_id}", response_model=ObservationRunGroupSnapshotResponse)
+def get_observation_run_group_snapshot(
+    run_id: str,
+    group_id: str,
+    db: Session = Depends(get_db),
+) -> ObservationRunGroupSnapshotResponse:
+    resolved = ObservationRepository(db).snapshot_for_run(run_id, group_id=group_id)
+    if resolved is None:
+        raise AppError("找不到该 Observation Run 中的精确组快照", code="observation_group_snapshot_not_found", status_code=404)
+    run, snapshot = resolved
+    return ObservationRunGroupSnapshotResponse(
+        observation_run_id=run.id,
+        group_id=snapshot.group_id,
+        snapshot_id=snapshot.id,
+        dataset_id=snapshot.dataset_id,
+        group_version_id=snapshot.group_version_id,
+        snapshot=dict(snapshot.payload_json or {}),
+    )
 
 
 @router.get("/runs/{run_id}/strategies/{strategy_id}", response_model=dict[str, Any])

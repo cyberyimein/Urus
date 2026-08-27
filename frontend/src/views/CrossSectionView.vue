@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import AppShell from '@/components/AppShell.vue'
+import RemoteDecisionPanel from '@/components/decision/RemoteDecisionPanel.vue'
 import { api } from '@/api/client'
 import type { ObservationRun } from '@/types/api'
 import type {
@@ -12,6 +13,7 @@ import type {
   CrossSectionProjection,
   CrossSectionRow,
 } from '@/types/crossSection'
+import type { RemoteDecisionSource } from '@/types/remoteDecision'
 
 const props = defineProps<{ lensType: CrossSectionLensType }>()
 const route = useRoute()
@@ -25,6 +27,14 @@ const selectedLensId = ref('')
 const loading = ref(true)
 const loadingProjection = ref(false)
 const error = ref('')
+const crossSectionAiSource = computed<RemoteDecisionSource>(() => ({
+  observation_run_id: selectedRunId.value || undefined,
+  lens_id: selectedLensId.value || undefined,
+  lens_type: projection.value?.lens.type,
+  lens_version: projection.value?.lens.version ?? undefined,
+  content_sha256: projection.value?.content_sha256,
+}))
+const crossSectionAiDisabled = computed(() => !projection.value || !selectedRunId.value || !selectedLensId.value)
 
 const isIndicator = computed(() => props.lensType === 'indicator')
 const pageTitle = computed(() => isIndicator.value ? '指标横向扫描' : '策略横向扫描')
@@ -622,14 +632,16 @@ onMounted(() => { void loadPage() })
             </option>
           </select>
         </label>
-        <button
-          class="cross-section-ai-button"
-          type="button"
-          disabled
-          title="Phase E 才启用 AI 横向评估"
-        >
-          AI 评估 · Phase E
-        </button>
+        <RemoteDecisionPanel
+          :intent-type="isIndicator ? 'indicator_attention' : 'strategy_attention'"
+          :label="isIndicator ? 'AI 找指标关注项' : 'AI 找策略关注项'"
+          :title="isIndicator ? '确认指标横截面 AI 扫描' : '确认策略横截面 AI 扫描'"
+          :source="crossSectionAiSource"
+          :disabled="crossSectionAiDisabled"
+          trigger-class="cross-section-ai-button"
+          preflight-on-mount
+          compact
+        />
       </div>
     </section>
 
@@ -795,6 +807,7 @@ onMounted(() => { void loadPage() })
               <RouterLink
                 v-for="row in rowsByGroup[group.group_id] ?? []"
                 :key="row.id"
+                :id="`card-${row.id}`"
                 class="cross-section-symbol-card"
                 :class="{ 'is-transition': Boolean(row.transition) }"
                 :data-state="isIndicator ? row.state : row.stance"
@@ -880,7 +893,7 @@ onMounted(() => { void loadPage() })
               <div><dt>DATASETS</dt><dd>{{ projection.quality.dataset_ids.map((id) => shortHash(id)).join(' · ') }}</dd></div>
               <div><dt>SNAPSHOTS</dt><dd>{{ projection.quality.snapshot_ids.length }} immutable group snapshots</dd></div>
               <div><dt>COMPARISON</dt><dd>前一交易日 {{ comparisonDateLabel() }} · {{ comparison.available_group_count }} / {{ comparison.group_count }} groups</dd></div>
-              <div><dt>AI</dt><dd>disabled · Phase E</dd></div>
+              <div><dt>AI</dt><dd>用户确认后调用 Anomalo Workflow</dd></div>
             </dl>
             <p v-if="projection.quality.warnings.length" class="cross-section-warning">{{ projection.quality.warnings.join('；') }}</p>
           </article>

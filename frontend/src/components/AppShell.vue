@@ -17,7 +17,7 @@ import { RouterLink } from 'vue-router'
       <RouterLink to="/indicators" active-class="active">指标扫描</RouterLink>
       <RouterLink to="/strategies" active-class="active">策略扫描</RouterLink>
       <RouterLink to="/research" active-class="active">旧研究中心</RouterLink>
-      <RouterLink to="/settings" active-class="active">设置</RouterLink>
+      <RouterLink to="/settings/universe" active-class="active">标的设置</RouterLink>
     </nav>
   </header>
 </template>

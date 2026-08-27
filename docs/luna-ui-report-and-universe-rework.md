@@ -1,6 +1,6 @@
 # Luna 修改指令：标的配置与研究报告重构
 
-> 状态：运行设置部分已实现；Universe 与报告重构待实现  
+> 状态：Universe 设置已实现；旧版运行设置页已由 Phase D 退役，`/settings` 仅保留兼容跳转
 > 负责人：Luna  
 > 目标分支：CTA research branch  
 > 优先级：P0（报告可用性）+ P1（标的配置）  
@@ -51,7 +51,11 @@
 
 ---
 
-## 3. 运行设置页（先于 Universe 设置实现）
+## 3. 运行设置页（历史设计，已退役）
+
+> 维护说明（2026-08-27）：本节记录早期版本的日程、模型和计费配置，不再作为当前 UI
+> 合同。Phase D 改为用户在个股、组和横截面页面主动发起 AI Workflow；Observation Run
+> 只负责确定性采集。旧版 `/settings` 页面已删除，旧链接会跳转到 `/settings/universe`。
 
 本轮先新增 `/settings`，只处理日程与模型入口；`/settings/universe` 仍按后续 P1 设计，不在本次实现。
 

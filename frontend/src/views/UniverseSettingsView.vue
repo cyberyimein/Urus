@@ -276,7 +276,7 @@ onUnmounted(() => {
         <h1>标的设置</h1>
         <p>先按列表筛选，再点开个股快速调整主题归属、采集和策略角色。指标推荐由已部署 Universe 自动生成，只读；保存后只影响新任务，历史报告继续引用原版本。</p>
       </div>
-      <RouterLink class="secondary-button" to="/settings">运行设置</RouterLink>
+      <RouterLink class="secondary-button" to="/">返回决策工作台</RouterLink>
     </header>
 
     <div v-if="loading" class="state-panel">正在读取 Universe…</div>

@@ -143,12 +143,18 @@ _Avoid_: Mutable watchlist, AI-selected theme
 
 **Decision Workflow Definition**:
 由 Urus 设计、保存和版本化的不可变 Workflow JSON，声明 Decision Scope、输入输出 Schema、Anomalo capability
-节点、依赖、资源策略和失败策略。Anomalo 只能对齐并执行本次 definition hash，不能替换为同名最新流程。
+节点、依赖、资源策略和失败策略。Anomalo 只能发布和执行精确版本及 hash，不能替换为同名最新流程。
 _Avoid_: Prompt text, remote latest workflow
 
+**Workflow Binding**:
+把一个 Urus AI 决策意图绑定到 Anomalo 已发布精确 Workflow Ref 的不可变运行配置，保存 definition hash、compiled
+hash、capability manifest hash 及输入输出 Schema 版本。发布期负责校验和激活 Binding；日常运行只能调用 active Binding，
+不能在用户点击时动态发布 Workflow。
+_Avoid_: Remote latest workflow, per-click alignment, runtime workflow draft
+
 **Remote Decision Run**:
-Anomalo 对一份已对齐 Decision Workflow Definition 和冻结输入执行产生的远端运行记录；Urus 保存 alignment、
-definition/input hash、状态、结果 envelope 和 trace reference，重跑不会覆盖旧记录。
+Anomalo 对一份 active Workflow Binding 和冻结输入执行产生的远端运行记录；Urus 保存 Workflow Ref、target/input hash、
+状态、结果 envelope 和 trace reference，重跑不会覆盖旧记录。
 _Avoid_: Chat session, local Workflow Run
 
 **Strategy Decision**:
@@ -192,8 +198,9 @@ _Avoid_: Model confidence alone
   对应 **Observation Group** 版本。
 - 一个 **Daily Decision Dataset** 可以生成多个面向不同页面和可见窗口的 **Decision Chart Projection**；投影的
   Strategy Overlay 必须引用原始 **Strategy Decision**，不能由前端推测信号位置。
-- Urus 把策略输出和冻结证据编译为 **Decision Workflow Definition**，Anomalo 对齐成功后创建
-  **Remote Decision Run**；definition hash 或 input hash 不一致的结果不能被接受。
+- **Decision Workflow Definition** 在受控发布期校验、导入并发布到 Anomalo；active **Workflow Binding** 保存精确
+  Workflow Ref 和预期 hash。Urus 把策略输出和冻结证据编译为运行输入后，日常 **Remote Decision Run** 只能使用
+  该 Binding；target hash 或 input hash 不一致的结果不能被接受。
 - 盘前 **Decision Session** 先生成一个确定性证据投影，再运行一个无工具的 **Pre-Market Composite
   Decision**；评分所需的全标的预测与前五名详细关注清单来自同一次 **Agent Invocation**。
 - 盘后 **Decision Session** 先生成 **Forecast Evaluation**，再运行一个无工具的 **Post-Close Review**；

@@ -62,10 +62,16 @@ from app.models import (  # noqa: F401 - register ORM tables
     GroupDailySnapshotModel,
     ObservationRunModel,
     ObservationUniverseRevisionModel,
+    DecisionWorkflowBindingModel,
+    RemoteDecisionRunModel,
+    RemoteDecisionEventModel,
+    RemoteDecisionArtifactModel,
 )
 from app.repositories.runs import RunRepository
 from app.repositories.runtime_settings import RuntimeSettingsRepository, apply_payload
 from app.repositories.universe import InstrumentUniverseRepository
+from app.integrations.anomalo_workflow import FakeWorkflowAdapter, HttpAnomaloWorkflowAdapter
+from app.services.remote_decision_supervisor import RemoteDecisionSupervisor
 
 logger = logging.getLogger(__name__)
 
@@ -88,10 +94,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             recovered = RunRepository(session).recover_interrupted_runs(completed_at=utc_now())
         if recovered:
             logger.warning("Recovered %s interrupted workflow run(s)", recovered)
+        remote_supervisor: RemoteDecisionSupervisor = app.state.remote_decision_supervisor
+        await remote_supervisor.start()
         logger.info("Urus started environment=%s", settings.app_env)
         try:
             yield
         finally:
+            await remote_supervisor.shutdown()
             engine.dispose()
             logger.info("Urus stopped")
 
@@ -104,6 +113,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.engine = engine
     app.state.session_factory = session_factory
+    if settings.anomalo_workflow_fake_adapter or settings.app_env == "test":
+        workflow_adapter = FakeWorkflowAdapter()
+    elif settings.anomalo_workflow_enabled and settings.anomalo_base_url and settings.anomalo_workflow_token:
+        workflow_adapter = HttpAnomaloWorkflowAdapter(
+            settings.anomalo_base_url,
+            settings.anomalo_workflow_token,
+            connect_timeout_seconds=settings.anomalo_workflow_connect_timeout_seconds,
+            read_timeout_seconds=settings.anomalo_workflow_read_timeout_seconds,
+        )
+    else:
+        # Keep app startup deterministic when the production Secret Store has
+        # not yet injected a runtime token. Preflight will report the blocker;
+        # no network client is created in this state.
+        workflow_adapter = FakeWorkflowAdapter()
+    app.state.remote_decision_supervisor = RemoteDecisionSupervisor(
+        session_factory,
+        settings,
+        workflow_adapter,
+    )
 
     app.add_middleware(
         CORSMiddleware,

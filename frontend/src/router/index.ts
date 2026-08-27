@@ -10,12 +10,12 @@ import RunsView from '@/views/RunsView.vue'
 import ResearchHomeView from '@/views/ResearchHomeView.vue'
 import ResearchReportsView from '@/views/ResearchReportsView.vue'
 import ResearchReportView from '@/views/ResearchReportView.vue'
-import SettingsView from '@/views/SettingsView.vue'
 import UniverseSettingsView from '@/views/UniverseSettingsView.vue'
 import InstrumentDecisionView from '@/views/InstrumentDecisionView.vue'
 import GroupObservationView from '@/views/GroupObservationView.vue'
 import ObservationRunView from '@/views/ObservationRunView.vue'
 import CrossSectionView from '@/views/CrossSectionView.vue'
+import RemoteDecisionRunView from '@/views/RemoteDecisionRunView.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -24,6 +24,9 @@ export const router = createRouter({
     { path: '/instruments/:symbol', name: 'instrument-decision', component: InstrumentDecisionView },
     { path: '/groups', name: 'groups', component: GroupObservationView },
     { path: '/groups/:groupId', name: 'group-observation', component: GroupObservationView },
+    // Keep the product-facing route aligned with the Phase D design while
+    // accepting the API-oriented path used by early clients/bookmarks.
+    { path: '/decision-runs/:localRunId', alias: '/remote-decisions/:localRunId', name: 'remote-decision-run', component: RemoteDecisionRunView },
     { path: '/observation-runs', name: 'observation-runs', component: ObservationRunView },
     { path: '/indicators', name: 'indicators', component: CrossSectionView, props: { lensType: 'indicator' } },
     { path: '/indicators/:indicatorId', name: 'indicator-cross-section', component: CrossSectionView, props: { lensType: 'indicator' } },
@@ -38,7 +41,11 @@ export const router = createRouter({
     { path: '/research/reports/:reportId', name: 'research-report-by-id', component: ResearchReportView },
     { path: '/research/datasets', name: 'research-datasets', component: DatasetsView },
     { path: '/operations', name: 'operations', component: OperationsView },
-    { path: '/settings', name: 'settings', component: SettingsView },
+    // The legacy runtime settings page exposed the retired scheduled AI/report
+    // controls. Keep the old URL as a safe bookmark redirect to the active
+    // Universe settings surface; runtime credentials and Workflow bindings
+    // remain deployment-managed rather than user-editable here.
+    { path: '/settings', redirect: { name: 'universe-settings' } },
     { path: '/settings/universe', name: 'universe-settings', component: UniverseSettingsView },
     { path: '/operations/runs', name: 'runs', component: RunsView },
     { path: '/operations/runs/:runId', name: 'run-detail', component: RunDetailView },
