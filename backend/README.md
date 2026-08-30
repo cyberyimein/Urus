@@ -46,22 +46,22 @@ OpenAPI is available at `/docs`.
 
 - `21:30`：`pre_market`（盘前）
 - `04:00`：`pre_close`（尾盘前）
-- `05:30`：`post_close_review`（盘后）
+- `05:30`：`post_close_observation`（盘后观察；股票与期权一起冻结）
 
 ```bash
 cd backend
 uv run python scripts/schedule_market_data_collection.py
 ```
 
-每次请求都会显式设置 `skip_ai_decision=true`。这个单次运行开关优先于后端的
-`URUS_AGENT_ENABLED`，所以即使已有后端开启了 Agent，定时任务也不会调用 AI。若检测到一个不支持
-该开关的旧后端，脚本会拒绝采集并提示重启，避免意外调用模型。
+盘后观察通过 `/api/observation/runs` 执行确定性采集，股票日 K、期权快照和收盘价邻近判断保存在同一
+Observation Run 中；`post_close_review` 仅保留给独立的 AI 复盘流程。盘前和尾盘 Workflow 请求仍会显式
+设置 `skip_ai_decision=true`，并在检测到不支持该开关的旧后端时拒绝采集。
 
 脚本默认使用 `exchange-calendars` 的 `XNYS` 交易日历，跳过周末、美股节假日和日历已定义的休市（东京周六
 凌晨仍对应美东周五，因此会正常采集）。提前收盘日会把尾盘采集移到实际收盘前一小时，并把盘后复盘
 放到实际收盘后 30 分钟；`MARKET_CALENDAR` 可切换到该库支持的其他交易所。`--include-weekends`
 只用于显式验证周末，节假日仍然不会被常规调度误触发。启动后 180 分钟内错过的时点会补采，同一
-时点通过状态文件防止重复执行。
+时点通过状态文件防止重复执行；旧状态中的 `post_close_review` 盘后键会被兼容识别。
 
 运行日志、后端日志和防重复状态保存在 `backend/data/scheduled_collection/`。先手工验证一次可以运行：
 
@@ -77,4 +77,4 @@ Stage 1A/3A environment variables are `MOOMOO_ENABLED`, `MOOMOO_HOST`, `MOOMOO_P
 
 Remote Decision runs are created from frozen Urus evidence and dispatched to published Anomalo Workflows. The backend supports instrument arbitration, group arbitration, indicator attention, and strategy attention; it prevents latest-data lookup and symbol expansion during a run. See `docs/phase-d-ai-decision-flow-design.md` for the current workflow boundary and runtime contract.
 
-Stage 2 uses `OPTIONS_TARGET_SYMBOLS` for core ETFs and `OPTIONS_WATCHLIST_SYMBOLS` for listed single stocks. `OPTIONS_WATCHLIST_EXCLUDED_SYMBOLS` records non-queryable names such as private SPCX. Snapshot and option-chain pacing are configured through `OPTIONS_SNAPSHOT_INTERVAL_SECONDS` and `OPTIONS_CHAIN_INTERVAL_SECONDS`.
+Stage 2 uses `OPTIONS_TARGET_SYMBOLS` for core ETFs and `OPTIONS_WATCHLIST_SYMBOLS` for listed single stocks. `OPTIONS_WATCHLIST_EXCLUDED_SYMBOLS` records non-queryable names such as private SPCX. Snapshot, option metadata, and option-chain pacing are configured through `OPTIONS_SNAPSHOT_INTERVAL_SECONDS`, `OPTIONS_METADATA_INTERVAL_SECONDS`, and `OPTIONS_CHAIN_INTERVAL_SECONDS`.

@@ -17,7 +17,7 @@ import type {
   DeterministicSynthesis,
   StrategyDecision,
 } from '@/types/dailyEvidence'
-import type { FrontendReadModel, OptionsData, RunListItem } from '@/types/api'
+import type { OptionsData } from '@/types/api'
 import type { RemoteDecisionSource } from '@/types/remoteDecision'
 import type { PostCloseOptionAlignment } from '@/types/research'
 
@@ -49,8 +49,9 @@ const instrumentRemotePanel = ref<{ open: () => void } | null>(null)
 const showTechnicalDetails = ref(false)
 const optionsLoading = ref(false)
 const optionsError = ref('')
-const optionsReadModel = ref<FrontendReadModel | null>(null)
-const optionsSourceRun = ref<RunListItem | null>(null)
+const optionsPayload = ref<OptionsData | null>(null)
+const optionsAlignment = ref<PostCloseOptionAlignment | null>(null)
+const optionsSourceRun = ref<{ run_type: string; cutoff_time: string | null } | null>(null)
 const layers = reactive<Record<LayerKey, boolean>>({
   ma20: true,
   ma50: true,
@@ -206,13 +207,8 @@ const strategyActionLabels: Record<string, string> = {
 }
 const strategyStanceLabels: Record<string, string> = { bullish: '偏多', bearish: '偏空', neutral: '中性', insufficient_data: '不可用' }
 const historicalDatasetId = computed(() => typeof route.query.dataset === 'string' ? route.query.dataset : '')
-const optionsData = computed<OptionsData | null>(() => optionsReadModel.value?.options ?? null)
-const postCloseOptionAlignment = computed<PostCloseOptionAlignment | null>(() => {
-  const report = asRecord(optionsReadModel.value?.technical_report)
-  const reportOptions = asRecord(report?.options)
-  const alignment = asRecord(reportOptions?.post_close_alignment)
-  return alignment ? alignment as unknown as PostCloseOptionAlignment : null
-})
+const optionsData = computed<OptionsData | null>(() => optionsPayload.value)
+const postCloseOptionAlignment = computed<PostCloseOptionAlignment | null>(() => optionsAlignment.value)
 const instrumentAiSource = computed<RemoteDecisionSource>(() => ({
   dataset_id: dataset.value?.dataset_id,
   symbol: selectedSymbol.value,
@@ -236,18 +232,6 @@ function formatAtrDistance(value: number | null | undefined) {
 
 function formatHash(value: string | null | undefined) {
   return value ? `${value.slice(0, 12)}…${value.slice(-6)}` : '—'
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null
-}
-
-function readModelTradingDate(readModel: FrontendReadModel): string | null {
-  const report = asRecord(readModel.technical_report)
-  const value = report?.trading_date
-  return typeof value === 'string' && value.trim() ? value.trim() : null
 }
 
 function setLayer(key: LayerKey) {
@@ -334,7 +318,8 @@ async function loadEvidence() {
 async function loadOptionsEvidence(targetTradingDate = dataset.value?.trading_date ?? null): Promise<void> {
   optionsLoading.value = true
   optionsError.value = ''
-  optionsReadModel.value = null
+  optionsPayload.value = null
+  optionsAlignment.value = null
   optionsSourceRun.value = null
   const targetDate = targetTradingDate?.trim() || null
   try {
@@ -342,38 +327,20 @@ async function loadOptionsEvidence(targetTradingDate = dataset.value?.trading_da
       optionsError.value = '当前股票证据没有锁定交易日，未展示期权快照。'
       return
     }
-    const runs = await api.listRuns()
-    const readableRuns = runs
-      .filter((run) => Boolean(run.snapshot_id) && ['succeeded', 'partial', 'mixed'].includes(run.status))
-      .sort((left, right) => {
-        const leftTime = Date.parse(left.cutoff_time)
-        const rightTime = Date.parse(right.cutoff_time)
-        return (Number.isFinite(rightTime) ? rightTime : 0) - (Number.isFinite(leftTime) ? leftTime : 0)
-      })
-    const candidateRuns = [
-      ...readableRuns.filter((run) => run.run_type === 'post_close_review'),
-      ...readableRuns.filter((run) => run.run_type !== 'post_close_review'),
-    ]
-    let readFailure: unknown = null
-    let inspectedReadModel = false
-    for (const sourceRun of candidateRuns) {
-      if (!sourceRun.snapshot_id) continue
-      try {
-        const readModel = await api.getFrontendReadModel(sourceRun.snapshot_id)
-        inspectedReadModel = true
-        if (readModelTradingDate(readModel) !== targetDate) continue
-        optionsSourceRun.value = sourceRun
-        optionsReadModel.value = readModel
-        return
-      } catch (reason) {
-        readFailure = reason
+    const response = await api.getObservationOptions(targetDate, selectedSymbol.value)
+    optionsPayload.value = response.options
+    optionsAlignment.value = response.alignment
+    if (response.run_id) {
+      optionsSourceRun.value = {
+        run_type: 'observation_run',
+        cutoff_time: response.cutoff_time,
       }
     }
-    if (readFailure && !inspectedReadModel) throw readFailure
-    optionsError.value = `没有找到 ${targetDate} 对应的 post-close 期权快照，未展示其他交易日数据。`
+    if (!response.available && response.message) optionsError.value = response.message
   } catch (reason) {
     optionsError.value = reason instanceof Error ? reason.message : '期权快照读取失败。'
-    optionsReadModel.value = null
+    optionsPayload.value = null
+    optionsAlignment.value = null
     optionsSourceRun.value = null
   } finally {
     optionsLoading.value = false

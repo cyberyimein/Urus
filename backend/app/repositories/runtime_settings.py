@@ -23,9 +23,11 @@ def environment_payload(settings: Settings) -> dict[str, Any]:
                 # Tail collection is a hard data-only boundary.
                 "skip_ai_decision": True,
             },
-            "post_close_review": {
+            "post_close_observation": {
                 "enabled": settings.scheduled_post_close_enabled,
-                "skip_ai_decision": settings.scheduled_post_close_skip_ai_decision,
+                # Observation Run is deterministic-only; post_close_review is
+                # reserved for the separate AI review session.
+                "skip_ai_decision": True,
             },
         },
         "models": {
@@ -50,8 +52,8 @@ def apply_payload(settings: Settings, payload: dict[str, Any]) -> None:
     settings.scheduled_pre_market_skip_ai_decision = schedule.pre_market.skip_ai_decision
     settings.scheduled_pre_close_enabled = schedule.pre_close.enabled
     settings.scheduled_pre_close_skip_ai_decision = True
-    settings.scheduled_post_close_enabled = schedule.post_close_review.enabled
-    settings.scheduled_post_close_skip_ai_decision = schedule.post_close_review.skip_ai_decision
+    settings.scheduled_post_close_enabled = schedule.post_close_observation.enabled
+    settings.scheduled_post_close_skip_ai_decision = True
     if isinstance(models, dict):
         if isinstance(models.get("ai_decision_model"), str):
             settings.urus_agent_model = models["ai_decision_model"]

@@ -83,6 +83,7 @@ export interface DailyDecisionDataset {
     scope_version?: number | null
     symbols: string[]
     benchmark_symbols: string[]
+    auxiliary_symbols?: string[]
     trading_date: string
   }
   bar_manifest: DailyBarManifest[]

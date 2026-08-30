@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -18,12 +19,14 @@ from app.schemas.observation import (
     ObservationGroupResponse,
     ObservationGroupSyncResponse,
     ObservationRunCreateRequest,
+    ObservationOptionsResponse,
     ObservationRunResponse,
     ObservationRunGroupSnapshotResponse,
 )
 from app.services.observation import ObservationGroupSyncService, ObservationRunService
 from app.services.history_quota import HistoryAdmission
 from app.services.market_data_collection import MoomooCollectionCoordinator
+from app.services.options_collection import OptionsCollectionService
 from app.repositories.universe import InstrumentUniverseRepository
 
 
@@ -157,15 +160,21 @@ def create_observation_run(
         else None
     )
     adapter = None
+    options_adapter = None
     try:
         adapter = _market_adapter(
             settings,
             history_admission=history_admission,
             rate_limiter=collection_coordinator,
         )
+        options_adapter = OptionsCollectionService.build_adapter(
+            settings,
+            rate_limiter=collection_coordinator,
+        )
         result = ObservationRunService(db, settings).create_run(
             payload,
             bar_source=adapter,
+            options_source=options_adapter,
             history_admission=history_admission,
             universe_sync=universe_sync,
         )
@@ -179,7 +188,23 @@ def create_observation_run(
                 db.rollback()
         if adapter is not None:
             adapter.close()
+        if options_adapter is not None:
+            options_adapter.close()
     return ObservationRunResponse(**result)
+
+
+@router.get("/options", response_model=ObservationOptionsResponse)
+def get_observation_options(
+    trading_date: date = Query(...),
+    symbol: str | None = Query(default=None, min_length=1, max_length=32),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> ObservationOptionsResponse:
+    result = ObservationRunService(db, settings).get_options(
+        trading_date,
+        symbol=symbol,
+    )
+    return ObservationOptionsResponse(**result)
 
 
 @router.get("/runs", response_model=list[ObservationRunResponse])

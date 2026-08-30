@@ -2,6 +2,7 @@ import type {
   FrontendReadModel,
   HealthResponse,
   ManualAnalysisCreateResponse,
+  ObservationOptionsResponse,
   RunCreateResponse,
   RunDetail,
   RunListItem,
@@ -222,6 +223,11 @@ export const api = {
   }),
   listObservationRuns: (limit = 30) =>
     request<ObservationRun[]>(`/observation/runs?limit=${encodeURIComponent(String(limit))}`),
+  getObservationOptions: (tradingDate: string, symbol?: string) => {
+    const params = new URLSearchParams({ trading_date: tradingDate })
+    if (symbol) params.set('symbol', symbol)
+    return request<ObservationOptionsResponse>(`/observation/options?${params.toString()}`)
+  },
   getObservationRun: (runId: string) =>
     request<ObservationRun>(`/observation/runs/${encodeURIComponent(runId)}`),
   listIndicatorCatalog: () =>

@@ -146,6 +146,7 @@ common+=(
     --env "DATABASE_URL=sqlite:////data/urus.db"
     --env "MOOMOO_SDK_HOME=/data/moomoo_home"
     --env "URUS_SCHEDULER_DATA_DIR=/data/scheduled_collection"
+    --env "MOOMOO_COLLECTION_LOCK_PATH=/data/moomoo_collection.lock"
     --volume "$data_dir:/data"
 )
 

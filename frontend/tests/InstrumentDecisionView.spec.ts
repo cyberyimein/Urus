@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
 import InstrumentDecisionView from '@/views/InstrumentDecisionView.vue'
 import { router } from '@/router'
-import type { FrontendReadModel, ObservationGroup } from '@/types/api'
+import type { ObservationGroup } from '@/types/api'
 
 afterEach(() => vi.restoreAllMocks())
 
@@ -168,19 +168,12 @@ describe('InstrumentDecisionView', () => {
   it('renders the selected stock option structure and post-close flags inside the stock page', async () => {
     vi.spyOn(api, 'createDailyDataset').mockRejectedValue(new Error('backend offline'))
     vi.spyOn(api, 'listObservationGroups').mockResolvedValue([])
-    vi.spyOn(api, 'listRuns').mockResolvedValue([
-      {
-        id: 'post-close-1',
-        run_type: 'post_close_review',
-        status: 'succeeded',
-        started_at: '2026-08-22T05:30:00Z',
-        completed_at: '2026-08-22T05:31:00Z',
-        cutoff_time: '2026-08-22T05:30:00Z',
-        snapshot_id: 'snapshot-1',
-        error_message: null,
-      },
-    ])
-    vi.spyOn(api, 'getFrontendReadModel').mockResolvedValue({
+    vi.spyOn(api, 'getObservationOptions').mockResolvedValue({
+      run_id: 'observation-1',
+      status: 'available',
+      trading_date: '2026-08-21',
+      cutoff_time: '2026-08-22T05:30:00Z',
+      available: true,
       options: {
         is_mock: false,
         status: 'available',
@@ -231,10 +224,7 @@ describe('InstrumentDecisionView', () => {
         warnings: [],
         note: '',
       },
-      technical_report: {
-        trading_date: '2026-08-21',
-        options: {
-          post_close_alignment: {
+      alignment: {
             available: true,
             status: 'flagged',
             source_phase: 'post_close_review',
@@ -277,9 +267,8 @@ describe('InstrumentDecisionView', () => {
             unavailable_symbols: [],
             warnings: [],
           },
-        },
-      },
-    } as unknown as FrontendReadModel)
+      message: null,
+    })
 
     await router.push('/')
     await router.isReady()
@@ -309,21 +298,22 @@ describe('InstrumentDecisionView', () => {
   it('does not bind an options snapshot from another trading date', async () => {
     vi.spyOn(api, 'createDailyDataset').mockRejectedValue(new Error('backend offline'))
     vi.spyOn(api, 'listObservationGroups').mockResolvedValue([])
-    vi.spyOn(api, 'listRuns').mockResolvedValue([
-      {
-        id: 'future-post-close-1',
-        run_type: 'post_close_review',
-        status: 'succeeded',
-        started_at: '2026-08-22T05:30:00Z',
-        completed_at: '2026-08-22T05:31:00Z',
-        cutoff_time: '2026-08-22T05:30:00Z',
-        snapshot_id: 'future-snapshot-1',
-        error_message: null,
+    const getObservationOptions = vi.spyOn(api, 'getObservationOptions').mockResolvedValue({
+      run_id: null,
+      status: 'unavailable',
+      trading_date: '2026-08-21',
+      cutoff_time: null,
+      available: false,
+      options: {
+        is_mock: true,
+        status: 'not_collected',
+        available: false,
+        data_state: 'placeholder',
+        note: 'fixture',
       },
-    ])
-    const getReadModel = vi.spyOn(api, 'getFrontendReadModel').mockResolvedValue({
-      technical_report: { trading_date: '2026-08-22' },
-    } as unknown as FrontendReadModel)
+      alignment: null,
+      message: '没有找到 2026-08-21 对应的盘后观察期权快照。',
+    })
 
     await router.push('/')
     await router.isReady()
@@ -339,8 +329,8 @@ describe('InstrumentDecisionView', () => {
     })
     await flushPromises()
 
-    expect(getReadModel).toHaveBeenCalledWith('future-snapshot-1')
+    expect(getObservationOptions).toHaveBeenCalledWith('2026-08-21', 'INTC')
     expect(wrapper.find('.instrument-options-error').exists()).toBe(true)
-    expect(wrapper.text()).toContain('没有找到 2026-08-21 对应的 post-close 期权快照')
+    expect(wrapper.text()).toContain('没有找到 2026-08-21 对应的盘后观察期权快照')
   })
 })

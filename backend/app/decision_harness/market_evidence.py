@@ -48,6 +48,7 @@ class DailyMarketEvidenceService:
         scope_id: str,
         symbols: Iterable[str],
         benchmark_symbols: Iterable[str] = (),
+        auxiliary_symbols: Iterable[str] = (),
         scope_version: int | None = None,
         trading_date: date | None = None,
         cutoff_time: datetime | None = None,
@@ -64,7 +65,9 @@ class DailyMarketEvidenceService:
         if not requested_symbols:
             raise ValueError("至少需要一个 symbol")
         benchmarks = list(dict.fromkeys(normalise_symbol(item) for item in benchmark_symbols))
-        all_symbols = list(dict.fromkeys(requested_symbols + benchmarks))
+        auxiliary = list(dict.fromkeys(normalise_symbol(item) for item in auxiliary_symbols))
+        primary_symbols = list(dict.fromkeys(requested_symbols + benchmarks))
+        all_symbols = list(dict.fromkeys(primary_symbols + auxiliary))
         latest_completed = latest_completed_session_date(cutoff, self.calendar_name)
         target_date = trading_date or latest_completed
         if target_date > latest_completed:
@@ -85,7 +88,11 @@ class DailyMarketEvidenceService:
         collection = {"status": "not_requested", "fetched_symbols": [], "warnings": []}
         if bar_source is not None:
             collection = self.refresh_missing_bars(
-                all_symbols,
+                # Auxiliary symbols, currently option underlyings, may be
+                # included when already cached for provenance. They must not
+                # trigger a live daily-history request because options do not
+                # consume the historical distinct-symbol quota.
+                primary_symbols,
                 through_date=target_date,
                 cutoff_time=cutoff,
                 source_adapter=bar_source,
@@ -95,18 +102,23 @@ class DailyMarketEvidenceService:
             grouped,
             requested_symbols=requested_symbols,
             benchmark_symbols=benchmarks,
+            auxiliary_symbols=auxiliary,
             target_date=target_date,
         )
         if collection["warnings"]:
             quality["warnings"].extend(str(item) for item in collection["warnings"])
         quality["collection"] = collection
-        overall_status = self._overall_status(quality)
+        # ``quality.status`` is calculated from requested/benchmark symbols.
+        # Auxiliary symbols (currently option underlyings) are provenance
+        # inputs and must not downgrade the primary stock evidence contract.
+        overall_status = str(quality.get("status") or self._overall_status(quality))
         scope = {
             "scope_type": scope_type,
             "scope_id": scope_id,
             "scope_version": scope_version,
             "symbols": requested_symbols,
             "benchmark_symbols": benchmarks,
+            "auxiliary_symbols": auxiliary,
             "trading_date": target_date.isoformat(),
         }
         payload_without_id = {
@@ -281,13 +293,14 @@ class DailyMarketEvidenceService:
         *,
         requested_symbols: list[str],
         benchmark_symbols: list[str],
+        auxiliary_symbols: list[str],
         target_date: date,
     ) -> tuple[dict[str, Any], list[dict[str, Any]], list[str], dict[str, dict[str, Any]]]:
         quality_symbols: dict[str, dict[str, Any]] = {}
         manifests: list[dict[str, Any]] = []
         indicator_ids: list[str] = []
         chart_instruments: dict[str, dict[str, Any]] = {}
-        for symbol in list(dict.fromkeys(requested_symbols + benchmark_symbols)):
+        for symbol in list(dict.fromkeys(requested_symbols + benchmark_symbols + auxiliary_symbols)):
             models = grouped.get(symbol, [])
             bars = [compact_bar(item) for item in models]
             status, warnings = self._bar_quality(bars, target_date)
@@ -299,6 +312,7 @@ class DailyMarketEvidenceService:
                 "input_bar_hash": bar_hash,
                 "warnings": warnings,
                 "is_benchmark": symbol in benchmark_symbols,
+                "is_auxiliary": symbol in auxiliary_symbols,
             }
             manifests.append(
                 {
@@ -349,8 +363,17 @@ class DailyMarketEvidenceService:
                     "indicator_snapshot_id": None,
                     "quality": quality_symbols[symbol],
                 }
+        primary_symbols = list(dict.fromkeys(requested_symbols + benchmark_symbols))
+        primary_quality_symbols = {
+            symbol: quality_symbols[symbol]
+            for symbol in primary_symbols
+            if symbol in quality_symbols
+        }
         quality = {
-            "status": self._overall_status({"symbols": quality_symbols}),
+            # Auxiliary symbols (currently option underlyings) are collected
+            # to provide close-price provenance, but their absence must not
+            # downgrade the stock/benchmark evidence contract.
+            "status": self._overall_status({"symbols": primary_quality_symbols}),
             "symbols": quality_symbols,
             "requested_symbol_count": len(requested_symbols),
             "available_symbol_count": sum(
@@ -358,17 +381,25 @@ class DailyMarketEvidenceService:
                 for symbol, item in quality_symbols.items()
                 if symbol in requested_symbols
             ),
+            "auxiliary_symbol_count": len(auxiliary_symbols),
+            "available_auxiliary_symbol_count": sum(
+                quality_symbols[symbol]["status"] in {"ok", "partial", "stale"}
+                for symbol in auxiliary_symbols
+                if symbol in quality_symbols
+            ),
             "errors": [
                 f"{symbol}: {warning}"
                 for symbol, item in quality_symbols.items()
                 for warning in item["warnings"]
-                if item["status"] in {"missing", "conflicted"}
+                if symbol in primary_quality_symbols
+                and item["status"] in {"missing", "conflicted"}
             ],
             "warnings": [
                 f"{symbol}: {warning}"
                 for symbol, item in quality_symbols.items()
                 for warning in item["warnings"]
-                if item["status"] not in {"missing", "conflicted"}
+                if symbol in primary_quality_symbols
+                and item["status"] not in {"missing", "conflicted"}
             ],
         }
         return quality, manifests, indicator_ids, chart_instruments

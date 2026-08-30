@@ -246,6 +246,63 @@ def test_daily_evidence_freezes_indicators_and_chart_projection_idempotently() -
         assert session.scalar(select(func.count()).select_from(DeterministicSynthesisModel)) == 1
 
 
+def test_auxiliary_symbols_do_not_downgrade_primary_dataset_quality() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    cutoff = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
+    session_dates = completed_session_dates(cutoff, "XNYS", count=20)
+
+    with Session(engine) as session:
+        DailyEvidenceRepository(session).upsert_bars(
+            _fixture_bars("INTC", session_dates, 20.0),
+            source="fixture",
+            collected_at=cutoff,
+        )
+
+        result = _service(session, minimum_history_bars=20).freeze(
+            scope_type="observation_run",
+            scope_id="observation-1",
+            symbols=["INTC"],
+            auxiliary_symbols=["QQQ"],
+            trading_date=session_dates[-1],
+            cutoff_time=cutoff,
+        )
+
+        assert result["dataset"]["status"] == "ok"
+        assert result["dataset"]["quality"]["status"] == "ok"
+        assert result["dataset"]["quality"]["symbols"]["QQQ"]["status"] == "missing"
+        assert result["dataset"]["quality"]["available_auxiliary_symbol_count"] == 0
+
+
+def test_auxiliary_symbols_are_not_refreshed_through_history_source() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    cutoff = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
+    session_dates = completed_session_dates(cutoff, "XNYS", count=20)
+    adapter = FakeDailyBarAdapter(_fixture_bars("QQQ", session_dates, 300.0))
+
+    with Session(engine) as session:
+        DailyEvidenceRepository(session).upsert_bars(
+            _fixture_bars("INTC", session_dates, 20.0),
+            source="fixture",
+            collected_at=cutoff,
+        )
+
+        result = _service(session, minimum_history_bars=20).freeze(
+            scope_type="observation_run",
+            scope_id="observation-auxiliary-cache-only",
+            symbols=["INTC"],
+            auxiliary_symbols=["QQQ"],
+            trading_date=session_dates[-1],
+            cutoff_time=cutoff,
+            bar_source=adapter,
+        )
+
+        assert adapter.calls == []
+        assert result["dataset"]["quality"]["collection"]["status"] == "cache_hit"
+        assert result["chart"]["instruments"]["QQQ"]["quality"]["status"] == "missing"
+
+
 def test_daily_evidence_does_not_use_bar_revisions_collected_after_cutoff() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
     Base.metadata.create_all(engine)

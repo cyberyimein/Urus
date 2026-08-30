@@ -19,7 +19,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     DATABASE_URL=sqlite:////data/urus.db \
     WORKFLOW_PROCESS_ISOLATION=true \
     MOOMOO_SDK_HOME=/data/moomoo_home \
-    URUS_SCHEDULER_DATA_DIR=/data/scheduled_collection
+    URUS_SCHEDULER_DATA_DIR=/data/scheduled_collection \
+    MOOMOO_COLLECTION_LOCK_PATH=/data/moomoo_collection.lock
 
 WORKDIR /app
 RUN mkdir -p /data && pip install --no-cache-dir uv==0.8.4

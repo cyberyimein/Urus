@@ -1,3 +1,5 @@
+import type { PostCloseOptionAlignment } from '@/types/research'
+
 export type RunType = 'pre_market' | 'pre_close' | 'post_close_review' | 'manual_analysis'
 export type RunStatus = 'pending' | 'running' | 'succeeded' | 'mixed' | 'partial' | 'failed'
 export type StepStatus = 'pending' | 'running' | 'succeeded' | 'placeholder' | 'unavailable' | 'skipped' | 'failed'
@@ -136,6 +138,9 @@ export interface ObservationRun {
   group_ids: string[]
   group_version_ids: string[]
   group_snapshots: Array<Record<string, any>>
+  options?: OptionsData
+  options_alignment?: PostCloseOptionAlignment | null
+  options_collection?: Record<string, any>
   report?: ObservationReport
   group_count: number
   successful_group_count?: number
@@ -173,6 +178,17 @@ export interface ObservationReport {
     state_transitions: Array<Record<string, any>>
   }
   content_sha256: string
+}
+
+export interface ObservationOptionsResponse {
+  run_id: string | null
+  status: string
+  trading_date: string
+  cutoff_time: string | null
+  available: boolean
+  options: OptionsData
+  alignment: PostCloseOptionAlignment | null
+  message: string | null
 }
 
 export interface RunListItem {

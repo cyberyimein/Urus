@@ -345,6 +345,22 @@ class ObservationRepository:
             )
         )
 
+    def latest_completed_run(self, trading_date: date) -> ObservationRunModel | None:
+        """Return the latest usable Observation Run for one trading date."""
+
+        return self.session.scalar(
+            select(ObservationRunModel)
+            .where(
+                ObservationRunModel.trading_date == trading_date,
+                ObservationRunModel.status.in_(("succeeded", "mixed", "partial")),
+            )
+            .order_by(
+                ObservationRunModel.completed_at.desc(),
+                ObservationRunModel.created_at.desc(),
+            )
+            .limit(1)
+        )
+
     def create_run(
         self,
         *,
@@ -478,6 +494,9 @@ class ObservationRepository:
             "group_version_ids": list(model.group_version_ids or []),
             "group_snapshots": list(payload.get("group_snapshots") or []),
             "report": dict(payload.get("report") or {}),
+            "options": dict(payload.get("options") or {}),
+            "options_alignment": payload.get("options_alignment"),
+            "options_collection": dict(payload.get("options_collection") or {}),
             "group_count": len(model.group_ids or []),
             "successful_group_count": int(payload.get("successful_group_count", len(payload.get("group_snapshots") or []))),
             "failed_group_count": int(payload.get("failed_group_count", 0)),

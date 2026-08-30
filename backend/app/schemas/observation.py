@@ -143,6 +143,9 @@ class ObservationRunResponse(BaseModel):
     group_version_ids: list[str]
     group_snapshots: list[dict[str, Any]] = Field(default_factory=list)
     report: dict[str, Any] = Field(default_factory=dict)
+    options: dict[str, Any] = Field(default_factory=dict)
+    options_alignment: dict[str, Any] | None = None
+    options_collection: dict[str, Any] = Field(default_factory=dict)
     group_count: int
     successful_group_count: int = 0
     failed_group_count: int = 0
@@ -150,3 +153,16 @@ class ObservationRunResponse(BaseModel):
     created_at: datetime
     completed_at: datetime | None = None
     error_message: str | None = None
+
+
+class ObservationOptionsResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str | None = None
+    status: str
+    trading_date: date
+    cutoff_time: datetime | None = None
+    available: bool = False
+    options: dict[str, Any] = Field(default_factory=dict)
+    alignment: dict[str, Any] | None = None
+    message: str | None = None

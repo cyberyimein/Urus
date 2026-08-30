@@ -340,7 +340,7 @@ function signedCompact(value: number | null | undefined): string {
 
     <div v-if="loading" class="instrument-options-empty">
       <strong>正在读取最近的期权快照…</strong>
-      <span>优先读取收盘后复盘数据，等待快照完成后再显示结构标记。</span>
+      <span>读取当前交易日的盘后观察任务，等待快照完成后再显示结构标记。</span>
     </div>
     <div v-else-if="error" class="instrument-options-empty instrument-options-error">
       <strong>期权快照读取失败</strong>

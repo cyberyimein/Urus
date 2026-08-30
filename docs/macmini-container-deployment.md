@@ -49,6 +49,7 @@ DATABASE_FILE=backend/urus.db
 
 - `urus.db`：运行、冻结数据集、技术报告、AI 报告/trace、运行设置和 Universe 版本；
 - `moomoo_home/`：Moomoo SDK 运行目录；
+- `moomoo_collection.lock`：跨进程、跨容器重启保留 OpenD 限频时间戳的锁文件；
 - `scheduled_collection/`：调度日志、去重状态和进程锁。
 
 删除或升级容器不会删除这些文件。部署脚本重新挂载同一目录，Alembic 只对外部数据库执行向前迁移。

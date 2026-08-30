@@ -10,8 +10,10 @@ from app.models.observation import GroupDailySnapshotModel
 from app.repositories.daily_evidence import DailyEvidenceRepository
 from app.repositories.observation import ObservationUniverseRevisionRepository
 from app.repositories.universe import InstrumentUniverseRepository
+from app.schemas.observation import ObservationRunCreateRequest
 from app.schemas.universe import InstrumentConfig
 from app.services.capital_flow import completed_session_dates
+from app.services.observation import ObservationRunService
 
 
 def _bars(symbol: str, dates, start: float, slope: float = 0.25):
@@ -230,6 +232,193 @@ def test_observation_group_version_and_run_are_idempotent(client) -> None:
     scheduled_second = client.post("/api/observation/runs", json=scheduled_payload)
     assert scheduled_second.status_code == 201
     assert scheduled_second.json()["run_id"] == scheduled_first.json()["run_id"]
+
+
+def test_observation_run_persists_options_and_close_alignment(client, monkeypatch) -> None:
+    cutoff = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
+    session_dates = completed_session_dates(cutoff, "XNYS", count=260)
+    with client.app.state.session_factory() as session:
+        DailyEvidenceRepository(session).upsert_bars(
+            _bars("QQQ", session_dates, 20.0),
+            source="fixture",
+            collected_at=cutoff,
+        )
+        session.commit()
+
+    created = client.post(
+        "/api/observation/groups",
+        json={
+            "group_id": "options-observation-group",
+            "display_name": "期权观察测试组",
+            "symbols": ["QQQ"],
+        },
+    )
+    assert created.status_code == 201, created.text
+    close = 20.0 + 259 * 0.25
+
+    class OptionsAdapter:
+        def options_snapshot(self, symbols: list[str] | None = None) -> dict[str, object]:
+            return {
+                "is_mock": False,
+                "status": "available",
+                "available": True,
+                "provider": "test-options",
+                "source_mode": "snapshot",
+                "captured_at": cutoff.isoformat(),
+                "requested_symbols": symbols or [],
+                "unavailable_symbols": [],
+                "symbols": [
+                    {
+                        "symbol": "QQQ",
+                        "spot": close,
+                        "spot_time": cutoff.isoformat(),
+                        "overview": {},
+                        "expirations": [
+                            {
+                                "expiration": "2026-08-21",
+                                "days_to_expiry": 0,
+                                "contract_count": 1,
+                                "max_pain": close,
+                                "expected_move": {
+                                    "amount": 1.0,
+                                    "percent": 1.0,
+                                    "atm_strike": close,
+                                },
+                                "exposure": {
+                                    "totals": {},
+                                    "walls": {
+                                        "net_dex": {"strike": close, "exposure": 100.0}
+                                    },
+                                    "by_strike": [],
+                                    "gamma_zones": [],
+                                    "gamma_noise_threshold": 0.0,
+                                    "usable_delta_contracts": 1,
+                                    "usable_gamma_contracts": 1,
+                                },
+                            }
+                        ],
+                    }
+                ],
+                "subscription_quota": {},
+                "model_assumptions": [],
+                "warnings": [],
+                "note": "fixture",
+            }
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "app.api.observation.OptionsCollectionService.build_adapter",
+        lambda settings, **kwargs: OptionsAdapter(),
+    )
+
+    response = client.post(
+        "/api/observation/runs",
+        json={
+            "group_ids": ["options-observation-group"],
+            "trading_date": session_dates[-1].isoformat(),
+            "cutoff_time": cutoff.isoformat(),
+            "request_intent_id": "options-observation-1",
+        },
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["options"]["symbols"][0]["symbol"] == "QQQ"
+    assert body["options_alignment"]["source_phase"] == "post_close_observation"
+    assert body["options_alignment"]["status"] == "flagged"
+    assert body["options_alignment"]["flagged_symbols"] == ["QQQ"]
+
+    selected = client.get(
+        "/api/observation/options",
+        params={"trading_date": session_dates[-1].isoformat(), "symbol": "QQQ"},
+    )
+    assert selected.status_code == 200, selected.text
+    selected_body = selected.json()
+    assert selected_body["run_id"] == body["run_id"]
+    assert selected_body["available"] is True
+    assert selected_body["options"]["requested_symbols"] == ["QQQ"]
+    assert selected_body["alignment"]["flagged_symbols"] == ["QQQ"]
+
+
+def test_observation_run_keeps_option_symbols_out_of_history_quota(client) -> None:
+    cutoff = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
+    session_dates = completed_session_dates(cutoff, "XNYS", count=260)
+    with client.app.state.session_factory() as session:
+        DailyEvidenceRepository(session).upsert_bars(
+            _bars("INTC", session_dates, 20.0),
+            source="fixture",
+            collected_at=cutoff,
+        )
+        session.commit()
+
+    created = client.post(
+        "/api/observation/groups",
+        json={
+            "group_id": "option-quota-isolation",
+            "display_name": "期权额度隔离测试组",
+            "symbols": ["INTC"],
+        },
+    )
+    assert created.status_code == 201, created.text
+
+    settings = client.app.state.settings
+    settings.options_target_symbols = "OPTION_ONLY"
+    settings.options_watchlist_symbols = ""
+    settings.enabled_symbols = ""
+
+    class RecordingHistoryAdmission:
+        def __init__(self) -> None:
+            self.prepared: list[list[str]] = []
+
+        def bind_quota_reader(self, reader) -> None:
+            self.quota_reader = reader
+
+        def prepare_symbols(self, symbols, *, now=None):
+            del now
+            self.prepared.append(list(symbols))
+
+    class RecordingBarSource:
+        def __init__(self) -> None:
+            self.calls: list[list[str]] = []
+
+        def quota_snapshot(self) -> dict[str, object]:
+            return {"available": True, "used": 0, "remain": 100, "total": 100}
+
+        def instrument_cards(self, symbols: list[str]) -> dict[str, object]:
+            self.calls.append(list(symbols))
+            return {"_persistence": {"symbols": []}}
+
+    admission = RecordingHistoryAdmission()
+    bar_source = RecordingBarSource()
+    with client.app.state.session_factory() as session:
+        result = ObservationRunService(session, settings).create_run(
+            ObservationRunCreateRequest(
+                group_ids=["option-quota-isolation"],
+                trading_date=session_dates[-1],
+                cutoff_time=cutoff,
+                request_intent_id="option-quota-isolation-1",
+            ),
+            bar_source=bar_source,
+            history_admission=admission,
+        )
+
+    assert admission.prepared == [["INTC"]]
+    assert bar_source.calls == []
+    assert result["options_alignment"]["status"] == "unavailable"
+
+
+def test_observation_options_reports_missing_trading_date_without_falling_back(client) -> None:
+    response = client.get(
+        "/api/observation/options",
+        params={"trading_date": "2026-08-21", "symbol": "QQQ"},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["run_id"] is None
+    assert body["available"] is False
+    assert "2026-08-21" in body["message"]
 
 
 def test_observation_group_updates_require_the_current_version(client) -> None:

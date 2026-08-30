@@ -1016,7 +1016,7 @@ Phase C 只实现确定性投影和 AI 按钮占位。按钮必须显示“尚�
 
 计划时间必须基于目标市场交易日历、`market_timezone`、正式收盘时间和可配置的数据到齐缓冲，而不是简单按服务器本地日期运行。
 调度器必须持有任务级互斥锁，同一交易日同一 slot 不能并发执行；进程重启后从已保存 stage 恢复或幂等重跑。
-`--once post_close_review` 仅用于人工联调和补跑，仍执行相同的 sync、冻结、质量和报告链路，不能走旁路。
+`--once post_close_observation` 仅用于人工联调和补跑，仍执行相同的 sync、股票与期权冻结、质量和报告链路，不能走旁路；`post_close_review` 仅表示独立的 AI 复盘阶段。
 
 确定性报告至少回答：
 
@@ -1797,7 +1797,7 @@ Group Momentum Map、Breadth Delta 和状态转换，前端只渲染冻结结果
 5. **C5 API 与前端投影**：完成组同步/查询、运行创建/历史/详情、报告读取；组页、总览、指标页和策略页只渲染冻结快照，并可
    下钻到 Evidence Reference。
 6. **C6 调度与本地运维**：唯一常驻入口使用 `scripts/schedule_market_data_collection.py`；盘后槽位先 sync 再 run，支持
-   `--once post_close_review`、时区/交易日校验、幂等重跑和结构化日志。
+   `--once post_close_observation`、时区/交易日校验、股票与期权一起冻结、幂等重跑和结构化日志。
 7. **C7 真实联调与交付证据**：使用部署实例实时返回的关注列表完成一次本地盘后运行，保存命令、脱敏配置、实际 symbol/group
    数、run ID、report hash、运行状态和关键 API 响应；不得把当次 symbol 清单或数量固化为产品规则。
 
@@ -1831,7 +1831,7 @@ uv run alembic upgrade head
 uv run python scripts/schedule_market_data_collection.py \
   --api-base-url http://127.0.0.1:8000/api \
   --backend-managed-externally \
-  --once post_close_review
+  --once post_close_observation
 ```
 
 验收人随后检查 `/api/settings/universe`、`/api/observation/groups`、运行详情和最新报告：来源应为配置的部署实例，成员数与本次

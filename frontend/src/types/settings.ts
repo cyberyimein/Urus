@@ -6,7 +6,7 @@ export interface ScheduleSlotSettings {
 export interface ScheduleSettings {
   pre_market: ScheduleSlotSettings
   pre_close: ScheduleSlotSettings
-  post_close_review: ScheduleSlotSettings
+  post_close_observation: ScheduleSlotSettings
 }
 
 export interface RuntimeModelSettings {

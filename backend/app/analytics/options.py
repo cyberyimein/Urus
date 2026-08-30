@@ -393,6 +393,7 @@ def build_post_close_option_alignment(
     close_quotes: dict[str, dict[str, object]] | None,
     *,
     proximity_percent: float = POST_CLOSE_LEVEL_PROXIMITY_PERCENT,
+    source_phase: str = "post_close_review",
 ) -> dict[str, object]:
     """Compare official post-close prices with option levels.
 
@@ -519,7 +520,7 @@ def build_post_close_option_alignment(
         )
 
     if not symbols:
-        warnings.append("post_close_review 没有可用于对照的期权标的。")
+        warnings.append("当前盘后观察没有可用于对照的期权标的。")
     usable_symbols = [item for item in symbols if item["status"] != "unavailable"]
     unavailable_symbols = [str(item["symbol"]) for item in symbols if item["status"] == "unavailable"]
     flagged_symbols = [str(item["symbol"]) for item in symbols if item["flagged"] is True]
@@ -541,7 +542,7 @@ def build_post_close_option_alignment(
     return {
         "available": bool(usable_symbols),
         "status": status,
-        "source_phase": "post_close_review",
+        "source_phase": source_phase,
         "method": "regular_close_vs_max_pain_and_dex_walls",
         "proximity_percent": round(threshold, 4),
         "price_definition": "正式对照仅使用官方 regular_price；last_price fallback 仅作参考，不参与命中标记。",

@@ -21,11 +21,6 @@ from app.integrations.decision import MockDecisionAdapter, UrusDecisionAdapter
 from app.integrations.fred import FredDailyAdapter
 from app.integrations.macro import FallbackDailyMacroAdapter
 from app.integrations.moomoo import DisabledMoomooAdapter, OpenDMarketAdapter
-from app.integrations.moomoo_options import (
-    DisabledOptionsAdapter,
-    MoomooOptionsAdapter,
-    OptionsCollectorAdapter,
-)
 from app.integrations.yahoo import YahooDailyAdapter
 from app.models import RunModel, RunStatus, StepStatus
 from app.repositories import EventRepository, InstrumentUniverseRepository, RunRepository
@@ -70,6 +65,7 @@ from app.workflows.cta import build_systematic_flows
 from app.services.capital_flow import CapitalFlowService
 from app.services.history_quota import HistoryAdmission
 from app.services.market_data_collection import MoomooCollectionCoordinator
+from app.services.options_collection import OptionsCollectionService
 
 logger = logging.getLogger(__name__)
 
@@ -981,26 +977,10 @@ class RunService:
         target_symbols: list[str] | None = None,
         *,
         rate_limiter: object | None = None,
-    ) -> OptionsCollectorAdapter:
-        if not self.settings.moomoo_enabled:
-            return DisabledOptionsAdapter()
-        target_symbols = target_symbols if target_symbols is not None else self.settings.options_collection_symbol_list
-        if not target_symbols:
-            return DisabledOptionsAdapter()
-        return MoomooOptionsAdapter(
-            host=self.settings.moomoo_host,
-            port=self.settings.moomoo_port,
-            symbols=target_symbols,
-            target_dtes=self.settings.options_target_dte_list,
-            max_dte=self.settings.options_max_dte,
-            strike_range_percent=self.settings.options_strike_range_percent,
-            batch_size=self.settings.options_snapshot_batch_size,
-            snapshot_interval_seconds=self.settings.options_snapshot_interval_seconds,
-            option_chain_interval_seconds=self.settings.options_chain_interval_seconds,
-            gamma_profile_range_percent=self.settings.options_gamma_profile_range_percent,
-            gamma_profile_points=self.settings.options_gamma_profile_points,
-            risk_free_rate_percent=self.settings.options_risk_free_rate_percent,
-            dividend_yield_percent=self.settings.options_dividend_yield_percent,
+    ):
+        return OptionsCollectionService.build_adapter(
+            self.settings,
+            target_symbols=target_symbols,
             rate_limiter=rate_limiter,
         )
 

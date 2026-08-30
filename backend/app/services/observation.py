@@ -11,6 +11,7 @@ from uuid import uuid4
 import httpx
 from sqlalchemy.exc import IntegrityError
 
+from app.analytics.options import build_post_close_option_alignment
 from app.core.time import as_utc, utc_now
 from app.core.errors import AppError
 from app.decision_harness.contracts import content_sha256
@@ -27,6 +28,7 @@ from app.schemas.observation import ObservationGroupCreateRequest
 from app.schemas.universe import UniverseResponse, UniverseUpdate
 from app.schemas.observation import ObservationRunCreateRequest
 from app.services.capital_flow import is_trading_session_date, latest_completed_session_date
+from app.services.options_collection import OptionsCollectionService
 
 
 logger = logging.getLogger(__name__)
@@ -269,12 +271,14 @@ class ObservationRunService:
         self.repository = ObservationRepository(session)
         self.universe_revisions = ObservationUniverseRevisionRepository(session)
         self.daily = DailyMarketEvidenceService(session, settings)
+        self.options = OptionsCollectionService()
 
     def create_run(
         self,
         request: ObservationRunCreateRequest,
         *,
         bar_source: Any | None = None,
+        options_source: Any | None = None,
         history_admission: Any | None = None,
         universe_sync: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -385,6 +389,7 @@ class ObservationRunService:
                     for symbol in list(group.benchmark_symbols or [])
                 )
             )
+            option_symbols = list(self.settings.options_collection_symbol_list)
             if history_admission is not None and bar_source is not None:
                 quota_reader = getattr(bar_source, "quota_snapshot", None)
                 if callable(quota_reader):
@@ -398,10 +403,26 @@ class ObservationRunService:
                 scope_id=run.id,
                 symbols=requested_symbols,
                 benchmark_symbols=benchmark_symbols,
+                auxiliary_symbols=option_symbols,
                 trading_date=trading_date,
                 cutoff_time=cutoff,
                 bar_source=bar_source,
             )
+            options_result = self.options.collect(options_source, option_symbols)
+            options_payload = dict(options_result.payload)
+            options_alignment = build_post_close_option_alignment(
+                options_payload,
+                self._regular_close_quotes(evidence, trading_date),
+                source_phase="post_close_observation",
+            )
+            options_collection = {
+                "status": options_result.status.value,
+                "data_state": options_result.data_state,
+                "summary": options_result.summary,
+                "error_message": options_result.error_message,
+                "requested_symbol_count": len(option_symbols),
+                "available_symbol_count": len(options_payload.get("symbols") or []),
+            }
             for group in selected:
                 try:
                     group_definition = self.groups.response(group)
@@ -471,11 +492,19 @@ class ObservationRunService:
             successful = [item for item in snapshots if item.get("status") != "failed"]
             failed = [item for item in snapshots if item.get("status") == "failed"]
             run_status = "succeeded" if not failed else "mixed" if successful else "failed"
+            if options_result.status.value in {"failed", "unavailable"} and run_status == "succeeded":
+                run_status = "mixed"
             run_error = "; ".join(
                 f"{item.get('group_id')}: {item.get('error_message')}"
                 for item in failed
                 if item.get("error_message")
-            ) or None
+            )
+            if options_result.error_message:
+                run_error = "; ".join(
+                    item
+                    for item in [run_error, f"options: {options_result.error_message}"]
+                    if item
+                ) or None
             report = build_observation_report(
                 run_id=run.id,
                 trading_date=trading_date.isoformat(),
@@ -502,6 +531,9 @@ class ObservationRunService:
                 "group_count": len(snapshots),
                 "successful_group_count": len(successful),
                 "failed_group_count": len(failed),
+                "options": options_payload,
+                "options_alignment": options_alignment,
+                "options_collection": options_collection,
                 "universe": {
                     "revision_id": universe_revision_id,
                     "freshness": universe_freshness,
@@ -532,3 +564,181 @@ class ObservationRunService:
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         model = self.repository.get_run(run_id)
         return self.repository.run_response(model) if model else None
+
+    @staticmethod
+    def _regular_close_quotes(
+        evidence: dict[str, Any], trading_date: date
+    ) -> dict[str, dict[str, object]]:
+        """Expose only the target day's frozen daily close as a formal quote."""
+
+        chart = evidence.get("chart") if isinstance(evidence, dict) else None
+        instruments = chart.get("instruments") if isinstance(chart, dict) else None
+        if not isinstance(instruments, dict):
+            return {}
+        target = trading_date.isoformat()
+        quotes: dict[str, dict[str, object]] = {}
+        for raw_symbol, raw_instrument in instruments.items():
+            if not isinstance(raw_instrument, dict):
+                continue
+            quality = raw_instrument.get("quality")
+            if isinstance(quality, dict) and quality.get("status") in {"missing", "conflicted"}:
+                continue
+            price = raw_instrument.get("price")
+            bars = price.get("bars") if isinstance(price, dict) else raw_instrument.get("bars")
+            if not isinstance(bars, list) or not bars:
+                continue
+            latest = bars[-1]
+            if not isinstance(latest, dict) or str(latest.get("date")) != target:
+                continue
+            close = latest.get("close")
+            if isinstance(close, bool) or not isinstance(close, (int, float)):
+                continue
+            symbol = str(raw_symbol).strip().upper()
+            if not symbol:
+                continue
+            quotes[symbol] = {
+                "price": float(close),
+                "price_kind": "regular_price",
+                "quote_time": target,
+                "source_path": (
+                    "observation_run.daily_evidence.chart."
+                    f"instruments[{symbol}].price.bars[-1].close"
+                ),
+            }
+        return quotes
+
+    def get_options(
+        self,
+        trading_date: date,
+        *,
+        symbol: str | None = None,
+    ) -> dict[str, Any]:
+        """Read option evidence from the matching Observation Run only."""
+
+        normalized_symbol = str(symbol or "").strip().upper() or None
+        run = self.repository.latest_completed_run(trading_date)
+        if run is None:
+            options = self.options.placeholder(
+                list(self.settings.options_collection_symbol_list),
+                status="not_collected",
+                note="当前交易日没有完成的 Observation Run 期权快照。",
+            )
+            return {
+                "run_id": None,
+                "status": "unavailable",
+                "trading_date": trading_date,
+                "cutoff_time": None,
+                "available": False,
+                "options": options,
+                "alignment": None,
+                "message": f"没有找到 {trading_date.isoformat()} 对应的盘后观察期权快照。",
+            }
+
+        payload = dict(run.payload_json or {})
+        raw_options = payload.get("options")
+        if not isinstance(raw_options, dict) or not raw_options:
+            options = self.options.placeholder(
+                list(self.settings.options_collection_symbol_list),
+                status="not_collected",
+                note="该 Observation Run 尚未包含期权快照。",
+            )
+            return {
+                "run_id": run.id,
+                "status": "unavailable",
+                "trading_date": run.trading_date,
+                "cutoff_time": run.cutoff_time,
+                "available": False,
+                "options": options,
+                "alignment": None,
+                "message": "该 Observation Run 已完成，但没有期权快照；请运行新版盘后观察任务。",
+            }
+
+        options = self._filter_options(raw_options, normalized_symbol)
+        alignment = payload.get("options_alignment")
+        alignment = (
+            self._filter_alignment(alignment, normalized_symbol)
+            if isinstance(alignment, dict)
+            else None
+        )
+        available = bool(options.get("available")) and (
+            normalized_symbol is None or bool(options.get("symbols"))
+        )
+        return {
+            "run_id": run.id,
+            "status": str(options.get("status") or run.status),
+            "trading_date": run.trading_date,
+            "cutoff_time": run.cutoff_time,
+            "available": available,
+            "options": options,
+            "alignment": alignment,
+            "message": None if available else "该盘后观察任务没有当前股票的可用期权结构。",
+        }
+
+    @staticmethod
+    def _filter_options(options: dict[str, Any], symbol: str | None) -> dict[str, Any]:
+        result = dict(options)
+        raw_symbols = result.get("symbols")
+        if not isinstance(raw_symbols, list):
+            result["symbols"] = []
+            return result
+        if symbol is None:
+            result["symbols"] = list(raw_symbols)
+            return result
+        result["symbols"] = [
+            item
+            for item in raw_symbols
+            if isinstance(item, dict)
+            and str(item.get("symbol") or "").strip().upper() == symbol
+        ]
+        result["requested_symbols"] = [symbol]
+        result["unavailable_symbols"] = [
+            item
+            for item in list(result.get("unavailable_symbols") or [])
+            if str(item).strip().upper() == symbol
+        ]
+        result["available"] = bool(result["symbols"])
+        result["status"] = "available" if result["symbols"] else "unavailable"
+        return result
+
+    @staticmethod
+    def _filter_alignment(
+        alignment: dict[str, Any], symbol: str | None
+    ) -> dict[str, Any]:
+        result = dict(alignment)
+        raw_symbols = alignment.get("symbols")
+        if symbol is None or not isinstance(raw_symbols, list):
+            return result
+        selected = [
+            item
+            for item in raw_symbols
+            if isinstance(item, dict)
+            and str(item.get("symbol") or "").strip().upper() == symbol
+        ]
+        result["symbols"] = selected
+        result["flagged_symbols"] = [
+            str(item.get("symbol"))
+            for item in selected
+            if item.get("flagged") is True
+        ]
+        result["unavailable_symbols"] = [
+            str(item.get("symbol"))
+            for item in selected
+            if item.get("status") == "unavailable"
+        ]
+        result["flag_count"] = sum(
+            1
+            for item in selected
+            for expiration in item.get("expirations") or []
+            if isinstance(expiration, dict) and expiration.get("flags")
+        )
+        result["available"] = any(item.get("status") != "unavailable" for item in selected)
+        result["status"] = (
+            "flagged"
+            if result["flagged_symbols"]
+            else "partial"
+            if result["unavailable_symbols"] and result["available"]
+            else "clear"
+            if result["available"]
+            else "unavailable"
+        )
+        return result

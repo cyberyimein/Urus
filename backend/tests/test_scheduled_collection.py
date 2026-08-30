@@ -15,7 +15,7 @@ def test_due_slots_use_tokyo_clock_and_keep_saturday_morning_for_us_friday() -> 
 
     assert [(item[0].strftime("%Y-%m-%d %H:%M"), item[1]) for item in due] == [
         ("2026-08-08 04:00", "pre_close"),
-        ("2026-08-08 05:30", "post_close_review"),
+        ("2026-08-08 05:30", "post_close_observation"),
     ]
 
 
@@ -41,14 +41,14 @@ def test_due_slots_skip_nyse_holiday_even_when_jst_slot_is_a_weekday() -> None:
 def test_due_slots_adjust_nyse_early_close_slots() -> None:
     # The Friday after Thanksgiving closes at 13:00 ET. The nominal 04:00
     # JST tail slot is therefore moved to one hour before close, while the
-    # post-close review remains after the actual close.
+    # post-close observation remains after the actual close.
     now = datetime(2026, 11, 28, 5, 31, tzinfo=TOKYO)
 
     due = due_slots(now, {}, timedelta(hours=4), NEW_YORK, False)
 
     assert [(item[0].strftime("%Y-%m-%d %H:%M"), item[1]) for item in due] == [
         ("2026-11-28 02:00", "pre_close"),
-        ("2026-11-28 05:30", "post_close_review"),
+        ("2026-11-28 05:30", "post_close_observation"),
     ]
 
 

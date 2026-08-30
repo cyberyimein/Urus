@@ -61,6 +61,7 @@ class MoomooOptionsAdapter:
         quote_context_factory: Callable[..., Any] | None = None,
         snapshot_interval_seconds: float = 0.51,
         option_chain_interval_seconds: float = 3.05,
+        option_metadata_interval_seconds: float = 0.51,
         gamma_profile_range_percent: float = 30.0,
         gamma_profile_points: int = 121,
         risk_free_rate_percent: float = 4.0,
@@ -85,6 +86,10 @@ class MoomooOptionsAdapter:
         # 3.05s leaves a small scheduling margin even when a caller overrides
         # the setting downward.
         self.option_chain_interval_seconds = max(3.05, option_chain_interval_seconds)
+        # Underlying overview and expiration lookups are separate APIs, but
+        # both have a 60 requests / 30 seconds provider ceiling. A shared
+        # bucket is deliberately conservative across the two endpoints.
+        self.option_metadata_interval_seconds = max(0.51, option_metadata_interval_seconds)
         self.gamma_profile_range_percent = gamma_profile_range_percent
         self.gamma_profile_points = gamma_profile_points
         self.risk_free_rate_percent = risk_free_rate_percent
@@ -95,6 +100,7 @@ class MoomooOptionsAdapter:
         self._rate_limiter = rate_limiter
         self._last_snapshot_request_at: float | None = None
         self._last_option_chain_request_at: float | None = None
+        self._last_option_metadata_request_at: float | None = None
         self._quote_ctx: Any | None = None
 
     @staticmethod
@@ -208,6 +214,29 @@ class MoomooOptionsAdapter:
             result = self._context().get_option_chain(underlying, start=start, end=end)
         return self._require_ok(label, result)
 
+    def _option_metadata(
+        self,
+        label: str,
+        fetch: Callable[[], tuple[int, object]],
+    ) -> object:
+        if self._rate_limiter is not None:
+            self._rate_limiter.acquire_rate_slot(
+                "moomoo_option_metadata",
+                self.option_metadata_interval_seconds,
+                now=datetime.now(UTC),
+                sleeper=self._sleeper,
+            )
+        else:
+            now = self._monotonic_clock()
+            if self._last_option_metadata_request_at is not None:
+                remaining = self.option_metadata_interval_seconds - (
+                    now - self._last_option_metadata_request_at
+                )
+                if remaining > 0:
+                    self._sleeper(remaining)
+        self._last_option_metadata_request_at = self._monotonic_clock()
+        return self._require_ok(label, fetch())
+
     def _select_expirations(self, frame: Any) -> list[tuple[str, int]]:
         eligible = frame[
             (frame["option_expiry_date_distance"] >= 0)
@@ -308,8 +337,9 @@ class MoomooOptionsAdapter:
             "query_subscription(before)", context.query_subscription()
         )
         underlying = self._market_snapshot(self.symbols, "get_market_snapshot(underlyings)")
-        overview = self._require_ok(
-            "get_option_underlying_overview", context.get_option_underlying_overview(self.symbols)
+        overview = self._option_metadata(
+            "get_option_underlying_overview",
+            lambda: context.get_option_underlying_overview(self.symbols),
         )
         if not isinstance(underlying, pd.DataFrame) or not isinstance(overview, pd.DataFrame):
             raise RuntimeError("Moomoo returned an invalid options overview response")
@@ -335,8 +365,9 @@ class MoomooOptionsAdapter:
                 unavailable_symbols.append(code.removeprefix("US."))
                 continue
             try:
-                expirations = self._require_ok(
-                    f"get_option_expiration_date({code})", context.get_option_expiration_date(code)
+                expirations = self._option_metadata(
+                    f"get_option_expiration_date({code})",
+                    lambda code=code: context.get_option_expiration_date(code),
                 )
             except Exception as exc:
                 warnings.append(f"{code} expiration lookup failed: {exc}")

@@ -20,12 +20,34 @@ class ScheduleSettings(BaseModel):
     pre_close: ScheduleSlotSettings = Field(
         default_factory=lambda: ScheduleSlotSettings(skip_ai_decision=True)
     )
-    post_close_review: ScheduleSlotSettings = Field(default_factory=ScheduleSlotSettings)
+    post_close_observation: ScheduleSlotSettings = Field(
+        default_factory=lambda: ScheduleSlotSettings(skip_ai_decision=True)
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_post_close_slot(cls, value: object) -> object:
+        """Read old persisted settings while exposing the new collection name."""
+
+        if not isinstance(value, dict):
+            return value
+        payload = dict(value)
+        legacy = payload.pop("post_close_review", None)
+        if "post_close_observation" not in payload and isinstance(legacy, dict):
+            # The old field represented a collection slot in persisted
+            # settings. It is now an Observation Run and is always data-only.
+            payload["post_close_observation"] = {
+                **legacy,
+                "skip_ai_decision": True,
+            }
+        return payload
 
     @model_validator(mode="after")
     def tail_collection_is_data_only(self) -> "ScheduleSettings":
         if not self.pre_close.skip_ai_decision:
             raise ValueError("尾盘采集固定只采集数据，不启动 AI 决策")
+        if not self.post_close_observation.skip_ai_decision:
+            raise ValueError("盘后观察固定只采集数据，不启动 AI 决策")
         return self
 
 

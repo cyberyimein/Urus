@@ -261,9 +261,10 @@ moomoo_collection_lock_path = data/moomoo_collection.lock
 | rate class | 最小间隔 | 用途 |
 |---|---:|---|
 | `moomoo_quote_history` | 0.51 秒以上 | 快照和历史 K 线共享保守节奏 |
+| `moomoo_option_metadata` | 0.51 秒以上 | 期权标的总览和到期日查询，不超过 60 次/30 秒 |
 | `moomoo_option_chain` | 3.05 秒以上 | 不超过 10 次/30 秒 |
 
-配置默认值保留更宽松余量：历史/快照 0.55 秒，期权链 3.5 秒。
+配置默认值保留更宽松余量：历史/快照 0.55 秒，期权元数据 0.55 秒，期权链 3.5 秒。
 
 期权链的单次日期跨度不得超过 30 天。大于 30 天的目标范围必须切片后串行执行。
 
@@ -290,12 +291,15 @@ Workflow 的 3A 临时 persistence payload 会在释放 Moomoo 锁前同步进 `
 流程直接将配置的 `option_symbols` 交给 `MoomooOptionsAdapter`，adapter 内部：
 
 1. 按 symbol 顺序处理；
-2. expiration 查询按最多 30 天切片；
-3. 每次 option-chain 调用通过 coordinator 等待至少 3.05 秒；
-4. 合约快照按最多 400 个 code 分批；
-5. 快照调用使用 quote/history rate class；
-6. 部分 symbol 失败时返回明确 unavailable/partial，不创建持久化任务重试状态；
-7. 下一次每日运行自然重试缺失数据。
+2. 标的总览和到期日查询通过 `moomoo_option_metadata` coordinator 串行执行；
+3. expiration 查询按最多 30 天切片；
+4. 每次 option-chain 调用通过 coordinator 等待至少 3.05 秒；
+5. 合约快照按最多 400 个 code 分批；
+6. 快照调用使用 quote/history rate class；
+7. 部分 symbol 失败时返回明确 unavailable/partial，不创建持久化任务重试状态；
+8. 下一次每日运行自然重试缺失数据。
+
+Observation Run 的日 K 补数只覆盖请求股票和 benchmark；期权标的仅在已有缓存时作为辅助收盘价 provenance，不因期权采集触发历史 K 线额度请求。
 
 这是个人应用的“队列”语义：有序列表串行处理、允许等待，而不是独立数据库任务系统。
 
@@ -360,7 +364,7 @@ Universe 表格展示：
 6. 短样本为 acquired/partial；
 7. quota capture 始终只有一条最新记录；
 8. coordinator 跨重启保留下一允许时间；
-9. option-chain 最小间隔和 30 天切片；
+9. option 元数据共享限频、option-chain 最小间隔和 30 天切片；
 10. 空库 Alembic upgrade head 与 ORM-first upgrade 都通过。
 
 前端：

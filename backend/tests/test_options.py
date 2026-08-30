@@ -18,6 +18,7 @@ from app.analytics.options_volatility import enrich_option_overview
 from app.core.config import Settings
 from app.integrations.moomoo_options import MoomooOptionsAdapter
 from app.models import StepStatus
+from app.services.options_collection import OptionsCollectionService
 from app.urus_agent.evidence import EvidenceStore
 from app.urus_agent.reports import build_technical_report
 from app.workflows.context import RunContext
@@ -402,12 +403,98 @@ def test_options_collection_forwards_the_configured_serial_scope() -> None:
     assert calls == [["QQQ", "INTC"]]
 
 
+def test_options_collection_marks_a_live_provider_without_data_unavailable() -> None:
+    class UnavailableOptionsAdapter:
+        def options_snapshot(self, symbols: list[str] | None = None) -> dict[str, object]:
+            return {
+                "is_mock": False,
+                "status": "unavailable",
+                "available": False,
+                "provider": "test",
+                "symbols": [],
+                "unavailable_symbols": symbols or [],
+            }
+
+    result = OptionsCollectionService().collect(
+        UnavailableOptionsAdapter(),
+        ["QQQ"],
+    )
+
+    assert result.status == StepStatus.UNAVAILABLE
+    assert result.data_state == "unavailable"
+    assert result.payload["status"] == "unavailable"
+
+
 class SnapshotContext:
     def get_market_snapshot(self, codes: list[str]):
         return 0, pd.DataFrame({"code": codes})
 
     def close(self) -> None:
         return None
+
+
+class RecordingRateLimiter:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, float]] = []
+
+    def acquire_rate_slot(self, rate_class: str, interval_seconds: float, **kwargs) -> None:
+        del kwargs
+        self.calls.append((rate_class, interval_seconds))
+
+
+class OptionMetadataContext:
+    def query_subscription(self):
+        return 0, {}
+
+    def get_market_snapshot(self, codes: list[str]):
+        return 0, pd.DataFrame(
+            {
+                "code": codes,
+                "last_price": [100.0 for _ in codes],
+            }
+        )
+
+    def get_option_underlying_overview(self, codes: list[str]):
+        return 0, pd.DataFrame({"code": codes})
+
+    def get_option_expiration_date(self, code: str):
+        del code
+        return 0, pd.DataFrame(
+            {
+                "strike_time": ["2026-08-21"],
+                "option_expiry_date_distance": [0],
+            }
+        )
+
+    def close(self) -> None:
+        return None
+
+
+def test_option_metadata_requests_use_the_shared_rate_class() -> None:
+    limiter = RecordingRateLimiter()
+    adapter = MoomooOptionsAdapter(
+        host="test",
+        port=11111,
+        symbols=["SPY"],
+        target_dtes=[0],
+        max_dte=7,
+        strike_range_percent=20,
+        batch_size=400,
+        quote_context_factory=lambda **_: OptionMetadataContext(),
+        option_metadata_interval_seconds=0.55,
+        rate_limiter=limiter,
+    )
+    # Keep this test focused on the metadata endpoints; the chain response is
+    # intentionally empty after the two metadata calls.
+    adapter._option_chain = lambda underlying, start, end: pd.DataFrame()
+
+    payload = adapter.options_snapshot()
+
+    metadata_calls = [
+        interval for rate_class, interval in limiter.calls if rate_class == "moomoo_option_metadata"
+    ]
+    assert metadata_calls == [pytest.approx(0.55), pytest.approx(0.55)]
+    assert payload["status"] == "unavailable"
 
 
 def test_snapshot_requests_are_spaced_below_moomoo_rate_limit() -> None:

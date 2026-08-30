@@ -64,7 +64,7 @@ def test_settings_expose_environment_defaults(client) -> None:
         "skip_ai_decision": True,
     }
     assert payload["schedule"]["pre_close"]["skip_ai_decision"] is True
-    assert payload["schedule"]["post_close_review"]["skip_ai_decision"] is True
+    assert payload["schedule"]["post_close_observation"]["skip_ai_decision"] is True
     assert payload["models"]["ai_decision_model"]
     assert payload["models"]["anomalo_retrieval_agent"] == "scheduled-event-investigator"
     assert payload["models"]["input_cost_per_million"] == 0
@@ -76,7 +76,7 @@ def test_settings_expose_environment_defaults(client) -> None:
 def test_settings_update_persists_and_updates_running_config(client, app) -> None:
     payload = _update_payload(client)
     payload["schedule"]["pre_market"]["enabled"] = False
-    payload["schedule"]["post_close_review"]["skip_ai_decision"] = True
+    payload["schedule"]["post_close_observation"]["skip_ai_decision"] = True
     payload["models"]["ai_decision_model"] = "openai/gpt-oss-120b"
     payload["models"]["anomalo_retrieval_agent"] = "research-agent-v2"
     payload["models"]["input_cost_per_million"] = 2.5
@@ -91,7 +91,7 @@ def test_settings_update_persists_and_updates_running_config(client, app) -> Non
     assert updated["source"] == "runtime"
     assert updated["revision"] == 1
     assert updated["schedule"]["pre_market"]["enabled"] is False
-    assert updated["schedule"]["post_close_review"]["skip_ai_decision"] is True
+    assert updated["schedule"]["post_close_observation"]["skip_ai_decision"] is True
     assert updated["models"]["ai_decision_model"] == "openai/gpt-oss-120b"
     assert app.state.settings.urus_agent_model == "openai/gpt-oss-120b"
     assert app.state.settings.anomalo_scheduled_agent == "research-agent-v2"
@@ -118,3 +118,18 @@ def test_settings_reject_tail_ai_and_stale_revision(client) -> None:
     conflict = client.put("/api/settings", json=stale)
     assert conflict.status_code == 409
     assert conflict.json()["error"]["code"] == "settings_revision_conflict"
+
+
+def test_legacy_post_close_review_setting_is_migrated_to_observation() -> None:
+    settings = Settings()
+    payload = environment_payload(settings)
+    observation = payload["schedule"].pop("post_close_observation")
+    payload["schedule"]["post_close_review"] = {
+        **observation,
+        "skip_ai_decision": False,
+    }
+
+    apply_payload(settings, payload)
+
+    assert settings.scheduled_post_close_enabled is True
+    assert settings.scheduled_post_close_skip_ai_decision is True

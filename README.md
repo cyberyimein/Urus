@@ -138,7 +138,7 @@ uv run python scripts/schedule_market_data_collection.py \
 uv run python scripts/schedule_market_data_collection.py \
   --api-base-url http://127.0.0.1:8000/api \
   --backend-managed-externally \
-  --once post_close_review
+  --once post_close_observation
 ```
 
 设置 `OBSERVATION_UNIVERSE_SOURCE_URL=http://deployed-urus:port` 后，`POST /api/observation/groups/sync` 会先读取上游 `/api/settings/universe`，在本地保存带来源的 Universe 版本，再生成核心和主题观察组。
@@ -165,7 +165,8 @@ Urus 支持多类运行场景：
 
 - `pre_market`：盘前研究。
 - `pre_close`：收盘前研究，可按配置跳过 AI。
-- `post_close_review`：收盘后复盘和经验评估。
+- `post_close_observation`：收盘后冻结股票日 K 与期权快照，并生成确定性邻近标记。
+- `post_close_review`：独立的收盘后 AI 复盘和经验评估，不是数据采集槽位。
 - `manual_analysis`：前端发起的手动分析，基于冻结 snapshot 生成报告。
 
 条件步骤的跳过是正常状态，不等于失败。数据源连接失败、数据不足和部分完成会在运行记录及报告中明确标识。

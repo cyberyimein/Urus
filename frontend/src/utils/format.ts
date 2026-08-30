@@ -30,6 +30,7 @@ export function formatNumber(value: number | null | undefined, digits = 2): stri
 export function runTypeLabel(value: string): string {
   if (value === 'manual_analysis') return '手动即时分析'
   if (value === 'post_close_review') return '收盘后复盘'
+  if (value === 'observation_run') return '盘后观察'
   return value === 'pre_close' ? '收盘前一小时' : '盘前'
 }
 
