@@ -9,6 +9,7 @@ import StatusBadge from '@/components/StatusBadge.vue'
 import StepTimeline from '@/components/StepTimeline.vue'
 import { useUrusStore } from '@/stores/urus'
 import type { EventRecord, EventSummary, InstrumentCard, MarketCard, RunType } from '@/types/api'
+import type { PostCloseOptionAlignment } from '@/types/research'
 import { formatDate, formatNumber, nullable, runTypeLabel } from '@/utils/format'
 
 type TabId = 'market' | 'instrument' | 'events' | 'options' | 'decision' | 'quality'
@@ -36,6 +37,12 @@ const simulateMacroEvent = ref(false)
 const simulateInstrumentEvent = ref(false)
 const runSteps = computed(() => store.latestRun?.steps ?? [])
 const readModel = computed(() => store.latestReadModel)
+const postCloseAlignment = computed<PostCloseOptionAlignment | null>(() => {
+  const report = asRecord(readModel.value?.technical_report)
+  const options = asRecord(report?.options)
+  const alignment = asRecord(options?.post_close_alignment)
+  return alignment ? alignment as unknown as PostCloseOptionAlignment : null
+})
 const decisionData = computed(() => readModel.value?.decision ?? null)
 const market = computed<MarketCard | null>(() => readModel.value?.market ?? null)
 const instrumentCards = computed<InstrumentCard[]>(() => readModel.value?.instrument_cards ?? [])
@@ -772,7 +779,7 @@ onMounted(() => {
         </div>
       </section>
 
-      <OptionsPanel v-else-if="activeTab === 'options'" :options="store.latestReadModel.options" />
+      <OptionsPanel v-else-if="activeTab === 'options'" :options="store.latestReadModel.options" :post-close-alignment="postCloseAlignment" />
 
       <section v-else-if="activeTab === 'decision'" class="tab-panel" role="tabpanel">
         <div class="tab-titlebar"><div><p class="eyebrow">URUS AGENT / 4</p><h2>决策输出</h2></div><StatusBadge :status="store.latestReadModel.decision.data_state" /></div>

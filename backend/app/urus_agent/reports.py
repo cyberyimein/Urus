@@ -4,6 +4,7 @@ import copy
 from datetime import UTC, datetime
 from typing import Any
 
+from app.analytics.options import build_post_close_option_alignment
 from app.urus_agent.evidence import EvidenceStore
 
 
@@ -51,6 +52,14 @@ def build_technical_report(evidence: EvidenceStore) -> dict[str, Any]:
     source.setdefault("run_count", len(run_ids))
     source.setdefault("snapshot_count", len(snapshot_ids))
     source.setdefault("evidence_scope", "paired" if len(run_ids) > 1 else "single_workflow")
+    post_close_option_alignment = (
+        build_post_close_option_alignment(
+            post_close.get("options") or {},
+            _post_close_close_quotes(post_close),
+        )
+        if post_close
+        else None
+    )
     return {
         "schema_version": TECHNICAL_REPORT_SCHEMA,
         "dataset_key": evidence.dataset_key,
@@ -101,6 +110,7 @@ def build_technical_report(evidence: EvidenceStore) -> dict[str, Any]:
             "post_close_review": (post_close.get("options") or {}),
             "current_state": (current_state.get("options") or {}),
             "current_phase": current_phase,
+            "post_close_alignment": post_close_option_alignment,
             "paired_changes": (packet.get("paired_changes") or {}).get("options") or [],
         },
         "systematic_flows": {
@@ -1317,6 +1327,93 @@ def _symbol_price(
         return None
     quote = item.get("quote") or {}
     return _phase_price(quote, phase)
+
+
+def _post_close_close_quotes(
+    observation: dict[str, Any],
+) -> dict[str, dict[str, object]]:
+    """Index the best post-close quote for each symbol.
+
+    Regular-session close is preferred over the raw last price because the
+    latter can be an after-hours print.  The source and fallback kind are
+    retained for the report so the UI can make the comparison auditable.
+    """
+
+    selected: dict[str, dict[str, object]] = {}
+
+    def consider(value: Any, path: str) -> None:
+        if not isinstance(value, dict):
+            return
+        nested_quote = value.get("quote")
+        quote = nested_quote if isinstance(nested_quote, dict) else value
+        symbol = str(value.get("symbol") or quote.get("symbol") or "").upper()
+        if not symbol:
+            return
+        regular_price = _first_number(quote.get("regular_price"))
+        last_price = _first_number(quote.get("last_price"))
+        if regular_price is not None:
+            candidate = {
+                "price": regular_price,
+                "price_kind": "regular_price",
+                "source_path": f"{path}.regular_price",
+                "quote_time": quote.get("quote_time"),
+            }
+            rank = 2
+        elif last_price is not None:
+            candidate = {
+                "price": last_price,
+                "price_kind": "last_price_fallback",
+                "source_path": f"{path}.last_price",
+                "quote_time": quote.get("quote_time"),
+            }
+            rank = 1
+        else:
+            return
+        existing = selected.get(symbol)
+        if existing is None or rank > int(existing.get("_rank") or 0):
+            candidate["_rank"] = rank
+            selected[symbol] = candidate
+
+    market = observation.get("market") or {}
+    if isinstance(market, dict):
+        consider(market.get("primary"), "observations.post_close_review.market.primary")
+        cross_asset_quotes = market.get("cross_asset_quotes") or []
+        if isinstance(cross_asset_quotes, list):
+            for item in cross_asset_quotes:
+                if isinstance(item, dict):
+                    symbol = str(item.get("symbol") or "").upper()
+                    if symbol:
+                        consider(
+                            item,
+                            f"observations.post_close_review.market.cross_asset_quotes[{symbol}]",
+                        )
+        elif isinstance(cross_asset_quotes, dict):
+            for symbol, item in cross_asset_quotes.items():
+                if isinstance(item, dict):
+                    candidate = dict(item)
+                    candidate.setdefault("symbol", symbol)
+                    normalized = str(symbol or "").upper()
+                    if normalized:
+                        consider(
+                            candidate,
+                            f"observations.post_close_review.market.cross_asset_quotes[{normalized}]",
+                        )
+
+    for item in observation.get("instruments") or []:
+        if not isinstance(item, dict):
+            continue
+        symbol = str(item.get("symbol") or "").upper()
+        if symbol:
+            path = (
+                f"observations.post_close_review.instruments[{symbol}].quote"
+                if isinstance(item.get("quote"), dict)
+                else f"observations.post_close_review.instruments[{symbol}]"
+            )
+            consider(item, path)
+
+    for item in selected.values():
+        item.pop("_rank", None)
+    return selected
 
 
 def _phase_price(quote: dict[str, Any], phase: str) -> float | None:

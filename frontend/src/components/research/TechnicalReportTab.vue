@@ -2,7 +2,9 @@
 import { computed, ref, watch } from 'vue'
 
 import { api } from '@/api/client'
+import PostCloseOptionAlignment from '@/components/PostCloseOptionAlignment.vue'
 import type {
+  PostCloseOptionAlignment as PostCloseOptionAlignmentData,
   ReportDisplayManifest,
   ReportDisplayOptionPayload,
   TechnicalReport,
@@ -40,11 +42,29 @@ const activeThemeRows = computed(() => themes.value.find(([name]) => name === ac
 const activeSymbol = ref('')
 const activeSymbolCard = computed(() => activeThemeRows.value.map(dict).find((item) => String(item.symbol) === activeSymbol.value) ?? null)
 
-const optionSymbols = computed(() => {
+const optionData = computed(() => {
   const options = dict(props.report?.options)
   const phase = String(options.current_phase ?? props.report?.decision_phase ?? 'pre_close')
-  const current = dict(options[phase] ?? options.pre_close ?? options.pre_market)
+  const phases = phase === 'post_close_review'
+    ? ['post_close_review', 'pre_close', 'pre_market']
+    : phase === 'current_state'
+      ? ['current_state', 'post_close_review', 'pre_close', 'pre_market']
+      : phase === 'pre_close'
+        ? ['pre_close', 'pre_market']
+        : ['pre_market']
+  const current = phases
+    .map((name) => dict(options[name]))
+    .find((value) => Array.isArray(value.symbols) && value.symbols.length > 0)
+    ?? dict(options[phase] ?? options.pre_close ?? options.pre_market)
+  return current
+})
+const optionSymbols = computed(() => {
+  const current = optionData.value
   return Array.isArray(current.symbols) ? current.symbols.filter((item: unknown) => item && typeof item === 'object') as Dict[] : []
+})
+const postCloseAlignment = computed<PostCloseOptionAlignmentData | null>(() => {
+  const value = dict(dict(props.report?.options).post_close_alignment)
+  return Object.keys(value).length ? value as PostCloseOptionAlignmentData : null
 })
 const activeOptionSymbol = ref('')
 watch(optionSymbols, (value) => {
@@ -517,6 +537,7 @@ const profileGammaFlipMarkers = computed(() => profileGammaFlips.value
 
     <section v-else-if="selectedSection === 'options'" :id="evidenceId('options')" class="report-section">
       <div class="report-section-heading"><div><p class="eyebrow">OPTIONS / DEX · GEX · GAMMA</p><h2>期权结构证据</h2></div><span class="subtle">按标的与到期日查看</span></div>
+      <PostCloseOptionAlignment :alignment="postCloseAlignment" :focus-symbol="activeOptionSymbol" :focus-expiration="activeExpiration" />
       <div v-if="optionSymbols.length" class="options-report-shell">
         <nav class="theme-tabs" aria-label="期权标的"><button v-for="item in optionSymbols" :key="String(item.symbol)" type="button" :class="{ active: activeOptionSymbol === String(item.symbol) }" @click="activeOptionSymbol = String(item.symbol)">{{ text(item.symbol) }} <span>{{ Array.isArray(item.expirations) ? item.expirations.length : 0 }}</span></button></nav>
         <div class="option-expiration-tabs"><button v-for="item in optionExpirations" :key="String(item.expiration)" type="button" :class="{ active: activeExpiration === String(item.expiration) }" @click="activeExpiration = String(item.expiration)">{{ text(item.expiration) }} <small>{{ text(item.days_to_expiry) }} DTE</small></button></div>

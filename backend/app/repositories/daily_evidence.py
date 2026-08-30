@@ -379,6 +379,60 @@ class DailyEvidenceRepository:
     def dataset(self, dataset_id: str) -> DailyDecisionDatasetModel | None:
         return self.session.get(DailyDecisionDatasetModel, dataset_id)
 
+    def dataset_for_scope_date(
+        self,
+        *,
+        scope_type: str,
+        scope_id: str,
+        trading_date: date,
+        scope_version: int | None = None,
+    ) -> DailyDecisionDatasetModel | None:
+        """Return the newest immutable dataset for one exact scope/date.
+
+        A daily comparison must not silently fall back to an older session when
+        the immediately previous trading day is missing.  Callers can therefore
+        distinguish an exact T-1 baseline from a stale or unavailable one.
+        """
+
+        filters = [
+            DailyDecisionDatasetModel.scope_type == scope_type,
+            DailyDecisionDatasetModel.scope_id == scope_id,
+            DailyDecisionDatasetModel.trading_date == trading_date,
+        ]
+        if scope_version is not None:
+            filters.append(DailyDecisionDatasetModel.scope_version == scope_version)
+        return self.session.scalar(
+            select(DailyDecisionDatasetModel)
+            .where(*filters)
+            .order_by(DailyDecisionDatasetModel.created_at.desc())
+        )
+
+    def previous_dataset(
+        self,
+        *,
+        scope_type: str,
+        scope_id: str,
+        trading_date: date,
+        scope_version: int | None = None,
+    ) -> DailyDecisionDatasetModel | None:
+        """Return the newest dataset strictly before ``trading_date``."""
+
+        filters = [
+            DailyDecisionDatasetModel.scope_type == scope_type,
+            DailyDecisionDatasetModel.scope_id == scope_id,
+            DailyDecisionDatasetModel.trading_date < trading_date,
+        ]
+        if scope_version is not None:
+            filters.append(DailyDecisionDatasetModel.scope_version == scope_version)
+        return self.session.scalar(
+            select(DailyDecisionDatasetModel)
+            .where(*filters)
+            .order_by(
+                DailyDecisionDatasetModel.trading_date.desc(),
+                DailyDecisionDatasetModel.created_at.desc(),
+            )
+        )
+
     def chart(self, dataset_id: str) -> DecisionChartProjectionModel | None:
         return self.session.scalar(
             select(DecisionChartProjectionModel).where(DecisionChartProjectionModel.dataset_id == dataset_id)

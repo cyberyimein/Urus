@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Any
 
 from pydantic import ValidationError
@@ -12,6 +13,10 @@ from app.core.config import Settings
 from app.core.errors import AppError
 from app.decision_harness.contracts import canonical_json, content_sha256
 from app.decision_harness.cross_section import CrossSectionService
+from app.decision_harness.daily_comparison import (
+    build_instrument_temporal_context,
+    previous_trading_date_from_chart,
+)
 from app.models.remote_decision import DecisionWorkflowBindingModel, RemoteDecisionRunModel
 from app.repositories.daily_evidence import DailyEvidenceRepository
 from app.repositories.observation import ObservationRepository
@@ -249,18 +254,71 @@ class RemoteDecisionCompiler:
             result.blockers.append(_issue("no_valid_evidence", "当前 dataset 没有可用冻结证据。"))
             return
         chart = self.daily_repository.chart(str(dataset_id))
+        chart_payload = chart.payload_json if chart else None
         strategy_decisions, synthesis = self._strategy_bundle(str(dataset_id))
         instrument = _instrument_evidence(
             payload,
-            chart.payload_json if chart else None,
+            chart_payload,
             {"strategy_decisions": strategy_decisions, "deterministic_synthesis": synthesis},
             symbol,
         )
+        previous_trading_date = previous_trading_date_from_chart(
+            chart_payload,
+            symbol,
+            str(payload.get("trading_date") or ""),
+        )
+        if previous_trading_date:
+            previous_dataset_model = self.daily_repository.dataset_for_scope_date(
+                scope_type="instrument",
+                scope_id=symbol,
+                trading_date=date.fromisoformat(previous_trading_date),
+                scope_version=dataset.scope_version,
+            )
+        else:
+            # A missing chart history should not make the compiler crash.  In
+            # that case use the nearest prior dataset, which the temporal
+            # context will label with its actual date and quality.
+            previous_dataset_model = self.daily_repository.previous_dataset(
+                scope_type="instrument",
+                scope_id=symbol,
+                trading_date=dataset.trading_date,
+                scope_version=dataset.scope_version,
+            )
+        previous_dataset_payload = (
+            dict(previous_dataset_model.payload_json or {})
+            if previous_dataset_model is not None
+            else None
+        )
+        previous_chart_model = (
+            self.daily_repository.chart(previous_dataset_model.id)
+            if previous_dataset_model is not None
+            else None
+        )
+        previous_strategy_decisions, previous_synthesis = (
+            self._strategy_bundle(previous_dataset_model.id)
+            if previous_dataset_model is not None
+            else ([], {})
+        )
+        temporal_context = build_instrument_temporal_context(
+            current_dataset=payload,
+            current_chart=chart_payload,
+            current_strategy_decisions=strategy_decisions,
+            current_synthesis=synthesis,
+            previous_dataset=previous_dataset_payload,
+            previous_chart=(
+                previous_chart_model.payload_json if previous_chart_model is not None else None
+            ),
+            previous_strategy_decisions=previous_strategy_decisions,
+            previous_synthesis=previous_synthesis,
+            symbol=symbol,
+        )
+        instrument["temporal_context"] = temporal_context
         refs = [
             {"kind": "daily_dataset", "dataset_id": str(dataset_id), "symbol": symbol},
         ]
         if chart is not None:
             refs.append({"kind": "decision_chart", "dataset_id": str(dataset_id), "symbol": symbol})
+        refs.extend(temporal_context.get("evidence_refs") or [])
         refs.extend(_collect_evidence_refs(instrument))
         result.input_payload = _input_envelope(
             intent_type=result.intent_type,
@@ -291,9 +349,32 @@ class RemoteDecisionCompiler:
             "dataset_id": str(dataset.id),
             "content_sha256": str(dataset.content_sha256),
             "cutoff_time": dataset.cutoff_time.isoformat(),
+            "previous_trading_date": (
+                (temporal_context.get("previous") or {}).get("trading_date")
+            ),
+            "previous_dataset_id": (
+                (temporal_context.get("previous") or {}).get("dataset") or {}
+            ).get("dataset_id"),
+            "temporal_context_status": temporal_context.get("status"),
+            "previous_strategy_decision_count": len(
+                (temporal_context.get("previous") or {}).get("strategy_decisions") or []
+            ),
             **_strategy_counts(strategy_decisions),
         }
         result.warnings.extend(_quality_warnings(payload))
+        if temporal_context.get("status") != "ok":
+            result.warnings.append(
+                _issue(
+                    "previous_day_context_partial",
+                    "上一交易日收盘基线不完整，AI 必须降低置信度并披露缺口。",
+                    {
+                        "status": temporal_context.get("status"),
+                        "previous_trading_date": (
+                            (temporal_context.get("previous") or {}).get("trading_date")
+                        ),
+                    },
+                )
+            )
 
     def _compile_group(self, result: CompiledDecision) -> None:
         run_id = result.source.get("observation_run_id")

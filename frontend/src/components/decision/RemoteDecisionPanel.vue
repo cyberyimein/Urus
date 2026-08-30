@@ -5,6 +5,7 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 import RemoteDecisionConfirmDialog from '@/components/decision/RemoteDecisionConfirmDialog.vue'
 import { useRemoteDecision } from '@/composables/useRemoteDecision'
 import type { RemoteDecisionIntent, RemoteDecisionSource } from '@/types/remoteDecision'
+import { remoteDecisionTitle } from '@/utils/remoteDecisionDisplay'
 
 const props = withDefaults(defineProps<{
   intentType: RemoteDecisionIntent
@@ -28,7 +29,7 @@ const confirmVisible = ref(false)
 const stopConfirmVisible = ref(false)
 const route = useRoute()
 const router = useRouter()
-const { preflight, run, loading, error, prepare, submit, restore, stop, rerun, reset } = useRemoteDecision()
+const { preflight, run, history, loading, error, prepare, submit, restore, stop, rerun, reset } = useRemoteDecision()
 const blocker = computed(() => preflight.value?.blockers[0]?.message ?? '')
 const returnTo = computed(() => {
   const query = { ...route.query }
@@ -51,6 +52,7 @@ const detailRoute = computed(() => ({
   params: { localRunId: run.value?.local_run_id },
   query: { return_to: returnTo.value },
 }))
+const historyRuns = computed(() => history.value.slice(0, 8))
 // ``succeeded`` is an Urus-internal hand-off state while Artifact validation
 // finishes; it is no longer stoppable even though polling must continue.
 const isTerminal = computed(() => ['succeeded', 'accepted', 'rejected_result', 'failed', 'stopped'].includes(run.value?.status ?? ''))
@@ -70,6 +72,33 @@ async function confirm() {
 function requestStop() {
   if (!run.value || isTerminal.value) return
   stopConfirmVisible.value = true
+}
+
+function historyRoute(item: { local_run_id: string }) {
+  return {
+    name: 'remote-decision-run',
+    params: { localRunId: item.local_run_id },
+    query: { return_to: returnTo.value },
+  }
+}
+
+function historyDate(item: { created_at: string; result: Record<string, any> | null }) {
+  const tradingDate = item.result?.decision?.scope?.trading_date
+  return typeof tradingDate === 'string' && tradingDate ? tradingDate : item.created_at.slice(0, 10)
+}
+
+function historyStatus(status: string) {
+  const labels: Record<string, string> = {
+    accepted: '已验收',
+    rejected_result: '结果拒绝',
+    failed: '失败',
+    stopped: '已停止',
+    running: '运行中',
+    queued: '排队中',
+    submitting: '提交中',
+    succeeded: '待验收',
+  }
+  return labels[status] ?? status
 }
 
 async function confirmStop() {
@@ -118,13 +147,21 @@ defineExpose({ open })
     <div v-if="error" class="remote-decision-error" role="alert">{{ error }}</div>
     <article v-if="run" class="remote-decision-run-summary">
       <header><span class="section-kicker">REMOTE DECISION RUN</span><strong>{{ run.status }}</strong></header>
-      <p>{{ run.safe_error_message ?? (run.result?.summary ?? 'Workflow 正在读取冻结证据。') }}</p>
+      <p>{{ run.safe_error_message ?? (run.result ? remoteDecisionTitle(run.result) : 'Workflow 正在读取冻结证据。') }}</p>
       <div class="remote-decision-run-meta"><span>{{ run.local_run_id.slice(0, 12) }}…</span><span>events {{ run.latest_event_sequence }}</span><RouterLink :to="detailRoute">详情 →</RouterLink></div>
       <button v-if="!isTerminal" class="remote-stop-button" type="button" @click="requestStop">停止运行</button>
       <button v-if="isTerminal" class="remote-rerun-button" type="button" :disabled="loading" @click="rerunSameEvidence">用同一证据重新运行</button>
       <div v-if="run.result?.notable_cards?.length" class="remote-notable-cards">
         <a v-for="card in run.result.notable_cards.slice(0, 5)" :key="String(card.card_id)" :href="`#card-${String(card.card_id)}`"><b>#{{ card.rank }}</b><strong>{{ card.symbol ?? card.card_id }}</strong><span>{{ card.why_notable ?? card.finding_type ?? '值得关注' }}</span></a>
       </div>
+    </article>
+    <article v-if="historyRuns.length" class="remote-decision-history">
+      <header><span class="section-kicker">DECISION HISTORY</span><strong>最近 {{ history.length }} 次</strong></header>
+      <RouterLink v-for="item in historyRuns" :key="item.local_run_id" class="remote-history-item" :to="historyRoute(item)">
+        <div><strong>{{ historyDate(item) }}</strong><small>{{ item.workflow_ref }} · {{ historyStatus(item.status) }}</small></div>
+        <span>{{ item.result ? remoteDecisionTitle(item.result) : item.safe_error_message ?? '暂无结果' }}</span>
+        <b>→</b>
+      </RouterLink>
     </article>
     <RemoteDecisionConfirmDialog v-model="confirmVisible" :preflight="preflight" :title="title" @confirm="confirm" />
     <Teleport to="body">
@@ -169,4 +206,13 @@ defineExpose({ open })
 .remote-notable-cards a:hover { background: rgba(118, 230, 192, .12); }
 .remote-notable-cards b { color: #8eddbb; }
 .remote-notable-cards span { color: #b6c5d8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.remote-decision-history { padding: 14px; border: 1px solid rgba(120, 150, 184, .24); border-radius: 11px; background: rgba(15, 31, 51, .55); }
+.remote-decision-history header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.remote-decision-history header strong { color: #91a4c0; font-size: 11px; font-weight: 500; }
+.remote-history-item { display: grid; grid-template-columns: 112px 1fr 18px; align-items: center; gap: 8px; padding: 9px 0; border-top: 1px solid rgba(130, 154, 189, .12); color: inherit; text-decoration: none; }
+.remote-history-item:hover { color: #b8e9d4; }
+.remote-history-item div { display: grid; gap: 3px; }
+.remote-history-item strong { font-size: 12px; }
+.remote-history-item small, .remote-history-item span { color: #91a4c0; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.remote-history-item b { color: #9fe3c8; }
 </style>

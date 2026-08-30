@@ -117,6 +117,49 @@ describe('TechnicalReportTab instruments', () => {
       ...report,
       options: {
         current_phase: 'pre_market',
+        post_close_alignment: {
+          available: true,
+          status: 'flagged',
+          source_phase: 'post_close_review',
+          method: 'regular_close_vs_max_pain_and_dex_walls',
+          proximity_percent: 0.6,
+          price_definition: '优先使用官方 regular_price；仅在缺失时回退到 last_price。',
+          causality_note: '接近 DEX Wall 仅表示影响候选；DEX 是模型化敞口，价位接近不能单独证明因果。',
+          symbols: [{
+            symbol: 'QQQ',
+            status: 'flagged',
+            close_price: 100.2,
+            close_time: '2026-08-21T08:00:00Z',
+            price_source: 'observations.post_close_review.market.cross_asset_quotes[QQQ].regular_price',
+            price_kind: 'regular_price',
+            spot: 100,
+            flags: ['near_max_pain', 'near_dex_wall'],
+            flagged: true,
+            expirations: [{
+              expiration: '2026-08-21',
+              max_pain: 100,
+              max_pain_distance: 0.2,
+              max_pain_distance_percent: 0.2,
+              near_max_pain: true,
+              dex_walls: [{
+                kind: 'net_dex',
+                label: 'Net DEX Wall',
+                strike: 100.5,
+                exposure: 500,
+                distance: 0.3,
+                distance_percent: 0.3,
+                near: true,
+              }],
+              near_dex_wall: true,
+              dex_influence_candidate: true,
+              flags: ['near_max_pain', 'near_dex_wall'],
+            }],
+          }],
+          flagged_symbols: ['QQQ'],
+          flag_count: 1,
+          unavailable_symbols: [],
+          warnings: [],
+        },
         pre_market: {
           symbols: [{
             symbol: 'QQQ',
@@ -189,5 +232,9 @@ describe('TechnicalReportTab instruments', () => {
     expect(wrapper.text()).toContain('现价 100')
     expect(wrapper.text()).toContain('0 GEX 95')
     expect(wrapper.text()).toContain('Gamma Flip 98')
+    expect(wrapper.find('.post-close-alignment-panel').exists()).toBe(true)
+    expect(wrapper.text()).toContain('收盘后期权价位回看')
+    expect(wrapper.text()).toContain('收盘价接近 Max Pain')
+    expect(wrapper.text()).toContain('DEX 影响候选')
   })
 })

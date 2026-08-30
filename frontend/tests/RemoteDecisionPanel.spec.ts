@@ -37,7 +37,10 @@ const run = {
   completed_at: '2026-08-27T11:01:00Z',
 } as RemoteDecisionRun
 
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => {
+  vi.useRealTimers()
+  vi.restoreAllMocks()
+})
 
 describe('RemoteDecisionPanel', () => {
   it('restores the latest run for the exact frozen evidence after remounting', async () => {
@@ -85,5 +88,88 @@ describe('RemoteDecisionPanel', () => {
       params: { localRunId: 'run-instrument-1' },
       query: { return_to: '/instruments/INTC?dataset=dataset-1' },
     })
+  })
+
+  it('keeps historical runs visible when the current dataset has no matching run', async () => {
+    const historicalRun = { ...run, local_run_id: 'run-history-1', dataset_id: 'older-dataset', source: { ...run.source, dataset_id: 'older-dataset' } }
+    vi.spyOn(api, 'listRemoteDecisions').mockResolvedValue([historicalRun])
+    vi.spyOn(api, 'preflightRemoteDecision').mockResolvedValue({
+      enabled: true,
+      blockers: [],
+      warnings: [],
+      intent_type: 'instrument_arbitration',
+      source: { dataset_id: 'current-dataset', symbol: 'INTC' },
+      source_summary: {},
+      binding: null,
+      input_sha256: null,
+      preflight_fingerprint: null,
+    })
+
+    await router.push('/instruments/INTC?dataset=current-dataset')
+    await router.isReady()
+    const wrapper = mount(RemoteDecisionPanel, {
+      props: {
+        intentType: 'instrument_arbitration',
+        source: { dataset_id: 'current-dataset', symbol: 'INTC' },
+        preflightOnMount: true,
+      },
+      global: {
+        plugins: [router],
+        stubs: {
+          RemoteDecisionConfirmDialog: true,
+          RouterLink: { props: ['to'], template: '<a :data-to="JSON.stringify(to)"><slot /></a>' },
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.find('.remote-decision-history').exists()).toBe(true)
+    expect(wrapper.text()).toContain('DECISION HISTORY')
+    expect(wrapper.text()).toContain('已完成 AI 仲裁。')
+    expect(wrapper.find('.remote-decision-run-summary').exists()).toBe(false)
+  })
+
+  it('refreshes the matching history row when a restored run changes status', async () => {
+    vi.useFakeTimers()
+    const queued = { ...run, status: 'queued', remote_status: 'queued', result: null } as RemoteDecisionRun
+    const accepted = { ...run, status: 'accepted' } as RemoteDecisionRun
+    vi.spyOn(api, 'listRemoteDecisions').mockResolvedValue([queued])
+    const refresh = vi.spyOn(api, 'getRemoteDecision').mockResolvedValue(accepted)
+    vi.spyOn(api, 'preflightRemoteDecision').mockResolvedValue({
+      enabled: true,
+      blockers: [],
+      warnings: [],
+      intent_type: 'instrument_arbitration',
+      source: run.source,
+      source_summary: {},
+      binding: null,
+      input_sha256: run.input_sha256,
+      preflight_fingerprint: 'c'.repeat(64),
+    })
+
+    await router.push('/instruments/INTC')
+    await router.isReady()
+    const wrapper = mount(RemoteDecisionPanel, {
+      props: {
+        intentType: 'instrument_arbitration',
+        source: run.source,
+        preflightOnMount: true,
+      },
+      global: {
+        plugins: [router],
+        stubs: {
+          RemoteDecisionConfirmDialog: true,
+          RouterLink: { props: ['to'], template: '<a><slot /></a>' },
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.find('.remote-history-item').text()).toContain('排队中')
+    await vi.advanceTimersByTimeAsync(1500)
+    await flushPromises()
+
+    expect(refresh).toHaveBeenCalledWith(run.local_run_id)
+    expect(wrapper.find('.remote-history-item').text()).toContain('已验收')
   })
 })

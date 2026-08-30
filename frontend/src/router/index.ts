@@ -53,6 +53,10 @@ export const router = createRouter({
     { path: '/research-reports/:reportId', redirect: (to) => ({ name: 'research-report-by-id', params: { reportId: to.params.reportId }, query: to.query, hash: to.hash }) },
     { path: '/runs', redirect: { name: 'runs' } },
     { path: '/runs/:runId', redirect: (to) => ({ name: 'run-detail', params: { runId: to.params.runId }, query: to.query, hash: to.hash }) },
-    { path: '/options', redirect: { name: 'operations', query: { tab: 'options' } } },
+    // Options are rendered in the selected instrument workspace now. Keep the
+    // old URL as a safe bookmark redirect without exposing a standalone page.
+    { path: '/options', redirect: (to) => typeof to.query.symbol === 'string'
+      ? { name: 'instrument-decision', params: { symbol: to.query.symbol } }
+      : { name: 'home' } },
   ],
 })

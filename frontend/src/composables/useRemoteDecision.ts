@@ -27,12 +27,38 @@ function restoreQuery(intentType: RemoteDecisionIntent, source: RemoteDecisionSo
   return null
 }
 
+function historyQuery(intentType: RemoteDecisionIntent, source: RemoteDecisionSource) {
+  if (intentType === 'instrument_arbitration' && source.symbol) {
+    return { scope_type: 'instrument', scope_id: source.symbol }
+  }
+  if (intentType === 'group_arbitration') {
+    return { scope_type: 'group' }
+  }
+  if ((intentType === 'indicator_attention' || intentType === 'strategy_attention') && source.observation_run_id) {
+    return { scope_type: 'observation_run', scope_id: source.observation_run_id }
+  }
+  return null
+}
+
 function sourceMatches(run: RemoteDecisionRun, intentType: RemoteDecisionIntent, source: RemoteDecisionSource) {
   if (run.intent_type !== intentType) return false
   return Object.entries(source).every(([key, value]) => {
     if (value === undefined || value === null || value === '') return true
     return String(run.source?.[key as keyof RemoteDecisionSource] ?? '') === String(value)
   })
+}
+
+function historyMatches(run: RemoteDecisionRun, intentType: RemoteDecisionIntent, source: RemoteDecisionSource) {
+  if (run.intent_type !== intentType) return false
+  if (intentType === 'instrument_arbitration') {
+    return String(run.scope_id).toUpperCase() === String(source.symbol ?? '').toUpperCase()
+  }
+  if (intentType === 'group_arbitration') {
+    const keys: Array<keyof RemoteDecisionSource> = ['observation_run_id', 'snapshot_id', 'group_version_id']
+    const populated = keys.filter((key) => source[key] !== undefined && source[key] !== null && source[key] !== '')
+    return populated.length === 0 || populated.every((key) => String(run.source?.[key] ?? '') === String(source[key]))
+  }
+  return sourceMatches(run, intentType, { ...source, content_sha256: undefined })
 }
 
 function isNewer(candidate: RemoteDecisionRun, current: RemoteDecisionRun) {
@@ -47,10 +73,15 @@ function isNewer(candidate: RemoteDecisionRun, current: RemoteDecisionRun) {
 export function useRemoteDecision() {
   const preflight = ref<RemoteDecisionPreflight | null>(null)
   const run = ref<RemoteDecisionRun | null>(null)
+  const history = ref<RemoteDecisionRun[]>([])
   const loading = ref(false)
   const error = ref('')
   let timer: ReturnType<typeof setInterval> | null = null
   let stateGeneration = 0
+
+  function upsertHistory(next: RemoteDecisionRun) {
+    history.value = [next, ...history.value.filter((item) => item.local_run_id !== next.local_run_id)]
+  }
 
   async function prepare(intentType: RemoteDecisionIntent, source: RemoteDecisionSource) {
     const generation = stateGeneration
@@ -86,6 +117,7 @@ export function useRemoteDecision() {
       })
       if (generation === stateGeneration) {
         run.value = next
+        upsertHistory(next)
         startPolling()
       }
       return generation === stateGeneration ? next : null
@@ -107,6 +139,7 @@ export function useRemoteDecision() {
       const next = await api.getRemoteDecision(localRunId)
       if (generation !== stateGeneration) return null
       run.value = next
+      upsertHistory(next)
       error.value = ''
       if (TERMINAL.has(next.status)) stopPolling()
       return next
@@ -118,19 +151,25 @@ export function useRemoteDecision() {
 
   /**
    * Restore the most recent persisted run for the currently displayed frozen
-   * evidence. The panel is intentionally local state, so navigating to the
-   * run detail and back creates a new composable instance; without this lookup
-   * the completed decision disappears even though it is still in the API.
+   * evidence and load the broader history for this scope. A refreshed page may
+   * freeze a new dataset, so an older run must remain visible as history even
+   * when it is not valid for the current evidence.
    */
   async function restore(intentType: RemoteDecisionIntent, source: RemoteDecisionSource) {
     const query = restoreQuery(intentType, source)
-    if (!query) return null
+    const historyLookup = historyQuery(intentType, source)
+    if (!query && !historyLookup) return null
     const generation = stateGeneration
     const runIdAtRequest = run.value?.local_run_id ?? null
     try {
-      const candidates = await api.listRemoteDecisions({ ...query, limit: 50 })
+      const [exactCandidates, historyCandidates] = await Promise.all([
+        query ? api.listRemoteDecisions({ ...query, limit: 50 }) : Promise.resolve([]),
+        historyLookup ? api.listRemoteDecisions({ ...historyLookup, limit: 50 }) : Promise.resolve([]),
+      ])
       if (generation !== stateGeneration) return null
-      const next = candidates.find((candidate) => sourceMatches(candidate, intentType, source))
+      const candidates = historyCandidates.length ? historyCandidates : exactCandidates
+      history.value = candidates.filter((candidate) => historyMatches(candidate, intentType, source))
+      const next = exactCandidates.find((candidate) => sourceMatches(candidate, intentType, source))
       if (!next) return null
       // A user may submit while the history request is in flight. Keep the
       // freshly submitted run instead of letting a stale list response win.
@@ -158,6 +197,7 @@ export function useRemoteDecision() {
       const next = await api.stopRemoteDecision(run.value.local_run_id)
       if (generation === stateGeneration) {
         run.value = next
+        upsertHistory(next)
         startPolling()
       }
       return generation === stateGeneration ? next : null
@@ -178,6 +218,7 @@ export function useRemoteDecision() {
       const next = await api.rerunRemoteDecision(run.value.local_run_id, requestIntentId)
       if (generation === stateGeneration) {
         run.value = next
+        upsertHistory(next)
         startPolling()
       }
       return generation === stateGeneration ? next : null
@@ -194,6 +235,7 @@ export function useRemoteDecision() {
     stopPolling()
     preflight.value = null
     run.value = null
+    history.value = []
     loading.value = false
     error.value = ''
   }
@@ -211,5 +253,5 @@ export function useRemoteDecision() {
   }
 
   onUnmounted(stopPolling)
-  return { preflight, run, loading, error, prepare, submit, refresh, restore, stop, rerun, reset, startPolling, stopPolling }
+  return { preflight, run, history, loading, error, prepare, submit, refresh, restore, stop, rerun, reset, startPolling, stopPolling }
 }

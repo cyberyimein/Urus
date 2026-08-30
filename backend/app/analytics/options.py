@@ -30,6 +30,17 @@ class OptionContract:
         return (self.bid + self.ask) / 2
 
 
+# The same tolerance is used by the report and the UI when they describe a
+# strike as being close to the observed price.  It is intentionally exposed
+# in the result so a reader can see the rule behind a marker.
+POST_CLOSE_LEVEL_PROXIMITY_PERCENT = 0.6
+_POST_CLOSE_DEX_WALLS = (
+    ("net_dex", "Net DEX Wall"),
+    ("call_dex", "Call DEX Wall"),
+    ("put_dex", "Put DEX Wall"),
+)
+
+
 def _rounded(value: float | None, digits: int = 4) -> float | None:
     if value is None or not isfinite(value):
         return None
@@ -375,3 +386,197 @@ def summarize_expiration(
             dividend_yield_percent=dividend_yield_percent,
         ),
     }
+
+
+def build_post_close_option_alignment(
+    options: dict[str, object] | None,
+    close_quotes: dict[str, dict[str, object]] | None,
+    *,
+    proximity_percent: float = POST_CLOSE_LEVEL_PROXIMITY_PERCENT,
+) -> dict[str, object]:
+    """Compare official post-close prices with option levels.
+
+    This is a deterministic proximity check, not a causal market-impact
+    estimator.  A close near a DEX wall is therefore labelled an influence
+    *candidate* so the report does not imply that the option exposure proved
+    why the market closed there.
+
+    ``options`` accepts both the raw collector shape (``expiration.exposure``)
+    and the compact decision-packet shape (``exposure_totals``/``walls``).
+    ``close_quotes`` is expected to contain the regular close chosen by the
+    report builder, with ``last_price`` only as an explicitly marked fallback.
+    """
+
+    options = options if isinstance(options, dict) else {}
+    close_quotes = close_quotes if isinstance(close_quotes, dict) else {}
+    threshold = _finite_number(proximity_percent)
+    if threshold is None or threshold < 0:
+        raise ValueError("post-close option proximity must be non-negative")
+
+    symbols: list[dict[str, object]] = []
+    warnings: list[str] = []
+    for raw_symbol in options.get("symbols") or []:
+        if not isinstance(raw_symbol, dict):
+            continue
+        symbol = str(raw_symbol.get("symbol") or "").upper()
+        if not symbol:
+            continue
+        close = close_quotes.get(symbol) or close_quotes.get(str(raw_symbol.get("symbol") or ""))
+        close = close if isinstance(close, dict) else {}
+        price_kind = close.get("price_kind")
+        # A raw last price may be an after-hours print.  Keep it in the
+        # provenance fields below, but never use it to produce a formal
+        # post-close proximity flag.
+        close_price = (
+            _finite_number(close.get("price"), close.get("regular_price"))
+            if price_kind in (None, "regular_price")
+            else None
+        )
+        expirations: list[dict[str, object]] = []
+        for raw_expiration in raw_symbol.get("expirations") or []:
+            if not isinstance(raw_expiration, dict):
+                continue
+            expiration = str(raw_expiration.get("expiration") or "")
+            max_pain = _finite_number(raw_expiration.get("max_pain"))
+            exposure = raw_expiration.get("exposure")
+            exposure = exposure if isinstance(exposure, dict) else {}
+            walls = raw_expiration.get("walls")
+            walls = walls if isinstance(walls, dict) else exposure.get("walls")
+            walls = walls if isinstance(walls, dict) else {}
+
+            max_pain_distance, max_pain_distance_percent, near_max_pain = _level_distance(
+                close_price,
+                max_pain,
+                threshold,
+            )
+            dex_walls: list[dict[str, object]] = []
+            for kind, label in _POST_CLOSE_DEX_WALLS:
+                raw_wall = walls.get(kind)
+                raw_wall = raw_wall if isinstance(raw_wall, dict) else {}
+                strike = _finite_number(raw_wall.get("strike"), raw_wall.get("level"))
+                if strike is None:
+                    continue
+                distance, distance_percent, near = _level_distance(
+                    close_price,
+                    strike,
+                    threshold,
+                )
+                dex_walls.append(
+                    {
+                        "kind": kind,
+                        "label": label,
+                        "strike": strike,
+                        "exposure": _finite_number(raw_wall.get("exposure"), raw_wall.get("value")),
+                        "distance": distance,
+                        "distance_percent": distance_percent,
+                        "near": near,
+                    }
+                )
+
+            near_dex_wall = any(bool(item["near"]) for item in dex_walls)
+            flags = []
+            if near_max_pain:
+                flags.append("near_max_pain")
+            if near_dex_wall:
+                flags.append("near_dex_wall")
+            expirations.append(
+                {
+                    "expiration": expiration,
+                    "max_pain": max_pain,
+                    "max_pain_distance": max_pain_distance,
+                    "max_pain_distance_percent": max_pain_distance_percent,
+                    "near_max_pain": near_max_pain,
+                    "dex_walls": dex_walls,
+                    "near_dex_wall": near_dex_wall,
+                    "dex_influence_candidate": near_dex_wall,
+                    "flags": flags,
+                }
+            )
+
+        symbol_flags = sorted(
+            {
+                flag
+                for expiration in expirations
+                for flag in expiration["flags"]
+            }
+        )
+        status = "unavailable" if close_price is None or not expirations else "flagged" if symbol_flags else "clear"
+        if status == "unavailable":
+            warnings.append(f"{symbol} 缺少收盘价或到期日结构，无法完成收盘后期权对照。")
+        symbols.append(
+            {
+                "symbol": symbol,
+                "status": status,
+                "close_price": close_price,
+                "close_time": close.get("quote_time") or close.get("as_of"),
+                "price_source": close.get("source_path") or close.get("source"),
+                "price_kind": close.get("price_kind"),
+                "spot": _finite_number(raw_symbol.get("spot")),
+                "flags": symbol_flags,
+                "flagged": bool(symbol_flags),
+                "expirations": expirations,
+            }
+        )
+
+    if not symbols:
+        warnings.append("post_close_review 没有可用于对照的期权标的。")
+    usable_symbols = [item for item in symbols if item["status"] != "unavailable"]
+    unavailable_symbols = [str(item["symbol"]) for item in symbols if item["status"] == "unavailable"]
+    flagged_symbols = [str(item["symbol"]) for item in symbols if item["flagged"] is True]
+    flag_count = sum(
+        1
+        for item in symbols
+        for expiration in item["expirations"]
+        if expiration["flags"]
+    )
+    if not usable_symbols:
+        status = "unavailable"
+    elif flagged_symbols:
+        status = "flagged"
+    elif unavailable_symbols:
+        status = "partial"
+    else:
+        status = "clear"
+
+    return {
+        "available": bool(usable_symbols),
+        "status": status,
+        "source_phase": "post_close_review",
+        "method": "regular_close_vs_max_pain_and_dex_walls",
+        "proximity_percent": round(threshold, 4),
+        "price_definition": "正式对照仅使用官方 regular_price；last_price fallback 仅作参考，不参与命中标记。",
+        "causality_note": "接近 DEX Wall 仅表示影响候选；DEX 是模型化敞口，价位接近不能单独证明因果。",
+        "symbols": symbols,
+        "flagged_symbols": flagged_symbols,
+        "flag_count": flag_count,
+        "unavailable_symbols": unavailable_symbols,
+        "warnings": warnings,
+    }
+
+
+def _finite_number(*values: object) -> float | None:
+    for value in values:
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, (int, float)) and isfinite(float(value)):
+            return float(value)
+        if isinstance(value, str) and value.strip():
+            try:
+                numeric = float(value)
+            except ValueError:
+                continue
+            if isfinite(numeric):
+                return numeric
+    return None
+
+
+def _level_distance(
+    close_price: float | None,
+    level: float | None,
+    threshold: float,
+) -> tuple[float | None, float | None, bool]:
+    if close_price is None or close_price <= 0 or level is None:
+        return None, None, False
+    distance = abs(close_price - level)
+    distance_percent = distance / close_price * 100
+    return _rounded(distance), _rounded(distance_percent), distance_percent <= threshold

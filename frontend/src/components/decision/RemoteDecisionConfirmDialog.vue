@@ -27,6 +27,7 @@ function shortHash(value: unknown) {
         <p>AI 只会读取当前确认的 Observation Run / Dataset，不会更新指标、策略或下单。</p>
         <dl v-if="preflight" class="remote-confirm-summary">
           <div><dt>TRADING DATE</dt><dd>{{ preflight.source_summary.trading_date ?? '—' }}</dd></div>
+          <div v-if="preflight.source_summary.previous_trading_date"><dt>PREVIOUS CLOSE</dt><dd>{{ preflight.source_summary.previous_trading_date }} · {{ preflight.source_summary.temporal_context_status ?? 'partial' }}</dd></div>
           <div><dt>SCOPE</dt><dd>{{ preflight.source_summary.scope_id ?? preflight.source_summary.observation_run_id ?? '—' }}</dd></div>
           <div><dt>RUN / SNAPSHOT</dt><dd>{{ preflight.source_summary.observation_run_id ?? '—' }}<span v-if="preflight.source_summary.snapshot_id"> / {{ preflight.source_summary.snapshot_id }}</span></dd></div>
           <div><dt>SYMBOLS</dt><dd>{{ preflight.source_summary.symbol_count ?? '—' }}</dd></div>

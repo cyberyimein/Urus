@@ -6,6 +6,7 @@ import { api } from '@/api/client'
 import AppShell from '@/components/AppShell.vue'
 import DecisionChartWorkspace from '@/components/decision/DecisionChartWorkspace.vue'
 import RemoteDecisionPanel from '@/components/decision/RemoteDecisionPanel.vue'
+import InstrumentOptionsEvidence from '@/components/InstrumentOptionsEvidence.vue'
 import type {
   ChartPoint,
   ChartSeries,
@@ -16,7 +17,9 @@ import type {
   DeterministicSynthesis,
   StrategyDecision,
 } from '@/types/dailyEvidence'
+import type { FrontendReadModel, OptionsData, RunListItem } from '@/types/api'
 import type { RemoteDecisionSource } from '@/types/remoteDecision'
+import type { PostCloseOptionAlignment } from '@/types/research'
 
 type LayerKey = 'ma20' | 'ma50' | 'ma200' | 'bollinger' | 'volume' | 'rsi' | 'macd' | 'relative'
 type WatchGroup = {
@@ -44,6 +47,10 @@ const deterministicSynthesis = ref<DeterministicSynthesis>({})
 const activeStrategy = ref<string | null>(null)
 const instrumentRemotePanel = ref<{ open: () => void } | null>(null)
 const showTechnicalDetails = ref(false)
+const optionsLoading = ref(false)
+const optionsError = ref('')
+const optionsReadModel = ref<FrontendReadModel | null>(null)
+const optionsSourceRun = ref<RunListItem | null>(null)
 const layers = reactive<Record<LayerKey, boolean>>({
   ma20: true,
   ma50: true,
@@ -199,6 +206,13 @@ const strategyActionLabels: Record<string, string> = {
 }
 const strategyStanceLabels: Record<string, string> = { bullish: '偏多', bearish: '偏空', neutral: '中性', insufficient_data: '不可用' }
 const historicalDatasetId = computed(() => typeof route.query.dataset === 'string' ? route.query.dataset : '')
+const optionsData = computed<OptionsData | null>(() => optionsReadModel.value?.options ?? null)
+const postCloseOptionAlignment = computed<PostCloseOptionAlignment | null>(() => {
+  const report = asRecord(optionsReadModel.value?.technical_report)
+  const reportOptions = asRecord(report?.options)
+  const alignment = asRecord(reportOptions?.post_close_alignment)
+  return alignment ? alignment as unknown as PostCloseOptionAlignment : null
+})
 const instrumentAiSource = computed<RemoteDecisionSource>(() => ({
   dataset_id: dataset.value?.dataset_id,
   symbol: selectedSymbol.value,
@@ -224,6 +238,18 @@ function formatHash(value: string | null | undefined) {
   return value ? `${value.slice(0, 12)}…${value.slice(-6)}` : '—'
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
+function readModelTradingDate(readModel: FrontendReadModel): string | null {
+  const report = asRecord(readModel.technical_report)
+  const value = report?.trading_date
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
 function setLayer(key: LayerKey) {
   layers[key] = !layers[key]
 }
@@ -246,7 +272,7 @@ function chooseSymbol(symbol: string) {
   cursorIndex.value = null
   activeStrategy.value = null
   router.replace({ name: 'instrument-decision', params: { symbol: normalized } }).catch(() => undefined)
-  void loadEvidence()
+  void loadEvidence().then(() => loadOptionsEvidence())
 }
 
 function submitSymbol() {
@@ -302,6 +328,55 @@ async function loadEvidence() {
     }
   } finally {
     loading.value = false
+  }
+}
+
+async function loadOptionsEvidence(targetTradingDate = dataset.value?.trading_date ?? null): Promise<void> {
+  optionsLoading.value = true
+  optionsError.value = ''
+  optionsReadModel.value = null
+  optionsSourceRun.value = null
+  const targetDate = targetTradingDate?.trim() || null
+  try {
+    if (!targetDate) {
+      optionsError.value = '当前股票证据没有锁定交易日，未展示期权快照。'
+      return
+    }
+    const runs = await api.listRuns()
+    const readableRuns = runs
+      .filter((run) => Boolean(run.snapshot_id) && ['succeeded', 'partial', 'mixed'].includes(run.status))
+      .sort((left, right) => {
+        const leftTime = Date.parse(left.cutoff_time)
+        const rightTime = Date.parse(right.cutoff_time)
+        return (Number.isFinite(rightTime) ? rightTime : 0) - (Number.isFinite(leftTime) ? leftTime : 0)
+      })
+    const candidateRuns = [
+      ...readableRuns.filter((run) => run.run_type === 'post_close_review'),
+      ...readableRuns.filter((run) => run.run_type !== 'post_close_review'),
+    ]
+    let readFailure: unknown = null
+    let inspectedReadModel = false
+    for (const sourceRun of candidateRuns) {
+      if (!sourceRun.snapshot_id) continue
+      try {
+        const readModel = await api.getFrontendReadModel(sourceRun.snapshot_id)
+        inspectedReadModel = true
+        if (readModelTradingDate(readModel) !== targetDate) continue
+        optionsSourceRun.value = sourceRun
+        optionsReadModel.value = readModel
+        return
+      } catch (reason) {
+        readFailure = reason
+      }
+    }
+    if (readFailure && !inspectedReadModel) throw readFailure
+    optionsError.value = `没有找到 ${targetDate} 对应的 post-close 期权快照，未展示其他交易日数据。`
+  } catch (reason) {
+    optionsError.value = reason instanceof Error ? reason.message : '期权快照读取失败。'
+    optionsReadModel.value = null
+    optionsSourceRun.value = null
+  } finally {
+    optionsLoading.value = false
   }
 }
 
@@ -480,7 +555,7 @@ async function loadWatchGroups() {
 
 onMounted(() => {
   void loadWatchGroups()
-  void loadEvidence()
+  void loadEvidence().then(() => loadOptionsEvidence())
 })
 </script>
 
@@ -584,7 +659,19 @@ onMounted(() => {
         </section>
 
         <section class="decision-content-grid">
-          <DecisionChartWorkspace v-model:cursor-index="cursorIndex" :projection="projection" :symbol="selectedSymbol" :range="range" :layers="layers" :strategy-filter="activeStrategy" />
+          <div class="decision-chart-column">
+            <DecisionChartWorkspace v-model:cursor-index="cursorIndex" :projection="projection" :symbol="selectedSymbol" :range="range" :layers="layers" :strategy-filter="activeStrategy" />
+
+            <InstrumentOptionsEvidence
+              :options="optionsData"
+              :alignment="postCloseOptionAlignment"
+              :symbol="selectedSymbol"
+              :loading="optionsLoading"
+              :error="optionsError"
+              :source-run-type="optionsSourceRun?.run_type ?? null"
+              :source-cutoff="optionsSourceRun?.cutoff_time ?? null"
+            />
+          </div>
 
           <aside class="decision-insight-rail">
             <article class="insight-card read-card">
@@ -622,7 +709,7 @@ onMounted(() => {
             </article>
 
             <article class="insight-card ai-card">
-              <div class="insight-card-head"><div><span class="section-kicker">AI ARBITRATION</span><h2>AI 决策</h2></div><span class="not-run">NOT RUN</span></div>
+              <div class="insight-card-head"><div><span class="section-kicker">AI ARBITRATION</span><h2>AI 决策</h2></div><span class="not-run">ON DEMAND</span></div>
               <p>AI 只读取当前个股的冻结 Daily Decision Dataset、图表投影和确定性策略结果。</p>
               <RemoteDecisionPanel ref="instrumentRemotePanel" intent-type="instrument_arbitration" :source="instrumentAiSource" title="确认个股 AI 仲裁" label="主动发起 AI 仲裁" :disabled="instrumentAiDisabled" preflight-on-mount />
             </article>

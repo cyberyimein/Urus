@@ -7,6 +7,7 @@ import pandas as pd
 
 from app.analytics.options import (
     OptionContract,
+    build_post_close_option_alignment,
     calculate_expected_move,
     calculate_exposure,
     calculate_max_pain,
@@ -17,6 +18,8 @@ from app.analytics.options_volatility import enrich_option_overview
 from app.core.config import Settings
 from app.integrations.moomoo_options import MoomooOptionsAdapter
 from app.models import StepStatus
+from app.urus_agent.evidence import EvidenceStore
+from app.urus_agent.reports import build_technical_report
 from app.workflows.context import RunContext
 from app.workflows.options import OptionsCollectorStep
 
@@ -60,6 +63,133 @@ def test_max_pain_is_calculated_per_expiration_from_open_interest() -> None:
     ]
 
     assert calculate_max_pain(contracts) == 100
+
+
+def test_post_close_alignment_marks_max_pain_and_dex_wall_candidates() -> None:
+    result = build_post_close_option_alignment(
+        {
+            "symbols": [
+                {
+                    "symbol": "QQQ",
+                    "spot": 100.0,
+                    "expirations": [
+                        {
+                            "expiration": "2026-08-21",
+                            "max_pain": 100.0,
+                            "exposure": {
+                                "walls": {
+                                    "net_dex": {"strike": 100.5, "exposure": 500.0},
+                                    "call_dex": {"strike": 105.0, "exposure": 300.0},
+                                    "put_dex": {"strike": 95.0, "exposure": -250.0},
+                                }
+                            },
+                        }
+                    ],
+                }
+            ]
+        },
+        {"QQQ": {"price": 100.2, "price_kind": "regular_price"}},
+    )
+
+    expiration = result["symbols"][0]["expirations"][0]
+    assert result["status"] == "flagged"
+    assert result["flagged_symbols"] == ["QQQ"]
+    assert result["flag_count"] == 1
+    assert expiration["near_max_pain"] is True
+    assert expiration["near_dex_wall"] is True
+    assert expiration["dex_influence_candidate"] is True
+    assert expiration["flags"] == ["near_max_pain", "near_dex_wall"]
+
+
+def test_post_close_alignment_does_not_use_last_price_fallback_for_flags() -> None:
+    result = build_post_close_option_alignment(
+        {
+            "symbols": [
+                {
+                    "symbol": "QQQ",
+                    "spot": 100.0,
+                    "expirations": [
+                        {
+                            "expiration": "2026-08-21",
+                            "max_pain": 100.0,
+                            "exposure": {
+                                "walls": {
+                                    "net_dex": {"strike": 100.5, "exposure": 500.0},
+                                }
+                            },
+                        }
+                    ],
+                }
+            ]
+        },
+        {"QQQ": {"price": 100.2, "price_kind": "last_price_fallback"}},
+    )
+
+    symbol = result["symbols"][0]
+    expiration = symbol["expirations"][0]
+    assert result["status"] == "unavailable"
+    assert result["flagged_symbols"] == []
+    assert result["flag_count"] == 0
+    assert symbol["close_price"] is None
+    assert symbol["status"] == "unavailable"
+    assert expiration["near_max_pain"] is False
+    assert expiration["near_dex_wall"] is False
+    assert expiration["flags"] == []
+
+
+def test_technical_report_persists_post_close_option_alignment_from_compact_packet() -> None:
+    packet = {
+        "schema_version": "urus.stage4b_decision_packet.v1",
+        "source": {"dataset_key": "run:post-close-options"},
+        "decision_context": {
+            "current_observation": "post_close_review",
+            "decision_phase": "post_close_review",
+            "trading_date": "2026-08-21",
+        },
+        "observations": {
+            "post_close_review": {
+                "run": {"id": "run-1", "cutoff_time": "2026-08-21T08:00:00Z"},
+                "market": {
+                    "primary": {"symbol": "SPY", "regular_price": 500.0},
+                    "cross_asset_quotes": [
+                        {
+                            "symbol": "QQQ",
+                            "regular_price": 100.2,
+                            "last_price": 101.4,
+                            "quote_time": "2026-08-21T08:00:00Z",
+                        }
+                    ],
+                },
+                "instruments": [],
+                "options": {
+                    "symbols": [
+                        {
+                            "symbol": "QQQ",
+                            "spot": 100.0,
+                            "expirations": [
+                                {
+                                    "expiration": "2026-08-21",
+                                    "max_pain": 100.0,
+                                    "exposure_totals": {"net_dex": 500.0},
+                                    "walls": {
+                                        "net_dex": {"strike": 100.5, "exposure": 500.0}
+                                    },
+                                }
+                            ],
+                        }
+                    ]
+                },
+            }
+        },
+        "quality": {},
+    }
+
+    report = build_technical_report(EvidenceStore(packet))
+    alignment = report["options"]["post_close_alignment"]
+
+    assert alignment["status"] == "flagged"
+    assert alignment["symbols"][0]["close_price"] == pytest.approx(100.2)
+    assert alignment["symbols"][0]["price_kind"] == "regular_price"
 
 
 def test_dex_uses_delta_sign_and_gex_keeps_model_assumption_explicit() -> None:

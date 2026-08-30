@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
 import InstrumentDecisionView from '@/views/InstrumentDecisionView.vue'
 import { router } from '@/router'
-import type { ObservationGroup } from '@/types/api'
+import type { FrontendReadModel, ObservationGroup } from '@/types/api'
 
 afterEach(() => vi.restoreAllMocks())
 
@@ -163,5 +163,184 @@ describe('InstrumentDecisionView', () => {
     expect(getStrategies).toHaveBeenCalledWith('frozen-1')
     expect(wrapper.find('.demo-banner').exists()).toBe(false)
     expect(wrapper.find('.connection-state').text()).toContain('EVIDENCE API')
+  })
+
+  it('renders the selected stock option structure and post-close flags inside the stock page', async () => {
+    vi.spyOn(api, 'createDailyDataset').mockRejectedValue(new Error('backend offline'))
+    vi.spyOn(api, 'listObservationGroups').mockResolvedValue([])
+    vi.spyOn(api, 'listRuns').mockResolvedValue([
+      {
+        id: 'post-close-1',
+        run_type: 'post_close_review',
+        status: 'succeeded',
+        started_at: '2026-08-22T05:30:00Z',
+        completed_at: '2026-08-22T05:31:00Z',
+        cutoff_time: '2026-08-22T05:30:00Z',
+        snapshot_id: 'snapshot-1',
+        error_message: null,
+      },
+    ])
+    vi.spyOn(api, 'getFrontendReadModel').mockResolvedValue({
+      options: {
+        is_mock: false,
+        status: 'available',
+        available: true,
+        data_state: 'live',
+        provider: 'test-provider',
+        source_mode: 'snapshot',
+        captured_at: '2026-08-22T05:30:00Z',
+        requested_symbols: ['INTC'],
+        unavailable_symbols: [],
+        symbols: [{
+          symbol: 'INTC',
+          spot: 31,
+          spot_time: '2026-08-22T05:30:00Z',
+          overview: {},
+          expirations: [{
+            expiration: '2026-08-28',
+            days_to_expiry: 6,
+            contract_count: 2,
+            max_pain: 31,
+            expected_move: { amount: 1.2, percent: 3.9, atm_strike: 31 },
+            exposure: {
+              totals: {
+                call_dex: 100,
+                put_dex: -60,
+                net_dex: 40,
+                absolute_dex: 160,
+                call_gex: 0,
+                put_gex: 0,
+                modeled_net_gex: 12,
+                absolute_gex: 12,
+              },
+              walls: {
+                call_dex: { strike: 32, exposure: 100 },
+                put_dex: { strike: 30, exposure: -60 },
+                net_dex: { strike: 31, exposure: 40 },
+              },
+              by_strike: [],
+              gamma_zones: [],
+              gamma_noise_threshold: 0,
+              usable_delta_contracts: 2,
+              usable_gamma_contracts: 2,
+            },
+          }],
+        }],
+        subscription_quota: {},
+        model_assumptions: [],
+        warnings: [],
+        note: '',
+      },
+      technical_report: {
+        trading_date: '2026-08-21',
+        options: {
+          post_close_alignment: {
+            available: true,
+            status: 'flagged',
+            source_phase: 'post_close_review',
+            method: 'regular_close_vs_option_levels',
+            proximity_percent: 0.6,
+            price_definition: 'regular close',
+            causality_note: 'DEX 影响候选只表示结构性邻近，不证明因果。',
+            symbols: [{
+              symbol: 'INTC',
+              status: 'flagged',
+              close_price: 31,
+              close_time: '2026-08-22T05:30:00Z',
+              price_source: 'market.primary',
+              price_kind: 'regular_price',
+              spot: 31,
+              flags: ['near_max_pain', 'near_dex_wall'],
+              flagged: true,
+              expirations: [{
+                expiration: '2026-08-28',
+                max_pain: 31,
+                max_pain_distance: 0,
+                max_pain_distance_percent: 0,
+                near_max_pain: true,
+                dex_walls: [{
+                  kind: 'net_dex',
+                  label: 'Net DEX Wall',
+                  strike: 31,
+                  exposure: 40,
+                  distance: 0,
+                  distance_percent: 0,
+                  near: true,
+                }],
+                near_dex_wall: true,
+                dex_influence_candidate: true,
+                flags: ['near_max_pain', 'near_dex_wall'],
+              }],
+            }],
+            flagged_symbols: ['INTC'],
+            flag_count: 1,
+            unavailable_symbols: [],
+            warnings: [],
+          },
+        },
+      },
+    } as unknown as FrontendReadModel)
+
+    await router.push('/')
+    await router.isReady()
+    const wrapper = mount(InstrumentDecisionView, {
+      global: {
+        plugins: [router],
+        stubs: {
+          AppShell: true,
+          DecisionChartWorkspace: true,
+          RouterLink: { template: '<a><slot /></a>' },
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="instrument-options-evidence"]').exists()).toBe(true)
+    expect(wrapper.find('.decision-chart-column > [data-testid="instrument-options-evidence"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('INTC 期权位置')
+    expect(wrapper.text()).toContain('REGULAR CLOSE')
+    expect(wrapper.text()).toContain('PRICE LOCATION')
+    expect(wrapper.text()).toContain('收盘价接近 Max Pain')
+    expect(wrapper.text()).toContain('DEX 影响候选')
+    expect(wrapper.find('.instrument-options-level-map').exists()).toBe(true)
+    expect(wrapper.findAll('.instrument-options-flag')).toHaveLength(2)
+  })
+
+  it('does not bind an options snapshot from another trading date', async () => {
+    vi.spyOn(api, 'createDailyDataset').mockRejectedValue(new Error('backend offline'))
+    vi.spyOn(api, 'listObservationGroups').mockResolvedValue([])
+    vi.spyOn(api, 'listRuns').mockResolvedValue([
+      {
+        id: 'future-post-close-1',
+        run_type: 'post_close_review',
+        status: 'succeeded',
+        started_at: '2026-08-22T05:30:00Z',
+        completed_at: '2026-08-22T05:31:00Z',
+        cutoff_time: '2026-08-22T05:30:00Z',
+        snapshot_id: 'future-snapshot-1',
+        error_message: null,
+      },
+    ])
+    const getReadModel = vi.spyOn(api, 'getFrontendReadModel').mockResolvedValue({
+      technical_report: { trading_date: '2026-08-22' },
+    } as unknown as FrontendReadModel)
+
+    await router.push('/')
+    await router.isReady()
+    const wrapper = mount(InstrumentDecisionView, {
+      global: {
+        plugins: [router],
+        stubs: {
+          AppShell: true,
+          DecisionChartWorkspace: true,
+          RouterLink: { template: '<a><slot /></a>' },
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(getReadModel).toHaveBeenCalledWith('future-snapshot-1')
+    expect(wrapper.find('.instrument-options-error').exists()).toBe(true)
+    expect(wrapper.text()).toContain('没有找到 2026-08-21 对应的 post-close 期权快照')
   })
 })

@@ -1,7 +1,13 @@
 # Phase D AI 决策流程与按钮设计
 
+> 当前运行边界（2026-08-29）：生产 Daily Decision Dataset 以官方交易所收盘后的日 K 为准，
+> 当前没有盘前或盘中观测。本文保留早期 Phase D 的流程参考；其中涉及 pre-market / pre-close
+> 双阶段数据的描述属于历史设计，不能作为当前数据输入的事实前提。当前个股 AI 输入通过
+> `evidence.temporal_context` 显式携带当前收盘、上一已完成交易日收盘及 T-1→T 变化；若没有
+> 严格上一交易日冻结 dataset，只能使用当前冻结图表中的上一根日 K，并标记为 `partial`。
+
 > 状态：Phase D 开发交接基线（D0 发布与鉴权已完成，D4 真实联调中）
-> 日期：2026-08-27
+> 日期：2026-08-29
 > 前置条件：Urus Phase C 的确定性日 K、Strategy Decision、Observation Run 和横截面投影已经完成；Anomalo 已提供已发布 Workflow 的运行、事件、状态和停止 Interface。
 > 上位设计：[日 K Decision Harness 开发设计](daily-k-decision-harness-development-design.md)
 > 领域词汇：[Urus Research Context](../CONTEXT.md)
@@ -267,6 +273,7 @@ Anomalo 顶层状态只有 `queued/running/succeeded/failed/stopping/stopped`。
 - Daily Decision Dataset 摘要、市场/benchmark 上下文和质量；
 - 该 symbol 的全部 Strategy Decision，包括错误和未适用项；
 - Deterministic Synthesis；
+- `evidence.temporal_context`：当前收盘、上一已完成交易日收盘、指标变化、策略状态变化和综合结论变化；
 - 可选的只读 group membership 摘要，但不得扩大决策 symbol；
 - Phase E 前不启用 Case Card 检索。
 

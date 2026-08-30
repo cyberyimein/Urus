@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 
+import PostCloseOptionAlignment from '@/components/PostCloseOptionAlignment.vue'
 import MockBadge from '@/components/MockBadge.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import type {
@@ -11,9 +12,13 @@ import type {
   OptionsData,
   SpotGammaPoint,
 } from '@/types/api'
+import type { PostCloseOptionAlignment as PostCloseOptionAlignmentData } from '@/types/research'
 import { formatDate, formatNumber } from '@/utils/format'
 
-const props = defineProps<{ options: OptionsData }>()
+const props = defineProps<{
+  options: OptionsData
+  postCloseAlignment?: PostCloseOptionAlignmentData | null
+}>()
 
 const selectedSymbol = ref('')
 const selectedExpiration = ref('')
@@ -270,6 +275,12 @@ function profileY(netGex: number): number {
         <StatusBadge :status="options.status" />
       </div>
     </div>
+
+    <PostCloseOptionAlignment
+      :alignment="props.postCloseAlignment"
+      :focus-symbol="selectedSymbol"
+      :focus-expiration="selectedExpiration"
+    />
 
     <template v-if="liveOptions && currentSymbol">
       <section class="data-section">
