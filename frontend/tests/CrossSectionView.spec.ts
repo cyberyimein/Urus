@@ -453,6 +453,38 @@ describe('CrossSectionView', () => {
     wrapper.unmount()
   })
 
+  it('uses the current route surface even if a shared view instance is reused', async () => {
+    const listIndicators = vi.spyOn(api, 'listIndicatorCatalog').mockResolvedValue([projection.indicator!])
+    const listStrategies = vi.spyOn(api, 'listStrategyCatalog').mockResolvedValue([strategyCatalog])
+    vi.spyOn(api, 'listObservationRuns').mockResolvedValue([run])
+    vi.spyOn(api, 'getIndicatorCrossSection').mockResolvedValue(projection)
+    const getStrategyProjection = vi.spyOn(api, 'getStrategyCrossSection').mockResolvedValue(strategyProjection)
+
+    await router.push('/indicators/rsi14?run=run-1')
+    await router.isReady()
+    const wrapper = mount(CrossSectionView, {
+      props: { lensType: 'indicator' },
+      global: {
+        plugins: [router],
+        stubs: {
+          AppShell: true,
+          RouterLink: { template: '<a><slot /></a>' },
+        },
+      },
+    })
+    await flushPromises()
+
+    await router.push('/strategies?run=run-1')
+    await flushPromises()
+
+    expect(listIndicators).toHaveBeenCalled()
+    expect(listStrategies).toHaveBeenCalled()
+    expect(getStrategyProjection).toHaveBeenCalledWith('run-1', 'trend_momentum_v1')
+    expect(wrapper.text()).toContain('策略横向扫描')
+    expect(wrapper.text()).not.toContain('指标横向扫描')
+    wrapper.unmount()
+  })
+
   it('falls back to the newest run with valid rows and leaves the cross-section AI action enabled', async () => {
     const staleRun = {
       ...run,

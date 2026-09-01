@@ -42,7 +42,7 @@ ObservationRunService
 
 ### 3.1 Universe 和观察组
 
-`InstrumentUniverseRepository` 保存版本化标的配置。`ObservationGroupSyncService` 把启用的 equity watchlist 和主题投影为版本化 Observation Group；如果配置了远端 Universe 来源，会先校验来源 URL、revision 和 content hash，再保存本地审计记录。
+`InstrumentUniverseRepository` 保存版本化标的配置。`ObservationGroupSyncService` 把启用的 equity watchlist 投影为“指标推荐”，并把启用且采集日线的主题成员投影为版本化 Observation Group；两者范围相互独立。如果配置了远端 Universe 来源，会先校验来源 URL、revision 和 content hash，再保存本地审计记录。
 
 观察组保存成员和基准的版本。保存新成员不会覆盖历史版本；Observation Run 必须引用一个 active 版本，不能在运行中重新解析当前列表。
 

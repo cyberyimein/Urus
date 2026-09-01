@@ -675,6 +675,28 @@ def test_observation_groups_sync_from_active_universe(client) -> None:
     assert any(item["display_name"] == "个股观察" and item["symbols"] == ["INTC"] for item in groups)
 
 
+def test_observation_theme_groups_honor_daily_members_outside_indicator_watchlist(client) -> None:
+    deployed = client.get("/api/settings/universe").json()
+    qqq = next(item for item in deployed["items"] if item["symbol"] == "QQQ")
+    qqq["theme"] = "半导体"
+    qqq["themes"] = ["半导体"]
+
+    updated = client.put(
+        "/api/settings/universe",
+        json={"base_version_id": deployed["version_id"], "items": deployed["items"]},
+    )
+    assert updated.status_code == 200, updated.text
+
+    synced = client.post("/api/observation/groups/sync")
+    assert synced.status_code == 200, synced.text
+    groups = synced.json()["groups"]
+    core = next(item for item in groups if item["group_id"] == "core-watchlist")
+    semiconductor = next(item for item in groups if item["display_name"] == "半导体")
+
+    assert "QQQ" not in core["symbols"]
+    assert set(semiconductor["symbols"]) == {"SMH", "QQQ"}
+
+
 def test_persisted_self_selected_group_is_hidden_from_active_catalog(client) -> None:
     created = client.post(
         "/api/observation/groups",

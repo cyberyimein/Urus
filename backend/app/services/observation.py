@@ -154,8 +154,18 @@ class ObservationGroupSyncService:
             )
         )
 
+        # Theme membership is an editable Universe concern and is deliberately
+        # independent from the protected indicator-recommendation role.  Keep
+        # the daily-history gate here because a theme member without technical
+        # evidence cannot produce a useful observation snapshot.
+        theme_members = [
+            item
+            for item in response.items
+            if item.enabled
+            and item.collection.daily_history
+        ]
         themes: dict[str, list[Any]] = {}
-        for item in watchlist:
+        for item in theme_members:
             for theme in item.themes:
                 themes.setdefault(theme, []).append(item)
         for position, (theme, members) in enumerate(themes.items(), start=1):
@@ -163,7 +173,7 @@ class ObservationGroupSyncService:
                 ObservationGroupCreateRequest(
                     group_id=self._theme_group_id(theme),
                     display_name=theme,
-                    description=f"由当前部署 Universe 自动同步的 {theme} 关注组。",
+                    description=f"由当前部署 Universe 的启用日线主题成员自动同步的 {theme} 关注组。",
                     symbols=[item.symbol for item in members],
                     benchmark_symbols=self._benchmarks(members),
                     tags=["universe-synced", "theme", f"theme:{theme}"],

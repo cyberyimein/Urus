@@ -30,6 +30,14 @@ const error = ref('')
 const pageReady = ref(false)
 const automaticFallbackRunId = ref('')
 let requestSequence = 0
+const activeLensType = computed<CrossSectionLensType>(() => {
+  // Route records intentionally share CrossSectionView, and an in-flight
+  // navigation can briefly reuse the component before route props settle.
+  // The route name is the authoritative surface discriminator in that case.
+  if (route.name === 'strategies' || route.name === 'strategy-cross-section') return 'strategy'
+  if (route.name === 'indicators' || route.name === 'indicator-cross-section') return 'indicator'
+  return props.lensType
+})
 const crossSectionAiSource = computed<RemoteDecisionSource>(() => ({
   observation_run_id: selectedRunId.value || undefined,
   lens_id: selectedLensId.value || undefined,
@@ -39,7 +47,7 @@ const crossSectionAiSource = computed<RemoteDecisionSource>(() => ({
 }))
 const crossSectionAiDisabled = computed(() => !projection.value || !selectedRunId.value || !selectedLensId.value)
 
-const isIndicator = computed(() => props.lensType === 'indicator')
+const isIndicator = computed(() => activeLensType.value === 'indicator')
 const pageTitle = computed(() => isIndicator.value ? '指标横向扫描' : '策略横向扫描')
 const pageKicker = computed(() => isIndicator.value ? 'INDICATOR LENS / OBSERVATION RUN' : 'STRATEGY LENS / OBSERVATION RUN')
 const pageDescription = computed(() => isIndicator.value
@@ -148,7 +156,7 @@ interface VisualZone {
 
 const activeLensId = computed(() => projection.value?.lens.id ?? selectedLensId.value)
 const visualKind = computed<VisualKind>(() => {
-  if (props.lensType === 'strategy') return 'decision'
+  if (activeLensType.value === 'strategy') return 'decision'
   if (activeLensId.value === 'rsi14') return 'rsi-band'
   if (activeLensId.value === 'volume_ratio_20d') return 'ratio-band'
   if (['macd_histogram', 'relative_strength_20d', 'return_20d'].includes(activeLensId.value)) return 'zero-centered'
@@ -190,17 +198,17 @@ const visualScales = computed<Record<string, VisualScale>>(() => {
   return result
 })
 
-function routeLensId(lensType: CrossSectionLensType = props.lensType) {
+function routeLensId(lensType: CrossSectionLensType = activeLensType.value) {
   const key = lensType === 'indicator' ? 'indicatorId' : 'strategyId'
   const value = route.params[key]
   return typeof value === 'string' ? value : ''
 }
 
-function routeName(lensType: CrossSectionLensType = props.lensType) {
+function routeName(lensType: CrossSectionLensType = activeLensType.value) {
   return lensType === 'indicator' ? 'indicator-cross-section' : 'strategy-cross-section'
 }
 
-function indexRouteName(lensType: CrossSectionLensType = props.lensType) {
+function indexRouteName(lensType: CrossSectionLensType = activeLensType.value) {
   return lensType === 'indicator' ? 'indicators' : 'strategies'
 }
 
@@ -215,7 +223,7 @@ function projectionValidRowCount(value: CrossSectionProjection) {
 
 function isCurrentRequest(requestId: number, lensType: CrossSectionLensType, runId: string, lensId: string) {
   return requestId === requestSequence
-    && props.lensType === lensType
+    && activeLensType.value === lensType
     && selectedRunId.value === runId
     && selectedLensId.value === lensId
 }
@@ -253,7 +261,7 @@ function comparisonStatusLabel() {
 
 function previousValueOf(row: CrossSectionRow) {
   if (row.previous_value === null || row.previous_value === undefined) return '—'
-  if (props.lensType === 'strategy') return row.previous_value.toFixed(0)
+  if (activeLensType.value === 'strategy') return row.previous_value.toFixed(0)
   return row.previous_display_value ?? formatNumber(row.previous_value)
 }
 
@@ -264,7 +272,7 @@ function previousStageOf(row: CrossSectionRow) {
 
 function previousSummaryOf(row: CrossSectionRow) {
   if (row.previous_value === null || row.previous_value === undefined) return '前一交易日无可比数据'
-  if (props.lensType === 'strategy') {
+  if (activeLensType.value === 'strategy') {
     const action = actionLabels[row.previous_action ?? ''] ?? row.previous_action ?? '—'
     return `前日 ${previousValueOf(row)} · ${action} · ${previousStageOf(row)}`
   }
@@ -403,7 +411,7 @@ function cardAriaLabel(row: CrossSectionRow) {
   const transition = row.transition
     ? `，状态由${stateLabels[row.transition.from] ?? row.transition.from}切换至${stateLabels[row.transition.to] ?? row.transition.to}`
     : ''
-  if (props.lensType === 'strategy') {
+  if (activeLensType.value === 'strategy') {
     return `${row.symbol}，${lensName}，${stateOf(row)}，动作${actionOf(row)}，阶段${stageOf(row)}，score ${scoreOf(row)}${row.change === null || row.change === undefined ? '' : `，变化${formatChange(row)}`}${transition}`
   }
   return `${row.symbol}，${lensName}，${statusOf(row)}，当前值${valueOf(row)}${row.change === null || row.change === undefined ? '' : `，变化${formatChange(row)}`}${transition}`
@@ -423,7 +431,7 @@ function visualAriaLabel(row: CrossSectionRow, groupId: string) {
 }
 
 function valueOf(row: CrossSectionRow) {
-  if (props.lensType === 'strategy') {
+  if (activeLensType.value === 'strategy') {
     return row.score === null || row.score === undefined ? '—' : row.score.toFixed(0)
   }
   return row.display_value
@@ -443,14 +451,14 @@ function scoreOf(row: CrossSectionRow) {
 }
 
 function stateOf(row: CrossSectionRow) {
-  if (props.lensType === 'strategy') {
+  if (activeLensType.value === 'strategy') {
     return stateLabels[row.stance ?? ''] ?? row.stance ?? '—'
   }
   return stateLabels[row.state] ?? row.state
 }
 
 function toneOf(row: CrossSectionRow) {
-  if (props.lensType === 'strategy') {
+  if (activeLensType.value === 'strategy') {
     if (row.stance === 'bullish') return 'positive'
     if (row.stance === 'bearish') return 'negative'
     if (row.stance === 'insufficient_data' || !row.valid) return 'attention'
@@ -464,7 +472,7 @@ function toneOf(row: CrossSectionRow) {
 }
 
 function groupStateTone(state: string) {
-  if (props.lensType === 'strategy') {
+  if (activeLensType.value === 'strategy') {
     if (state === 'bullish') return 'positive'
     if (state === 'bearish') return 'negative'
     if (state === 'insufficient_data') return 'attention'
@@ -485,7 +493,7 @@ function strategyStageTone(stage: string) {
 }
 
 function groupDistribution(group: CrossSectionProjection['groups'][number]) {
-  if (props.lensType === 'strategy' && group.stance_counts && Object.keys(group.stance_counts).length) {
+  if (activeLensType.value === 'strategy' && group.stance_counts && Object.keys(group.stance_counts).length) {
     return group.stance_counts
   }
   return group.state_counts
@@ -550,14 +558,14 @@ function instrumentLink(symbol: string, datasetId: string) {
 
 function statusOf(row: CrossSectionRow) {
   if (row.status === 'missing' || !row.valid) return '数据缺失'
-  if (props.lensType === 'strategy') return stateOf(row)
+  if (activeLensType.value === 'strategy') return stateOf(row)
   return stateOf(row)
 }
 
 async function loadProjection(
   runId = selectedRunId.value,
   lensId = selectedLensId.value,
-  lensType: CrossSectionLensType = props.lensType,
+  lensType: CrossSectionLensType = activeLensType.value,
   requestId = ++requestSequence,
 ) {
   if (requestId === requestSequence) {
@@ -588,7 +596,7 @@ async function loadProjection(
 
 async function selectLens(id: string) {
   if (id === selectedLensId.value) return
-  const lensType = props.lensType
+  const lensType = activeLensType.value
   const requestId = ++requestSequence
   selectedLensId.value = id
   automaticFallbackRunId.value = ''
@@ -602,7 +610,7 @@ async function selectLens(id: string) {
 }
 
 async function selectRun() {
-  const lensType = props.lensType
+  const lensType = activeLensType.value
   const requestId = ++requestSequence
   if (!readyRuns.value.some((run) => run.run_id === selectedRunId.value)) {
     selectedRunId.value = readyRuns.value[0]?.run_id || ''
@@ -617,8 +625,7 @@ async function selectRun() {
   await loadProjection(selectedRunId.value, selectedLensId.value, lensType, requestId)
 }
 
-async function loadPage() {
-  const lensType = props.lensType
+async function loadPage(lensType: CrossSectionLensType = activeLensType.value) {
   const requestId = ++requestSequence
   pageReady.value = false
   automaticFallbackRunId.value = ''
@@ -634,7 +641,7 @@ async function loadPage() {
       lensType === 'indicator' ? api.listIndicatorCatalog() : api.listStrategyCatalog(),
       api.listObservationRuns(30),
     ])
-    if (requestId !== requestSequence || props.lensType !== lensType) return
+    if (requestId !== requestSequence || activeLensType.value !== lensType) return
     catalog.value = items
     runs.value = runItems
     const requestedLensId = routeLensId(lensType)
@@ -648,10 +655,10 @@ async function loadPage() {
       : runItems.filter(isReadyRun)
     const firstCandidateId = candidates[0]?.run_id
     for (const candidate of candidates) {
-      if (requestId !== requestSequence || props.lensType !== lensType) return
+      if (requestId !== requestSequence || activeLensType.value !== lensType) return
       selectedRunId.value = candidate.run_id
       const next = await loadProjection(candidate.run_id, selectedLensId.value, lensType, requestId)
-      if (requestId !== requestSequence || props.lensType !== lensType) return
+      if (requestId !== requestSequence || activeLensType.value !== lensType) return
       if (!next) continue
       const hasUsableEvidence = projectionValidRowCount(next) > 0
       if (requestedRun || hasUsableEvidence || candidate.run_id === candidates[candidates.length - 1]?.run_id) {
@@ -662,24 +669,29 @@ async function loadPage() {
       }
     }
   } catch (reason) {
-    if (requestId === requestSequence && props.lensType === lensType) {
+    if (requestId === requestSequence && activeLensType.value === lensType) {
       error.value = reason instanceof Error ? reason.message : '扫描目录加载失败。'
     }
   } finally {
-    if (requestId === requestSequence && props.lensType === lensType) {
+    if (requestId === requestSequence && activeLensType.value === lensType) {
       pageReady.value = true
       loading.value = false
     }
   }
 }
 
-watch(() => props.lensType, () => { void loadPage() })
+watch(activeLensType, (lensType, previousLensType) => {
+  if (lensType !== previousLensType) void loadPage(lensType)
+})
 
 watch(
-  () => [route.name, route.params.indicatorId, route.params.strategyId, route.query.run],
-  () => {
+  () => [activeLensType.value, route.name, route.params.indicatorId, route.params.strategyId, route.query.run],
+  (value, previousValue) => {
     if (!pageReady.value) return
-    const lensType = props.lensType
+    // The dedicated lens-type watcher owns the full catalog reset when the
+    // user crosses between indicator and strategy surfaces.
+    if (previousValue && value[0] !== previousValue[0]) return
+    const lensType = activeLensType.value
     const lensId = routeLensId(lensType)
     const routeHasValidLens = catalog.value.some((item) => item.id === lensId)
     const lensChanged = Boolean(lensId && routeHasValidLens && lensId !== selectedLensId.value)
