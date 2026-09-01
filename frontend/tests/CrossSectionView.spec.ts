@@ -2,6 +2,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { api } from '@/api/client'
+import App from '@/App.vue'
 import { router } from '@/router'
 import CrossSectionView from '@/views/CrossSectionView.vue'
 import type { ObservationRun } from '@/types/api'
@@ -430,8 +431,7 @@ describe('CrossSectionView', () => {
 
     await router.push('/indicators/rsi14?run=run-1')
     await router.isReady()
-    const wrapper = mount(CrossSectionView, {
-      props: { lensType: 'indicator' },
+    const wrapper = mount(App, {
       global: {
         plugins: [router],
         stubs: {
@@ -443,7 +443,6 @@ describe('CrossSectionView', () => {
     await flushPromises()
 
     await router.push('/strategies?run=run-1')
-    await wrapper.setProps({ lensType: 'strategy' })
     await flushPromises()
 
     expect(listIndicators).toHaveBeenCalled()
