@@ -129,6 +129,55 @@ describe('RemoteDecisionPanel', () => {
     expect(wrapper.find('.remote-decision-run-summary').exists()).toBe(false)
   })
 
+  it('restores a cross-section scan summary instead of a generic result label', async () => {
+    const scanSummary = '策略横向扫描完成：已筛出 3 个值得关注的卡片。'
+    const scanRun = {
+      ...run,
+      local_run_id: 'run-strategy-attention',
+      intent_type: 'strategy_attention',
+      scope_type: 'observation_run',
+      scope_id: 'observation-run-1',
+      dataset_id: null,
+      lens_type: 'strategy',
+      lens_id: 'trend_momentum_v1',
+      lens_version: '1.0.0',
+      source: { observation_run_id: 'observation-run-1', lens_id: 'trend_momentum_v1', lens_type: 'strategy' },
+      result: { summary: null, decision: { scan_summary: scanSummary }, notable_cards: [] },
+    } as RemoteDecisionRun
+    vi.spyOn(api, 'listRemoteDecisions').mockResolvedValue([scanRun])
+    vi.spyOn(api, 'preflightRemoteDecision').mockResolvedValue({
+      enabled: true,
+      blockers: [],
+      warnings: [],
+      intent_type: 'strategy_attention',
+      source: scanRun.source,
+      source_summary: {},
+      binding: null,
+      input_sha256: scanRun.input_sha256,
+      preflight_fingerprint: 'c'.repeat(64),
+    })
+
+    await router.push('/strategies/trend_momentum_v1?run=observation-run-1')
+    await router.isReady()
+    const wrapper = mount(RemoteDecisionPanel, {
+      props: {
+        intentType: 'strategy_attention',
+        source: scanRun.source,
+        preflightOnMount: true,
+      },
+      global: {
+        plugins: [router],
+        stubs: {
+          RemoteDecisionConfirmDialog: true,
+          RouterLink: { props: ['to'], template: '<a><slot /></a>' },
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.find('.remote-decision-run-summary').text()).toContain(scanSummary)
+  })
+
   it('refreshes the matching history row when a restored run changes status', async () => {
     vi.useFakeTimers()
     const queued = { ...run, status: 'queued', remote_status: 'queued', result: null } as RemoteDecisionRun

@@ -77,4 +77,71 @@ describe('RemoteDecisionRunView', () => {
     expect(wrapper.text()).toContain('trend_momentum_v1 · 1.0.0')
     expect(wrapper.text()).not.toContain('Workflow 正在读取冻结证据。')
   })
+
+  it('restores an attention scan summary returned inside the decision field', async () => {
+    const scanSummary = '策略横向扫描完成：已按冻结输入筛出 3 个值得关注的卡片。'
+    vi.spyOn(api, 'getRemoteDecision').mockResolvedValue({
+      local_run_id: 'run-strategy-attention',
+      anomalo_run_id: 'anomalo-strategy-attention',
+      intent_type: 'strategy_attention',
+      request_intent_id: 'request-strategy-attention',
+      idempotency_key: 'key-strategy-attention',
+      scope_type: 'observation_run',
+      scope_id: 'observation-run-1',
+      scope_version: '1.0.0',
+      dataset_id: null,
+      lens_type: 'strategy',
+      lens_id: 'trend_momentum_v1',
+      lens_version: '1.0.0',
+      source: { observation_run_id: 'observation-run-1', lens_id: 'trend_momentum_v1', lens_type: 'strategy' },
+      workflow_ref: 'urus-strategy-review@3',
+      input_schema_version: 'urus.remote_decision_input.v1',
+      input_sha256: 'b'.repeat(64),
+      status: 'accepted',
+      remote_status: 'succeeded',
+      validation_status: 'accepted',
+      latest_event_sequence: 11,
+      error_code: null,
+      safe_error_message: null,
+      result: {
+        schema_version: 'urus.remote_decision_artifact.v1',
+        intent_type: 'strategy_attention',
+        scope: { scope_type: 'observation_run', scope_id: 'observation-run-1', lens: { type: 'strategy', id: 'trend_momentum_v1' } },
+        dataset_id: null,
+        input_sha256: 'b'.repeat(64),
+        completeness: 'complete',
+        decision: { scan_summary: scanSummary },
+        summary: null,
+        confidence: null,
+        notable_cards: [],
+        coverage_gaps: [],
+        warnings: [],
+        evidence_refs: [],
+        usage: {},
+        trace_ref: null,
+        generated_at: null,
+      },
+      artifact: null,
+      created_at: '2026-08-28T21:36:16Z',
+      submitted_at: '2026-08-28T21:36:17Z',
+      started_at: '2026-08-28T21:36:19Z',
+      completed_at: '2026-08-28T21:39:19Z',
+    })
+    vi.spyOn(api, 'getRemoteDecisionEvents').mockResolvedValue([])
+
+    await router.push('/decision-runs/run-strategy-attention')
+    await router.isReady()
+    const wrapper = mount(RemoteDecisionRunView, {
+      global: {
+        plugins: [router],
+        stubs: {
+          AppShell: true,
+          RouterLink: { template: '<a><slot /></a>' },
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.find('.remote-run-decision-narrative').text()).toContain(scanSummary)
+  })
 })

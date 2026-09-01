@@ -5,7 +5,7 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 import RemoteDecisionConfirmDialog from '@/components/decision/RemoteDecisionConfirmDialog.vue'
 import { useRemoteDecision } from '@/composables/useRemoteDecision'
 import type { RemoteDecisionIntent, RemoteDecisionSource } from '@/types/remoteDecision'
-import { remoteDecisionTitle } from '@/utils/remoteDecisionDisplay'
+import { remoteDecisionNarrative, remoteDecisionTitle } from '@/utils/remoteDecisionDisplay'
 
 const props = withDefaults(defineProps<{
   intentType: RemoteDecisionIntent
@@ -87,6 +87,10 @@ function historyDate(item: { created_at: string; result: Record<string, any> | n
   return typeof tradingDate === 'string' && tradingDate ? tradingDate : item.created_at.slice(0, 10)
 }
 
+function resultLabel(result: Record<string, any> | null) {
+  return remoteDecisionNarrative(result) ?? remoteDecisionTitle(result)
+}
+
 function historyStatus(status: string) {
   const labels: Record<string, string> = {
     accepted: '已验收',
@@ -147,7 +151,7 @@ defineExpose({ open })
     <div v-if="error" class="remote-decision-error" role="alert">{{ error }}</div>
     <article v-if="run" class="remote-decision-run-summary">
       <header><span class="section-kicker">REMOTE DECISION RUN</span><strong>{{ run.status }}</strong></header>
-      <p>{{ run.safe_error_message ?? (run.result ? remoteDecisionTitle(run.result) : 'Workflow 正在读取冻结证据。') }}</p>
+      <p>{{ run.safe_error_message ?? (run.result ? resultLabel(run.result) : 'Workflow 正在读取冻结证据。') }}</p>
       <div class="remote-decision-run-meta"><span>{{ run.local_run_id.slice(0, 12) }}…</span><span>events {{ run.latest_event_sequence }}</span><RouterLink :to="detailRoute">详情 →</RouterLink></div>
       <button v-if="!isTerminal" class="remote-stop-button" type="button" @click="requestStop">停止运行</button>
       <button v-if="isTerminal" class="remote-rerun-button" type="button" :disabled="loading" @click="rerunSameEvidence">用同一证据重新运行</button>
@@ -159,7 +163,7 @@ defineExpose({ open })
       <header><span class="section-kicker">DECISION HISTORY</span><strong>最近 {{ history.length }} 次</strong></header>
       <RouterLink v-for="item in historyRuns" :key="item.local_run_id" class="remote-history-item" :to="historyRoute(item)">
         <div><strong>{{ historyDate(item) }}</strong><small>{{ item.workflow_ref }} · {{ historyStatus(item.status) }}</small></div>
-        <span>{{ item.result ? remoteDecisionTitle(item.result) : item.safe_error_message ?? '暂无结果' }}</span>
+        <span>{{ item.result ? resultLabel(item.result) : item.safe_error_message ?? '暂无结果' }}</span>
         <b>→</b>
       </RouterLink>
     </article>

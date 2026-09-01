@@ -59,7 +59,7 @@ export function remoteDecisionTitle(result: RemoteDecisionRun['result']): string
 
 export function remoteDecisionNarrative(result: RemoteDecisionRun['result']): string | null {
   const decision = resultDecision(result)
-  const value = decision?.conflict_summary ?? decision?.summary
+  const value = decision?.scan_summary ?? decision?.conflict_summary ?? decision?.summary
   return typeof value === 'string' && value.trim() ? value.trim() : null
 }
 

@@ -525,7 +525,11 @@ class RemoteDecisionCompiler:
                 "trading_date": run.trading_date.isoformat(),
                 "cutoff_time": run.cutoff_time.isoformat(),
             },
-            evidence={"projection": projection},
+            # ``rows`` is already a required top-level part of the input
+            # contract.  Keeping a second copy under evidence nearly doubles
+            # the payload and leaves the attention model with too little room
+            # to emit its ranked cards.
+            evidence={"projection": _attention_projection(projection)},
             strategy_decisions=strategy_decisions,
             deterministic_synthesis={},
             quality=projection_quality,
@@ -699,6 +703,9 @@ def validate_artifact(
         for strategy_id in _decision_strategy_ids(artifact.decision):
             if strategy_id not in known_strategy_ids:
                 return None, _issue("result_scope_mismatch", "Artifact strategy ID 不属于本次冻结输入。", {"strategy_decision_id": strategy_id})
+    attention_issue = _attention_content_issue(run, artifact)
+    if attention_issue is not None:
+        return None, attention_issue
     ranks = [item.get("rank") for item in artifact.notable_cards if isinstance(item.get("rank"), int)]
     if ranks and ranks != list(range(1, len(ranks) + 1)):
         return None, _issue("output_schema_invalid", "Artifact rank 必须从 1 连续递增。")
@@ -831,6 +838,66 @@ def _decision_strategy_ids(value: Any) -> set[str]:
     return result
 
 
+def _attention_content_issue(
+    run: RemoteDecisionRunModel,
+    artifact: RemoteDecisionArtifact,
+) -> RemoteDecisionIssue | None:
+    """Reject an attention result that claims findings but returns no cards.
+
+    The common Artifact envelope intentionally keeps ``decision`` open for
+    intent-specific fields.  That structural flexibility must not turn a
+    summary-only model response into an accepted cross-section result.  A
+    zero-card scan is still valid when it carries an explicit summary (for
+    example, "0 notable cards"); a positive count must be backed by the
+    corresponding card payload.
+    """
+
+    if run.intent_type not in {
+        RemoteDecisionIntent.INDICATOR_ATTENTION.value,
+        RemoteDecisionIntent.STRATEGY_ATTENTION.value,
+    }:
+        return None
+    if artifact.completeness != "complete":
+        return None
+    if artifact.notable_cards:
+        return None
+
+    summary = artifact.summary or _attention_summary(artifact.decision)
+    if not summary:
+        return _issue(
+            "output_content_missing",
+            "横截面 Artifact 声称 complete，但没有 scan_summary/summary 或 notable_cards。",
+        )
+    declared_count = _declared_card_count(summary)
+    if declared_count > 0:
+        return _issue(
+            "output_content_missing",
+            "横截面 Artifact 声称存在关注项，但没有返回 notable_cards。",
+            {"declared_card_count": declared_count},
+        )
+    return None
+
+
+def _attention_summary(decision: dict[str, Any]) -> str | None:
+    for key in ("scan_summary", "summary"):
+        value = decision.get(key) if isinstance(decision, dict) else None
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _declared_card_count(value: str) -> int:
+    patterns = (
+        r"(?<!\d)(\d+)\s+notable\s+cards?\b",
+        r"(?<!\d)(\d+)\s*(?:个|张)?\s*(?:关注项|关注卡片|异常卡片)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, value, flags=re.IGNORECASE)
+        if match:
+            return int(match.group(1))
+    return 0
+
+
 def _hash_without_input_hash(payload: dict[str, Any]) -> str:
     return content_sha256({key: value for key, value in payload.items() if key != "input_sha256"})
 
@@ -886,6 +953,19 @@ def _projection_refs(projection: dict[str, Any]) -> list[dict[str, Any]]:
         key = canonical_json(ref)
         unique[key] = ref
     return list(unique.values())[:500]
+
+
+def _attention_projection(projection: dict[str, Any]) -> dict[str, Any]:
+    """Keep projection context once while retaining all top-level rows.
+
+    Cross-section inputs carry the complete row list in ``rows`` so Artifact
+    validation can prove every returned card belongs to the frozen projection.
+    The same rows do not need to be repeated inside ``evidence.projection``;
+    removing only that duplicate preserves the immutable content hash and all
+    group/lens/comparison context while substantially reducing model context.
+    """
+
+    return {key: value for key, value in projection.items() if key != "rows"}
 
 
 def _collect_evidence_refs(value: Any) -> list[dict[str, Any]]:

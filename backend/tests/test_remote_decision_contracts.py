@@ -14,7 +14,12 @@ from app.schemas.remote_decision import (
 )
 from app.decision_harness.cross_section import _attach_attention_features
 from app.decision_harness.contracts import content_sha256
-from app.decision_harness.remote_workflow import _reference_is_allowed, _reference_key, validate_artifact
+from app.decision_harness.remote_workflow import (
+    _attention_projection,
+    _reference_is_allowed,
+    _reference_key,
+    validate_artifact,
+)
 from app.repositories.remote_decision import _safe_json
 
 
@@ -158,6 +163,96 @@ def test_strategy_cross_section_card_decision_id_is_checked_against_projection_r
     )
     assert issue is None
     assert artifact is not None
+
+
+def test_attention_artifact_rejects_claimed_cards_when_cards_are_missing() -> None:
+    row = {
+        "id": "theme:NVDA:trend_momentum",
+        "group_id": "theme",
+        "symbol": "NVDA",
+        "decision_id": "decision-1",
+        "valid": True,
+    }
+    input_payload = {
+        "schema_version": "urus.remote_decision_input.v1",
+        "intent": {
+            "type": "strategy_attention",
+            "trigger_mode": "user",
+            "trigger_source": "strategy_cross_section",
+        },
+        "scope": {
+            "scope_type": "observation_run",
+            "scope_id": "run-1",
+            "lens": {"type": "strategy", "id": "trend_momentum"},
+        },
+        "dataset": {"dataset_ids": [], "schema_version": "urus.cross_section_projection.v1"},
+        "evidence": {"projection": {"rows": [row]}},
+        "strategy_decisions": [
+            {"decision_id": row["decision_id"], "strategy": {"name": "trend_momentum"}}
+        ],
+        "deterministic_synthesis": {},
+        "quality": {"status": "ok"},
+        "constraints": {
+            "allowed_symbols": ["NVDA"],
+            "allow_latest_data_lookup": False,
+            "allow_symbol_expansion": False,
+        },
+        "rows": [row],
+        "evidence_refs": [],
+    }
+    input_payload["input_sha256"] = content_sha256(input_payload)
+    run = SimpleNamespace(
+        intent_type="strategy_attention",
+        input_json=input_payload,
+        input_sha256=input_payload["input_sha256"],
+        scope_type="observation_run",
+        scope_id="run-1",
+        dataset_id=None,
+        lens_id="trend_momentum",
+        lens_type="strategy",
+        source_snapshot_id=None,
+    )
+
+    artifact, issue = validate_artifact(
+        run,
+        {
+            "schema_version": "urus.remote_decision_artifact.v1",
+            "intent_type": "strategy_attention",
+            "scope": {
+                "scope_type": "observation_run",
+                "scope_id": "run-1",
+                "lens": {"type": "strategy", "id": "trend_momentum"},
+            },
+            "dataset_id": None,
+            "input_sha256": input_payload["input_sha256"],
+            "completeness": "complete",
+            "decision": {"scan_summary": "15 notable cards ranked."},
+            "notable_cards": [],
+            "warnings": [],
+            "evidence_refs": [],
+        },
+    )
+
+    assert artifact is None
+    assert issue is not None
+    assert issue.code == "output_content_missing"
+
+
+def test_attention_input_does_not_duplicate_projection_rows() -> None:
+    rows = [{"id": "g:NVDA:trend", "group_id": "g", "symbol": "NVDA"}]
+    projection = {
+        "schema_version": "urus.cross_section_projection.v1",
+        "rows": rows,
+        "groups": [{"group_id": "g", "symbol_count": 1}],
+        "content_sha256": "a" * 64,
+    }
+
+    evidence_projection = _attention_projection(projection)
+
+    assert evidence_projection["content_sha256"] == projection["content_sha256"]
+    assert evidence_projection["groups"] == projection["groups"]
+    assert "rows" not in evidence_projection
+    assert projection["rows"] == rows
 
 
 def test_evidence_reference_identity_keeps_all_immutable_ids() -> None:
