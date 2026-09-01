@@ -18,38 +18,11 @@ from app.core.errors import (
     validation_error_handler,
 )
 from app.core.logging import configure_logging, request_logging_middleware
-from app.core.time import utc_now
 from app.frontend import SPAStaticFiles
 from app.models import (  # noqa: F401 - register ORM tables
-    AIDecisionRunModel,
-    AIDecisionSessionModel,
-    AIModelTurnModel,
-    AITraceNodeModel,
-    AIToolCallModel,
-    EventAgentRunModel,
-    EventDefinitionModel,
-    EventMarketReactionModel,
-    EventModel,
-    EventResultModel,
-    EventScheduleInitializationModel,
-    EventSourceModel,
-    InstrumentAnalysisBatchModel,
-    InstrumentDailyBarModel,
-    InstrumentSnapshotModel,
-    OptionAnalysisBatchModel,
-    OptionContractSnapshotModel,
-    OptionExpirationAnalysisModel,
-    OptionGammaFlipModel,
-    OptionGammaProfilePointModel,
-    OptionSymbolSnapshotModel,
-    RunModel,
-    SnapshotModel,
-    StepRunModel,
     RuntimeSettingsModel,
     InstrumentUniverseItemModel,
     InstrumentUniverseVersionModel,
-    StrategyResearchDatasetModel,
-    ReportDisplayProjectionModel,
     DailyBarModel,
     DailyIndicatorSnapshotModel,
     DailyDecisionDatasetModel,
@@ -67,7 +40,6 @@ from app.models import (  # noqa: F401 - register ORM tables
     RemoteDecisionEventModel,
     RemoteDecisionArtifactModel,
 )
-from app.repositories.runs import RunRepository
 from app.repositories.runtime_settings import RuntimeSettingsRepository, apply_payload
 from app.repositories.universe import InstrumentUniverseRepository
 from app.integrations.anomalo_workflow import FakeWorkflowAdapter, HttpAnomaloWorkflowAdapter
@@ -91,9 +63,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if persisted_settings is not None:
                 apply_payload(settings, persisted_settings.payload)
             InstrumentUniverseRepository(session).ensure_default(settings)
-            recovered = RunRepository(session).recover_interrupted_runs(completed_at=utc_now())
-        if recovered:
-            logger.warning("Recovered %s interrupted workflow run(s)", recovered)
         remote_supervisor: RemoteDecisionSupervisor = app.state.remote_decision_supervisor
         await remote_supervisor.start()
         logger.info("Urus started environment=%s", settings.app_env)
@@ -107,7 +76,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(
         title=settings.app_name,
         version=settings.app_version,
-        description="Urus stock analysis workflow framework API",
+        description="Urus Observation and Decision Harness API",
         lifespan=lifespan,
     )
     app.state.settings = settings

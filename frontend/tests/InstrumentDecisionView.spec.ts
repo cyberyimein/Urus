@@ -77,7 +77,7 @@ describe('InstrumentDecisionView', () => {
     expect(sectorGroups[0].attributes('aria-expanded')).toBe('false')
   })
 
-  it('keeps indicator recommendation separate and hides the legacy self-selection group', async () => {
+  it('keeps indicator recommendation separate and hides the persisted self-selection group', async () => {
     vi.spyOn(api, 'createDailyDataset').mockRejectedValue(new Error('backend offline'))
     vi.spyOn(api, 'listObservationGroups').mockResolvedValue([
       {
@@ -227,7 +227,7 @@ describe('InstrumentDecisionView', () => {
       alignment: {
             available: true,
             status: 'flagged',
-            source_phase: 'post_close_review',
+            source_phase: 'post_close_observation',
             method: 'regular_close_vs_option_levels',
             proximity_percent: 0.6,
             price_definition: 'regular close',

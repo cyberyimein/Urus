@@ -19,7 +19,7 @@ const saving = ref(false)
 const error = ref('')
 const notice = ref('')
 const query = ref('')
-const filter = ref<'all' | AssetType | 'options' | 'cta' | 'ai'>('all')
+const filter = ref<'all' | AssetType | 'options' | 'ai'>('all')
 const listFilter = ref('all')
 const selected = ref<InstrumentConfig | null>(null)
 const themeDraft = ref('')
@@ -54,7 +54,6 @@ const filtered = computed(() => items.value.filter((item) => {
   const matchesFilter = filter.value === 'all'
     || item.asset_type === filter.value
     || (filter.value === 'options' && item.collection.options)
-    || (filter.value === 'cta' && item.roles.cta_proxy)
     || (filter.value === 'ai' && item.roles.ai_candidate)
   return matchesText && matchesList && matchesFilter
 }))
@@ -105,8 +104,8 @@ async function load() {
 function addInstrument() {
   const item: InstrumentConfig = {
     symbol: '', display_name: '', asset_type: 'equity', theme: '个股观察', themes: ['个股观察'], enabled: true,
-    roles: { market_benchmark: false, equity_watchlist: false, cta_proxy: false, options_collection: true, event_tracking: true, ai_candidate: true },
-    benchmarks: { relative_strength: 'QQQ', cta_proxy_for: null },
+    roles: { market_benchmark: false, equity_watchlist: false, options_collection: true, ai_candidate: true },
+    benchmarks: { relative_strength: 'QQQ' },
     collection: { quote: true, daily_history: true, options: true }, notes: '',
   }
   items.value.push(item); selected.value = item
@@ -151,9 +150,6 @@ function removeTheme(theme: string) {
   error.value = ''
 }
 function toggleOptions(item: InstrumentConfig) { item.roles.options_collection = item.collection.options }
-function toggleCta(item: InstrumentConfig) {
-  if (item.roles.cta_proxy && !item.benchmarks.cta_proxy_for) item.benchmarks.cta_proxy_for = item.symbol || '待配置'
-}
 function requestRemoval(item: InstrumentConfig) {
   error.value = ''
   if (item.symbol === 'QQQ') {
@@ -315,7 +311,7 @@ onUnmounted(() => {
       <section class="universe-toolbar">
         <input v-model="query" type="search" placeholder="搜索 Symbol、名称或主题" />
         <div class="filter-tabs">
-          <button v-for="entry in [['all','全部'],['market','大盘'],['etf','ETF'],['equity','个股'],['options','期权'],['cta','CTA'],['ai','AI 候选']]" :key="entry[0]" :class="{ active: filter === entry[0] }" @click="filter = entry[0] as typeof filter">{{ entry[1] }}</button>
+          <button v-for="entry in [['all','全部'],['market','大盘'],['etf','ETF'],['equity','个股'],['options','期权'],['ai','AI 候选']]" :key="entry[0]" :class="{ active: filter === entry[0] }" @click="filter = entry[0] as typeof filter">{{ entry[1] }}</button>
         </div>
         <button class="primary-button" @click="addInstrument">添加标的</button>
       </section>
@@ -330,7 +326,7 @@ onUnmounted(() => {
               <td><span class="type-tag">{{ item.asset_type === 'market' ? '大盘' : item.asset_type === 'etf' ? 'ETF' : '个股' }}</span></td>
               <td><div class="table-theme-list"><span v-if="item.roles.equity_watchlist" class="table-theme-chip table-core-chip">指标推荐</span><span v-for="theme in (item.themes || [item.theme])" :key="theme" class="table-theme-chip">{{ theme }}</span></div></td>
               <td><span v-if="item.collection.quote">报价</span> · <span v-if="item.collection.daily_history">日线</span><span v-if="item.collection.options"> · 期权</span></td>
-              <td><span v-if="item.roles.cta_proxy">CTA </span><span v-if="item.roles.ai_candidate">AI </span><span v-if="item.roles.event_tracking">事件</span></td>
+              <td><span v-if="item.roles.ai_candidate">AI</span></td>
               <td>{{ item.benchmarks.relative_strength || '—' }}</td>
               <td class="row-actions"><button type="button" aria-label="删除标的" @click.stop="requestRemoval(item)">删除</button></td>
             </tr>
@@ -376,9 +372,8 @@ onUnmounted(() => {
         </div>
         <label class="check"><input v-model="selected.enabled" type="checkbox" /> 启用该标的</label>
         <fieldset><legend>数据采集</legend><label class="check"><input v-model="selected.collection.quote" type="checkbox" /> 报价</label><label class="check"><input v-model="selected.collection.daily_history" type="checkbox" /> 日线 / 技术指标</label><label class="check"><input v-model="selected.collection.options" type="checkbox" @change="toggleOptions(selected)" /> 期权结构</label></fieldset>
-        <fieldset><legend>策略角色</legend><div class="protected-role"><strong>指标推荐</strong><small>{{ selected.roles.equity_watchlist ? '已由部署 Universe 纳入' : '当前未纳入，由部署 Universe 决定' }}</small></div><label class="check"><input v-model="selected.roles.market_benchmark" type="checkbox" /> 市场基准</label><label class="check"><input v-model="selected.roles.ai_candidate" type="checkbox" /> AI 候选</label><label class="check"><input v-model="selected.roles.cta_proxy" type="checkbox" @change="toggleCta(selected)" /> CTA 代理</label><label class="check"><input v-model="selected.roles.event_tracking" type="checkbox" /> 事件跟踪</label></fieldset>
+        <fieldset><legend>策略角色</legend><div class="protected-role"><strong>指标推荐</strong><small>{{ selected.roles.equity_watchlist ? '已由部署 Universe 纳入' : '当前未纳入，由部署 Universe 决定' }}</small></div><label class="check"><input v-model="selected.roles.market_benchmark" type="checkbox" /> 市场基准</label><label class="check"><input v-model="selected.roles.ai_candidate" type="checkbox" /> AI 候选</label></fieldset>
         <label>相对强弱基准<input v-model.trim="selected.benchmarks.relative_strength" placeholder="QQQ" /></label>
-        <label v-if="selected.roles.cta_proxy">CTA 代表对象<input v-model.trim="selected.benchmarks.cta_proxy_for" placeholder="例如 NQ / GC" /></label>
         <label>备注<textarea v-model.trim="selected.notes" rows="3"></textarea></label>
       </aside>
 

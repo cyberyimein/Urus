@@ -1,6 +1,6 @@
 # Urus backend
 
-FastAPI + SQLAlchemy backend for the Urus framework. Stage 1A uses one batched Moomoo/OpenD snapshot for configured ETFs, QQQ daily history summary plus shared volatility/ATR/Bollinger indicators, and Yahoo/FRED daily macro context. Stage 3A reuses that adapter for a QQQ benchmark plus the full `INSTRUMENT_VALIDATION_SYMBOLS` universe (core ETFs and the public watchlist), persists daily bars and technical/relative-strength inputs, and exposes them in the frontend read model. Yahoo VIX/10Y/30Y values are requested and preferred on every run, while FRED supplies the official 2Y field and cross-checks. The remaining workflow steps are explicitly marked skipped, placeholder, or unavailable until their own stages.
+FastAPI + SQLAlchemy backend for the current Observation and Decision Harness. The backend owns the data-source adapters, canonical daily bars, option analytics, quota admission, deterministic strategies, and the optional Remote Decision seam.
 
 ## Commands
 
@@ -12,69 +12,45 @@ uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 uv run pytest
 ```
 
-首次启用订单金额分档资金流时，可用一个命令把最近 5 个已完成交易日写入 SQLite。脚本使用
-`CAPITAL_FLOW_SYMBOLS`（默认 `SPY,QQQ,SMH,SOXX,IGV`），只请求数据库缺失的 symbol/date，重复执行
-不会重复调用已有日期：
+The application creates missing local tables on startup for a fresh checkout. Alembic remains the supported path for explicit schema management. Existing migration files are kept as database history; runtime code uses the current models only.
 
-```bash
-cd backend
-uv run alembic upgrade head
-uv run python scripts/backfill_capital_flows.py
-```
+## Collection boundary
 
-可用 `--days`、`--symbols`、`--host`、`--port` 和 `--database-url` 覆盖默认值。日度原始分档数据长期
-保存在 `capital_flow_daily`；30 日为确定性信号计算窗口，技术报告和盘前 AI 只接收最近 5 日精简投影。
+`POST /api/observation/runs` is the single collection entry point. It freezes the active Universe groups, admits required daily-history symbols through `HistoryAdmission`, collects stock/ETF evidence, runs deterministic strategies, and collects the configured option symbols through `OptionsCollectionService`.
 
-The application also creates missing local tables on startup so a fresh checkout can be run directly. Alembic is the supported migration path for explicit schema management. Migration `0002_option_persistence` adds normalized SQLite tables for option batches, symbols, expirations, raw contracts, Spot Gamma Profile points, and Gamma Flips. Migration `0003_instrument_technical_persistence` adds 3A analysis batches, instrument snapshots, and daily bars. The frontend snapshot and normalized option/3A records are committed in one transaction.
+The scheduler invokes this endpoint once after the US session. It never starts a separate data worker and it never invokes AI. The stock and option adapters share `MoomooCollectionCoordinator`, which holds the host-wide lock and persists pacing timestamps for snapshot, history, option metadata, and option-chain calls.
 
-## API
+## API surface
 
-- `GET /api/health`
-- `GET /api/version`
-- `POST /api/runs`
-- `GET /api/runs`
-- `GET /api/runs/{run_id}`
-- `GET /api/snapshots/{snapshot_id}`
-- `GET /api/snapshots/{snapshot_id}/frontend`
-- `GET /api/watchlist`
+- `GET/PUT /api/settings`
+- `GET/PUT /api/settings/universe`
+- `POST /api/daily-evidence/datasets`
+- `GET /api/daily-evidence/datasets/{dataset_id}`
+- `GET /api/observation/groups`
+- `POST /api/observation/groups/sync`
+- `POST/GET /api/observation/runs`
+- `GET /api/observation/options`
+- `GET/POST /api/remote-decisions`
 
 OpenAPI is available at `/docs`.
 
-## 定时采集真实数据（不调用 AI）
+## Data sources
 
-下面的常驻脚本使用东京时间固定执行三次采集，并在启动时检查后端；后端未运行时，脚本会自动启动它：
+Moomoo/OpenD supplies quote snapshots and completed daily bars. FRED and Yahoo are optional daily macro adapters. Option analytics are snapshot-only: DEX, GEX, Gamma Wall, Max Pain, Expected Move, IV/HV context, and Spot Gamma Profile are derived from the returned chain without subscribing to option streams.
 
-- `21:30`：`pre_market`（盘前）
-- `04:00`：`pre_close`（尾盘前）
-- `05:30`：`post_close_observation`（盘后观察；股票与期权一起冻结）
+The post-close alignment uses only the official regular close. A close near Max Pain or a DEX Wall is recorded as a deterministic structural candidate; it is not a causal claim. If the regular close is unavailable, the result stays indeterminate and the option spot is not promoted to a formal close.
 
-```bash
-cd backend
-uv run python scripts/schedule_market_data_collection.py
-```
+## Runtime settings
 
-盘后观察通过 `/api/observation/runs` 执行确定性采集，股票日 K、期权快照和收盘价邻近判断保存在同一
-Observation Run 中；`post_close_review` 仅保留给独立的 AI 复盘流程。盘前和尾盘 Workflow 请求仍会显式
-设置 `skip_ai_decision=true`，并在检测到不支持该开关的旧后端时拒绝采集。
+The only persisted scheduler setting is `schedule.post_close_observation.enabled`. Removed settings are ignored when old rows are read, but new responses and writes contain only the current shape. Remote Workflow credentials are environment/Secret Store inputs and are never returned by `/api/settings`.
 
-脚本默认使用 `exchange-calendars` 的 `XNYS` 交易日历，跳过周末、美股节假日和日历已定义的休市（东京周六
-凌晨仍对应美东周五，因此会正常采集）。提前收盘日会把尾盘采集移到实际收盘前一小时，并把盘后复盘
-放到实际收盘后 30 分钟；`MARKET_CALENDAR` 可切换到该库支持的其他交易所。`--include-weekends`
-只用于显式验证周末，节假日仍然不会被常规调度误触发。启动后 180 分钟内错过的时点会补采，同一
-时点通过状态文件防止重复执行；旧状态中的 `post_close_review` 盘后键会被兼容识别。
+## Backfill
 
-运行日志、后端日志和防重复状态保存在 `backend/data/scheduled_collection/`。先手工验证一次可以运行：
+To populate the order-size capital-flow cache for the latest completed sessions:
 
 ```bash
 cd backend
-uv run python scripts/schedule_market_data_collection.py --once pre_market
+uv run python scripts/backfill_capital_flows.py
 ```
 
-建议把常驻命令交给 `launchd`、`tmux` 或其他进程守护工具；Caffeine 只负责阻止系统休眠，不负责在
-脚本意外退出后重新启动进程。
-
-Stage 1A/3A environment variables are `MOOMOO_ENABLED`, `MOOMOO_HOST`, `MOOMOO_PORT`, `MOOMOO_HISTORY_DAYS`, `MOOMOO_SDK_HOME`, `MOOMOO_MARKET_SYMBOLS`, `INSTRUMENT_VALIDATION_SYMBOLS`, `MARKET_TIMEZONE`, `MARKET_CALENDAR`, `FRED_ENABLED`, `FRED_BASE_URL`, `FRED_TIMEOUT_SECONDS`, `FRED_LOOKBACK_DAYS`, `YAHOO_ENABLED`, `YAHOO_BASE_URL`, `YAHOO_TIMEOUT_SECONDS`, and `YAHOO_LOOKBACK_DAYS`. The OpenD context uses one batched snapshot for the configured ETF universe and does not request US indexes; 3A adds QQQ as a benchmark and does not create a realtime subscription. Yahoo is requested on every run and its VIX/10Y/30Y values are selected when available; FRED supplies 2Y and retains cross-check values. The API exposes `data_state` independently from execution status so AI evidence cannot treat placeholder execution as collected data.
-
-Remote Decision runs are created from frozen Urus evidence and dispatched to published Anomalo Workflows. The backend supports instrument arbitration, group arbitration, indicator attention, and strategy attention; it prevents latest-data lookup and symbol expansion during a run. See `docs/phase-d-ai-decision-flow-design.md` for the current workflow boundary and runtime contract.
-
-Stage 2 uses `OPTIONS_TARGET_SYMBOLS` for core ETFs and `OPTIONS_WATCHLIST_SYMBOLS` for listed single stocks. `OPTIONS_WATCHLIST_EXCLUDED_SYMBOLS` records non-queryable names such as private SPCX. Snapshot, option metadata, and option-chain pacing are configured through `OPTIONS_SNAPSHOT_INTERVAL_SECONDS`, `OPTIONS_METADATA_INTERVAL_SECONDS`, and `OPTIONS_CHAIN_INTERVAL_SECONDS`.
+The script is optional and does not alter the Observation collection contract.

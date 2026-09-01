@@ -27,6 +27,9 @@ const selectedLensId = ref('')
 const loading = ref(true)
 const loadingProjection = ref(false)
 const error = ref('')
+const pageReady = ref(false)
+const automaticFallbackRunId = ref('')
+let requestSequence = 0
 const crossSectionAiSource = computed<RemoteDecisionSource>(() => ({
   observation_run_id: selectedRunId.value || undefined,
   lens_id: selectedLensId.value || undefined,
@@ -45,6 +48,8 @@ const pageDescription = computed(() => isIndicator.value
 const activeItem = computed(() => catalog.value.find((item) => item.id === selectedLensId.value) ?? null)
 const selectedRun = computed(() => runs.value.find((run) => run.run_id === selectedRunId.value) ?? null)
 const readyRuns = computed(() => runs.value.filter((run) => run.status === 'succeeded' || run.status === 'mixed'))
+const latestReadyRun = computed(() => readyRuns.value[0] ?? null)
+const automaticFallbackRun = computed(() => runs.value.find((run) => run.run_id === automaticFallbackRunId.value) ?? null)
 const comparison = computed<CrossSectionComparison>(() => projection.value?.comparison ?? {
   mode: 'previous_trading_session',
   status: 'unavailable',
@@ -185,18 +190,34 @@ const visualScales = computed<Record<string, VisualScale>>(() => {
   return result
 })
 
-function routeLensId() {
-  const key = isIndicator.value ? 'indicatorId' : 'strategyId'
+function routeLensId(lensType: CrossSectionLensType = props.lensType) {
+  const key = lensType === 'indicator' ? 'indicatorId' : 'strategyId'
   const value = route.params[key]
   return typeof value === 'string' ? value : ''
 }
 
-function routeName() {
-  return isIndicator.value ? 'indicator-cross-section' : 'strategy-cross-section'
+function routeName(lensType: CrossSectionLensType = props.lensType) {
+  return lensType === 'indicator' ? 'indicator-cross-section' : 'strategy-cross-section'
 }
 
-function indexRouteName() {
-  return isIndicator.value ? 'indicators' : 'strategies'
+function indexRouteName(lensType: CrossSectionLensType = props.lensType) {
+  return lensType === 'indicator' ? 'indicators' : 'strategies'
+}
+
+function isReadyRun(run: ObservationRun) {
+  return run.status === 'succeeded' || run.status === 'mixed'
+}
+
+function projectionValidRowCount(value: CrossSectionProjection) {
+  if (typeof value.quality?.valid_row_count === 'number') return value.quality.valid_row_count
+  return value.rows.filter((row) => row.valid).length
+}
+
+function isCurrentRequest(requestId: number, lensType: CrossSectionLensType, runId: string, lensId: string) {
+  return requestId === requestSequence
+    && props.lensType === lensType
+    && selectedRunId.value === runId
+    && selectedLensId.value === lensId
 }
 
 function shortHash(value: string | null | undefined) {
@@ -533,80 +554,152 @@ function statusOf(row: CrossSectionRow) {
   return stateOf(row)
 }
 
-async function loadProjection() {
-  projection.value = null
-  if (!selectedRunId.value || !selectedLensId.value) return
+async function loadProjection(
+  runId = selectedRunId.value,
+  lensId = selectedLensId.value,
+  lensType: CrossSectionLensType = props.lensType,
+  requestId = ++requestSequence,
+) {
+  if (requestId === requestSequence) {
+    projection.value = null
+    error.value = ''
+  }
+  if (!runId || !lensId) {
+    if (requestId === requestSequence) loadingProjection.value = false
+    return null
+  }
   loadingProjection.value = true
-  error.value = ''
   try {
-    projection.value = isIndicator.value
-      ? await api.getIndicatorCrossSection(selectedRunId.value, selectedLensId.value)
-      : await api.getStrategyCrossSection(selectedRunId.value, selectedLensId.value)
+    const next = lensType === 'indicator'
+      ? await api.getIndicatorCrossSection(runId, lensId)
+      : await api.getStrategyCrossSection(runId, lensId)
+    if (!isCurrentRequest(requestId, lensType, runId, lensId)) return null
+    projection.value = next
+    return next
   } catch (reason) {
-    error.value = reason instanceof Error ? reason.message : '横向投影加载失败。'
+    if (isCurrentRequest(requestId, lensType, runId, lensId)) {
+      error.value = reason instanceof Error ? reason.message : '横向投影加载失败。'
+    }
+    return null
   } finally {
-    loadingProjection.value = false
+    if (requestId === requestSequence) loadingProjection.value = false
   }
 }
 
 async function selectLens(id: string) {
+  if (id === selectedLensId.value) return
+  const lensType = props.lensType
+  const requestId = ++requestSequence
   selectedLensId.value = id
+  automaticFallbackRunId.value = ''
+  projection.value = null
   await router.push({
-    name: routeName(),
-    params: { [isIndicator.value ? 'indicatorId' : 'strategyId']: id },
+    name: routeName(lensType),
+    params: { [lensType === 'indicator' ? 'indicatorId' : 'strategyId']: id },
     query: selectedRunId.value ? { run: selectedRunId.value } : undefined,
   })
-  await loadProjection()
+  await loadProjection(selectedRunId.value, id, lensType, requestId)
 }
 
 async function selectRun() {
+  const lensType = props.lensType
+  const requestId = ++requestSequence
   if (!readyRuns.value.some((run) => run.run_id === selectedRunId.value)) {
     selectedRunId.value = readyRuns.value[0]?.run_id || ''
   }
+  automaticFallbackRunId.value = ''
+  projection.value = null
   await router.replace({
-    name: route.params[isIndicator.value ? 'indicatorId' : 'strategyId'] ? routeName() : indexRouteName(),
+    name: routeLensId(lensType) ? routeName(lensType) : indexRouteName(lensType),
     params: route.params,
     query: selectedRunId.value ? { run: selectedRunId.value } : undefined,
   })
-  await loadProjection()
+  await loadProjection(selectedRunId.value, selectedLensId.value, lensType, requestId)
 }
 
 async function loadPage() {
+  const lensType = props.lensType
+  const requestId = ++requestSequence
+  pageReady.value = false
+  automaticFallbackRunId.value = ''
   loading.value = true
   error.value = ''
   projection.value = null
+  catalog.value = []
+  runs.value = []
+  selectedLensId.value = ''
+  selectedRunId.value = ''
   try {
     const [items, runItems] = await Promise.all([
-      isIndicator.value ? api.listIndicatorCatalog() : api.listStrategyCatalog(),
+      lensType === 'indicator' ? api.listIndicatorCatalog() : api.listStrategyCatalog(),
       api.listObservationRuns(30),
     ])
+    if (requestId !== requestSequence || props.lensType !== lensType) return
     catalog.value = items
     runs.value = runItems
-    selectedLensId.value = routeLensId() || items[0]?.id || ''
+    const requestedLensId = routeLensId(lensType)
+    selectedLensId.value = items.some((item) => item.id === requestedLensId)
+      ? requestedLensId
+      : items[0]?.id || ''
     const queryRun = typeof route.query.run === 'string' ? route.query.run : ''
-    selectedRunId.value = queryRun && runItems.some((run) => run.run_id === queryRun && (run.status === 'succeeded' || run.status === 'mixed'))
-      ? queryRun
-      : runItems.find((run) => run.status === 'succeeded' || run.status === 'mixed')?.run_id || ''
-    await loadProjection()
+    const requestedRun = runItems.find((run) => run.run_id === queryRun && isReadyRun(run))
+    const candidates = requestedRun
+      ? [requestedRun]
+      : runItems.filter(isReadyRun)
+    const firstCandidateId = candidates[0]?.run_id
+    for (const candidate of candidates) {
+      if (requestId !== requestSequence || props.lensType !== lensType) return
+      selectedRunId.value = candidate.run_id
+      const next = await loadProjection(candidate.run_id, selectedLensId.value, lensType, requestId)
+      if (requestId !== requestSequence || props.lensType !== lensType) return
+      if (!next) continue
+      const hasUsableEvidence = projectionValidRowCount(next) > 0
+      if (requestedRun || hasUsableEvidence || candidate.run_id === candidates[candidates.length - 1]?.run_id) {
+        if (!requestedRun && firstCandidateId && candidate.run_id !== firstCandidateId && hasUsableEvidence) {
+          automaticFallbackRunId.value = candidate.run_id
+        }
+        break
+      }
+    }
   } catch (reason) {
-    error.value = reason instanceof Error ? reason.message : '扫描目录加载失败。'
+    if (requestId === requestSequence && props.lensType === lensType) {
+      error.value = reason instanceof Error ? reason.message : '扫描目录加载失败。'
+    }
   } finally {
-    loading.value = false
+    if (requestId === requestSequence && props.lensType === lensType) {
+      pageReady.value = true
+      loading.value = false
+    }
   }
 }
 
+watch(() => props.lensType, () => { void loadPage() })
+
 watch(
-  () => [props.lensType, route.params.indicatorId, route.params.strategyId, route.query.run],
+  () => [route.name, route.params.indicatorId, route.params.strategyId, route.query.run],
   () => {
-    const lensId = routeLensId()
-    const lensChanged = Boolean(lensId && lensId !== selectedLensId.value)
-    if (lensId) selectedLensId.value = lensId
-    if (typeof route.query.run === 'string' && route.query.run !== selectedRunId.value && readyRuns.value.some((run) => run.run_id === route.query.run)) {
-      selectedRunId.value = route.query.run
-      void loadProjection()
-    } else if (lensChanged) {
-      void loadProjection()
+    if (!pageReady.value) return
+    const lensType = props.lensType
+    const lensId = routeLensId(lensType)
+    const routeHasValidLens = catalog.value.some((item) => item.id === lensId)
+    const lensChanged = Boolean(lensId && routeHasValidLens && lensId !== selectedLensId.value)
+    const queryRun = typeof route.query.run === 'string' ? route.query.run : ''
+    const runChanged = Boolean(
+      queryRun
+      && queryRun !== selectedRunId.value
+      && readyRuns.value.some((run) => run.run_id === queryRun),
+    )
+    const indexChanged = route.name === indexRouteName(lensType) && !lensId
+    if (indexChanged) {
+      void loadPage()
+      return
     }
+    if (!lensChanged && !runChanged) return
+    if (lensChanged) selectedLensId.value = lensId
+    if (runChanged) selectedRunId.value = queryRun
+    automaticFallbackRunId.value = ''
+    const requestId = ++requestSequence
+    void loadProjection(selectedRunId.value, selectedLensId.value, lensType, requestId)
   },
 )
 
@@ -628,7 +721,7 @@ onMounted(() => { void loadPage() })
           <select v-model="selectedRunId" :disabled="!readyRuns.length" @change="selectRun">
             <option v-if="!readyRuns.length" value="">暂无已完成观察</option>
             <option v-for="run in readyRuns" :key="run.run_id" :value="run.run_id">
-              {{ run.trading_date }} · {{ run.status }}
+              {{ run.trading_date }} · {{ run.status }}{{ run.report?.summary?.quality_issue_count ? ` · ${run.report.summary.quality_issue_count} quality issues` : '' }}
             </option>
           </select>
         </label>
@@ -646,6 +739,9 @@ onMounted(() => { void loadPage() })
     </section>
 
     <div v-if="error" class="error-banner" role="alert">{{ error }}</div>
+    <div v-if="automaticFallbackRun && latestReadyRun" class="cross-section-warning" role="status">
+      最新 Observation Run（{{ latestReadyRun.trading_date }}）没有有效横截面证据，已自动切换到 {{ automaticFallbackRun.trading_date }} 的可用冻结 Run。
+    </div>
 
     <section v-if="loading" class="empty-panel cross-section-empty"><p>正在读取横向扫描目录…</p></section>
     <section v-else-if="!readyRuns.length" class="empty-panel cross-section-empty">

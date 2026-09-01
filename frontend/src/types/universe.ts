@@ -3,9 +3,7 @@ export type AssetType = 'market' | 'etf' | 'equity'
 export interface UniverseRoles {
   market_benchmark: boolean
   equity_watchlist: boolean
-  cta_proxy: boolean
   options_collection: boolean
-  event_tracking: boolean
   ai_candidate: boolean
 }
 
@@ -18,7 +16,7 @@ export interface InstrumentConfig {
   themes?: string[]
   enabled: boolean
   roles: UniverseRoles
-  benchmarks: { relative_strength: string | null; cta_proxy_for: string | null }
+  benchmarks: { relative_strength: string | null }
   collection: { quote: boolean; daily_history: boolean; options: boolean }
   notes: string
 }
@@ -27,9 +25,7 @@ export interface UniverseDerivedScopes {
   market_symbols: string[]
   instrument_symbols: string[]
   history_symbols?: string[]
-  cta_proxy_symbols: string[]
   option_symbols: string[]
-  event_symbols: string[]
   ai_candidate_symbols: string[]
 }
 

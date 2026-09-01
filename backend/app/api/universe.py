@@ -155,7 +155,7 @@ def refresh_history_capacity(
         settings,
         items=response.items,
         universe_version_id=version.id,
-        universe_content_sha256=version.content_sha256,
+        universe_content_sha256=response.content_sha256,
     )
     HistoryCapacityService(db, settings).apply_plan(plan, universe_version_id=version.id)
     db.commit()

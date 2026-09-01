@@ -83,8 +83,8 @@ def test_pending_state_is_cleared_only_after_canonical_bars_are_written() -> Non
         )
         assert state is not None and state.access_state == "pending_quota"
 
-        DailyEvidenceRepository(session).sync_legacy_snapshot_bars(
-            {"symbols": [{"symbol": "AAA", "history": {"bars": _bars("AAA")}}]},
+        DailyEvidenceRepository(session).persist_collected_history(
+            {"history_snapshots": [{"symbol": "AAA", "history": {"bars": _bars("AAA")}}]},
             collected_at=now,
         )
         session.commit()
@@ -113,8 +113,8 @@ def test_reconcile_retries_when_latest_bar_misses_required_target() -> None:
         state.access_state = "collecting"
         session.commit()
 
-        DailyEvidenceRepository(session).sync_legacy_snapshot_bars(
-            {"symbols": [{"symbol": "AAA", "history": {"bars": _bars("AAA")}}]},
+        DailyEvidenceRepository(session).persist_collected_history(
+            {"history_snapshots": [{"symbol": "AAA", "history": {"bars": _bars("AAA")}}]},
             collected_at=now,
         )
         session.commit()

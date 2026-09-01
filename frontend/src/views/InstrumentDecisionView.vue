@@ -19,7 +19,7 @@ import type {
 } from '@/types/dailyEvidence'
 import type { OptionsData } from '@/types/api'
 import type { RemoteDecisionSource } from '@/types/remoteDecision'
-import type { PostCloseOptionAlignment } from '@/types/research'
+import type { PostCloseOptionAlignment } from '@/types/options'
 
 type LayerKey = 'ma20' | 'ma50' | 'ma200' | 'bollinger' | 'volume' | 'rsi' | 'macd' | 'relative'
 type WatchGroup = {
@@ -546,7 +546,7 @@ onMounted(() => {
             </div>
             <div class="scope-level current">
               <span class="scope-level-index">03</span>
-              <span class="scope-level-copy"><small>INSTRUMENT</small><strong>{{ selectedSymbol }}</strong><em>日 K · Phase A</em></span>
+              <span class="scope-level-copy"><small>INSTRUMENT</small><strong>{{ selectedSymbol }}</strong><em>日 K · FROZEN EVIDENCE</em></span>
             </div>
           </div>
         </div>
@@ -587,7 +587,7 @@ onMounted(() => {
           </div>
         </div>
         <div class="rail-footer">
-          <span class="phase-chip">PHASE A</span>
+          <span class="decision-chip">DAILY EVIDENCE</span>
           <p>只读证据<br />不生成订单</p>
         </div>
         </div>
@@ -651,7 +651,7 @@ onMounted(() => {
             </article>
 
             <article class="insight-card handoff-card">
-              <div class="insight-card-head"><div><span class="section-kicker">STRATEGY LAYER</span><h2>算法建议</h2></div><span class="phase-chip small">{{ symbolStrategyDecisions.length }} STRATEGIES</span></div>
+              <div class="insight-card-head"><div><span class="section-kicker">STRATEGY LAYER</span><h2>算法建议</h2></div><span class="decision-chip small">{{ symbolStrategyDecisions.length }} STRATEGIES</span></div>
               <div class="synthesis-panel" :data-tone="synthesisTone">
                 <div><span>DETERMINISTIC SYNTHESIS</span><strong>{{ synthesisLabel }}</strong></div>
                 <b>{{ synthesisActionLabel }}</b>
@@ -720,7 +720,7 @@ onMounted(() => {
               <div><span class="checklist-index">02</span><div><strong>动量状态</strong><p>RSI 与 MACD 是否形成确认</p></div><em>{{ momentum.label }}</em></div>
               <div><span class="checklist-index">03</span><div><strong>策略综合</strong><p>全部策略方向与冲突状态</p></div><em>{{ synthesisLabel }}</em></div>
             </div>
-            <RouterLink class="text-link" to="/research">查看历史研究库 →</RouterLink>
+            <RouterLink class="text-link" to="/observation-runs">查看收市观察记录 →</RouterLink>
           </article>
         </section>
       </main>

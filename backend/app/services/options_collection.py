@@ -9,30 +9,22 @@ from app.integrations.moomoo_options import (
     MoomooOptionsAdapter,
     OptionsCollectorAdapter,
 )
-from app.models import StepStatus
+from app.core.collection_status import CollectionStatus
 
 
 @dataclass(frozen=True)
 class OptionsCollectionResult:
-    """Public option evidence plus the private persistence payload, if any."""
+    """Public option evidence produced for one observation run."""
 
-    status: StepStatus
+    status: CollectionStatus
     summary: str
     payload: dict[str, object]
     data_state: str
-    persistence_payload: dict[str, object] | None = None
     error_message: str | None = None
 
 
 class OptionsCollectionService:
-    """Collect one snapshot through the provider-neutral options seam.
-
-    Workflow runs and Observation Runs share the same provider adapter, but
-    only the former need the legacy normalized contract tables. Keeping the
-    public payload separate from that persistence detail lets the new
-    Observation Run own an immutable options evidence payload without making
-    it depend on the old workflow snapshot identity.
-    """
+    """Collect one snapshot through the provider-neutral options seam."""
 
     @staticmethod
     def build_adapter(
@@ -103,7 +95,7 @@ class OptionsCollectionService:
         )
         if adapter is None:
             return OptionsCollectionResult(
-                status=StepStatus.PLACEHOLDER,
+                status=CollectionStatus.PLACEHOLDER,
                 summary="期权数据源未配置，保留明确的占位状态。",
                 payload=self.placeholder(requested_symbols, note="期权数据源未配置。"),
                 data_state="placeholder",
@@ -120,8 +112,6 @@ class OptionsCollectionService:
                 raise TypeError("期权数据源必须返回 JSON object")
 
             payload = dict(raw_payload)
-            persistence = payload.pop("_persistence", None)
-            persistence_payload = persistence if isinstance(persistence, dict) else None
             payload_symbols = payload.get("symbols")
             payload_symbols = payload_symbols if isinstance(payload_symbols, list) else []
             for item in payload_symbols:
@@ -137,36 +127,33 @@ class OptionsCollectionService:
             payload.setdefault("unavailable_symbols", [])
             payload.setdefault("symbols", payload_symbols)
             if is_mock:
-                payload["status"] = StepStatus.PLACEHOLDER.value
+                payload["status"] = CollectionStatus.PLACEHOLDER.value
                 return OptionsCollectionResult(
-                    status=StepStatus.PLACEHOLDER,
+                    status=CollectionStatus.PLACEHOLDER,
                     summary="期权数据源未启用，保留明确的 mock 状态。",
                     payload=payload,
                     data_state="placeholder",
-                    persistence_payload=persistence_payload,
                 )
             provider_status = str(payload.get("status") or "").strip().lower()
             if payload.get("available") is False or provider_status in {"failed", "unavailable"}:
-                payload["status"] = StepStatus.UNAVAILABLE.value
+                payload["status"] = CollectionStatus.UNAVAILABLE.value
                 payload["available"] = False
                 payload["data_state"] = "unavailable"
                 return OptionsCollectionResult(
-                    status=StepStatus.UNAVAILABLE,
+                    status=CollectionStatus.UNAVAILABLE,
                     summary="期权数据源已响应，但没有可用的期权结构。",
                     payload=payload,
                     data_state="unavailable",
-                    persistence_payload=persistence_payload,
                 )
             return OptionsCollectionResult(
-                status=StepStatus.SUCCEEDED,
+                status=CollectionStatus.SUCCEEDED,
                 summary="已生成 Moomoo 快照式 DEX/GEX、Gamma Wall 与 Max Pain。",
                 payload=payload,
                 data_state="live",
-                persistence_payload=persistence_payload,
             )
         except Exception as exc:
             return OptionsCollectionResult(
-                status=StepStatus.FAILED,
+                status=CollectionStatus.FAILED,
                 summary="期权结构采集或计算失败。",
                 payload=self.placeholder(
                     requested_symbols,

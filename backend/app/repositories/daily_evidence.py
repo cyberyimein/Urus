@@ -17,7 +17,6 @@ from app.models.daily_evidence import (
     DecisionChartProjectionModel,
 )
 from app.models.market_data_capacity import HistoryCollectionStateModel
-from app.models.instruments import InstrumentDailyBarModel, InstrumentSnapshotModel
 
 
 class DailyEvidenceRepository:
@@ -116,18 +115,18 @@ class DailyEvidenceRepository:
             ),
         }
 
-    def sync_legacy_snapshot_bars(
+    def persist_collected_history(
         self,
-        persistence_payload: dict[str, Any],
+        collected_payload: dict[str, Any],
         *,
         source: str = "moomoo_opend_history",
         market_timezone: str = "America/New_York",
         collected_at: datetime | None = None,
     ) -> int:
-        """Copy a 3A persistence payload without duplicating the history on reads."""
+        """Persist normalized daily bars returned by the market collection seam."""
 
         rows: list[dict[str, Any]] = []
-        for item in persistence_payload.get("symbols", []):
+        for item in collected_payload.get("history_snapshots", []):
             if not isinstance(item, dict):
                 continue
             symbol = item.get("symbol")
@@ -145,7 +144,7 @@ class DailyEvidenceRepository:
         )
         # Keep the quota projection in the same transaction as canonical bar
         # persistence.  Only states that were created by the admission layer
-        # are updated; direct/mock collectors remain backward compatible.
+        # are updated; direct and mock collectors keep the same contract.
         self._reconcile_history_capacity_states(
             {str(row.get("symbol") or "") for row in rows},
             collected_at=collected_at or utc_now(),
@@ -246,49 +245,6 @@ class DailyEvidenceRepository:
             seen.add(key)
             grouped.setdefault(row.symbol, []).append(row)
         return grouped
-
-    def sync_legacy_for_symbols(
-        self,
-        symbols: Iterable[str],
-        *,
-        through_date: date | None = None,
-        cutoff_time: datetime | None = None,
-        market_timezone: str = "America/New_York",
-    ) -> int:
-        """Backfill canonical rows from the newest point-in-time 3A snapshot per symbol."""
-
-        normalized = list(dict.fromkeys(normalise_symbol(item) for item in symbols))
-        if not normalized:
-            return 0
-        filters = [InstrumentSnapshotModel.symbol.in_(normalized)]
-        if cutoff_time is not None:
-            filters.append(InstrumentSnapshotModel.captured_at <= as_utc(cutoff_time))
-        statement = select(InstrumentSnapshotModel).where(and_(*filters)).order_by(
-            InstrumentSnapshotModel.symbol.asc(), InstrumentSnapshotModel.captured_at.desc()
-        )
-        latest: dict[str, InstrumentSnapshotModel] = {}
-        for snapshot in self.session.scalars(statement):
-            latest.setdefault(snapshot.symbol, snapshot)
-        total = 0
-        for symbol, snapshot in latest.items():
-            rows: list[dict[str, Any]] = []
-            bars_statement = select(InstrumentDailyBarModel).where(
-                InstrumentDailyBarModel.instrument_snapshot_id == snapshot.id
-            ).order_by(InstrumentDailyBarModel.bar_date.asc())
-            for bar in self.session.scalars(bars_statement):
-                if through_date is not None and bar.bar_date > through_date:
-                    continue
-                rows.append({"symbol": symbol, **compact_bar(bar)})
-            if rows:
-                total += len(
-                    self.upsert_bars(
-                        rows,
-                        source="legacy_instrument_snapshot",
-                        market_timezone=market_timezone,
-                        collected_at=as_utc(snapshot.captured_at),
-                    )
-                )
-        return total
 
     def indicator(
         self,

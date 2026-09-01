@@ -20,7 +20,7 @@ Environment:
   REMOTE_ENV_FILE         Default: REMOTE_DIR/urus.env
   REMOTE_CONTAINER_CLI    Default: container
   CONTAINER_NAME          Default: urus
-  SCHEDULER_NAME          Legacy container name to remove during migration
+  SCHEDULER_NAME          Legacy scheduler container name to remove during migration
   CONTAINER_NETWORK       Default: urus-internal
   HOST_PORT               Default: 7777 (Mac mini host port; 8000 is used by Anomalo)
   APP_PORT                Default: 8000

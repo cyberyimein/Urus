@@ -393,7 +393,7 @@ def build_post_close_option_alignment(
     close_quotes: dict[str, dict[str, object]] | None,
     *,
     proximity_percent: float = POST_CLOSE_LEVEL_PROXIMITY_PERCENT,
-    source_phase: str = "post_close_review",
+    source_phase: str = "post_close_observation",
 ) -> dict[str, object]:
     """Compare official post-close prices with option levels.
 

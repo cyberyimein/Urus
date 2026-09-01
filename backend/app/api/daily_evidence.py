@@ -68,6 +68,7 @@ def create_daily_dataset(
             trading_date=payload.trading_date,
             cutoff_time=payload.cutoff_time,
             bar_source=adapter,
+            allow_live_collection_after_cutoff=payload.cutoff_time is None,
         )
     except ValueError as exc:
         raise AppError(str(exc), code="daily_evidence_invalid", status_code=422) from exc

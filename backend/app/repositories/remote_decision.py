@@ -80,7 +80,7 @@ class RemoteDecisionRepository:
             self.session.add(existing)
         else:
             # Release tooling may rotate a binding in place; run rows keep
-            # copied hashes so this never changes the meaning of an old run.
+            # copied hashes so this never changes the meaning of a historical run.
             for field in (
                 "status", "definition_hash", "compiled_hash", "capability_manifest_hash",
                 "input_schema_version", "output_schema_version", "definition_json", "manifest_json",

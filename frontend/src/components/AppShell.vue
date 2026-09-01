@@ -8,7 +8,7 @@ import { RouterLink } from 'vue-router'
       <img class="brand-mark" src="/urus-icon.png" alt="" width="32" height="32" />
       <span>
         <strong>Urus</strong>
-        <small>systematic research cockpit</small>
+        <small>evidence decision cockpit</small>
       </span>
     </RouterLink>
     <nav class="topnav" aria-label="主导航">
@@ -16,7 +16,7 @@ import { RouterLink } from 'vue-router'
       <RouterLink to="/groups" active-class="active">组观察</RouterLink>
       <RouterLink to="/indicators" active-class="active">指标扫描</RouterLink>
       <RouterLink to="/strategies" active-class="active">策略扫描</RouterLink>
-      <RouterLink to="/research" active-class="active">旧研究中心</RouterLink>
+      <RouterLink to="/observation-runs" active-class="active">收盘观测</RouterLink>
       <RouterLink to="/settings/universe" active-class="active">标的设置</RouterLink>
     </nav>
   </header>

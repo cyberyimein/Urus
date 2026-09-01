@@ -1,9 +1,4 @@
-"""Keep Urus available and run the configured Tokyo collection schedule.
-
-The schedule is controlled by the backend's persisted ``/api/settings``
-payload. Collection slots are data-only; ``post_close_review`` remains an AI
-phase and is not a scheduler collection slot.
-"""
+"""Keep Urus available and run the post-close observation schedule."""
 
 from __future__ import annotations
 
@@ -39,13 +34,7 @@ DATA_DIR = Path(
 TOKYO = ZoneInfo("Asia/Tokyo")
 DEFAULT_MARKET_CALENDAR = "XNYS"
 POST_CLOSE_OBSERVATION = "post_close_observation"
-LEGACY_POST_CLOSE_SLOT = "post_close_review"
-RUN_TYPE_ALIASES = {LEGACY_POST_CLOSE_SLOT: POST_CLOSE_OBSERVATION}
-SLOTS = (
-    (wall_time(4, 0), "pre_close", "尾盘前"),
-    (wall_time(5, 30), POST_CLOSE_OBSERVATION, "盘后观察"),
-    (wall_time(21, 30), "pre_market", "盘前"),
-)
+SLOTS = ((wall_time(5, 30), POST_CLOSE_OBSERVATION, "盘后观察"),)
 
 sys.path.insert(0, str(BACKEND_DIR))
 os.chdir(BACKEND_DIR)
@@ -54,25 +43,6 @@ from app.core.config import Settings  # noqa: E402
 
 
 logger = logging.getLogger("urus.scheduled_collection")
-
-
-def canonical_run_type(run_type: str) -> str:
-    return RUN_TYPE_ALIASES.get(run_type, run_type)
-
-
-def schedule_policy_entry(
-    schedule: dict[str, dict[str, Any]], run_type: str
-) -> dict[str, Any]:
-    canonical = canonical_run_type(run_type)
-    policy = schedule.get(canonical)
-    if isinstance(policy, dict):
-        return policy
-    legacy_key = run_type if run_type != canonical else next(
-        (legacy for legacy, value in RUN_TYPE_ALIASES.items() if value == canonical),
-        "",
-    )
-    legacy = schedule.get(legacy_key)
-    return legacy if isinstance(legacy, dict) else {}
 
 
 @lru_cache(maxsize=4)
@@ -112,12 +82,10 @@ def effective_slot_time(
 ) -> datetime | None:
     """Apply the exchange session gate and early-close adjustments.
 
-    The configured slots remain the normal-day defaults. On an early-close
-    session, ``pre_close`` moves to one hour before the actual close rather
-    than collecting after the market has shut; ``post_close_observation`` moves to
-    30 minutes after the actual close when its nominal JST time would still be
-    inside the regular session. This keeps the persisted schedule readable
-    while making the runtime safe across US daylight-saving and half-day rules.
+    The configured post-close slot moves to 30 minutes after the actual close
+    when its nominal JST time would still be inside the regular session. This
+    keeps the persisted schedule readable while handling daylight-saving and
+    early-close sessions safely.
     """
 
     market_date = nominal_at.astimezone(market_timezone).date()
@@ -132,9 +100,7 @@ def effective_slot_time(
         return None
 
     nominal_utc = nominal_at.astimezone(UTC)
-    if run_type == "pre_close" and nominal_utc >= close_at:
-        return (close_at - timedelta(hours=1)).astimezone(TOKYO)
-    if canonical_run_type(run_type) == POST_CLOSE_OBSERVATION and nominal_utc <= close_at:
+    if run_type == POST_CLOSE_OBSERVATION and nominal_utc <= close_at:
         return (close_at + timedelta(minutes=30)).astimezone(TOKYO)
     return nominal_at
 
@@ -147,8 +113,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--once",
-        choices=[item[1] for item in SLOTS] + [LEGACY_POST_CLOSE_SLOT],
-        help="Collect one phase immediately and exit (useful for validation).",
+        choices=[item[1] for item in SLOTS],
+        help="Collect the post-close observation immediately and exit.",
     )
     parser.add_argument("--poll-seconds", type=float, default=20.0)
     parser.add_argument("--catch-up-minutes", type=float, default=180.0)
@@ -241,7 +207,7 @@ def start_backend(settings: Settings) -> subprocess.Popen[bytes]:
         "--port",
         str(settings.app_port),
     ]
-    logger.info("后端未启动，正在启动 Urus backend（保留现有 AI 配置；采集请求单独禁用 AI）")
+    logger.info("后端未启动，正在启动 Urus backend")
     return subprocess.Popen(
         command,
         cwd=BACKEND_DIR,
@@ -273,23 +239,6 @@ def ensure_backend(
     raise RuntimeError(f"Backend did not become healthy within {start_timeout:g} seconds")
 
 
-def verify_skip_ai_contract(base_url: str) -> None:
-    # Fail closed when an older already-running backend would silently ignore
-    # the new request field and could therefore invoke its configured agent.
-    openapi_url = f"{base_url.removesuffix('/api')}/openapi.json"
-    schema = request_json(openapi_url, timeout=10.0)
-    properties = (
-        schema.get("components", {})
-        .get("schemas", {})
-        .get("RunCreateRequest", {})
-        .get("properties", {})
-    )
-    if "skip_ai_decision" not in properties:
-        raise RuntimeError(
-            "Running backend does not support skip_ai_decision; restart it with the current code"
-        )
-
-
 def load_schedule_settings(base_url: str) -> dict[str, dict[str, Any]]:
     payload = request_json(f"{base_url}/settings", timeout=10.0)
     schedule = payload.get("schedule")
@@ -302,87 +251,42 @@ def load_schedule_settings(base_url: str) -> dict[str, dict[str, Any]]:
     }
 
 
-def slot_policy(
-    schedule: dict[str, dict[str, Any]],
-    run_type: str,
-    *,
-    ai_decision_enabled: bool | None = None,
-) -> tuple[bool, bool]:
-    canonical = canonical_run_type(run_type)
-    policy = schedule_policy_entry(schedule, canonical)
-    enabled = bool(policy.get("enabled", True))
-    skip_ai = bool(
-        policy.get(
-            "skip_ai_decision",
-            canonical in {"pre_close", POST_CLOSE_OBSERVATION},
-        )
-    )
-    if ai_decision_enabled is False:
-        # A deployment with the Urus agent disabled is deterministic-only;
-        # scheduled collection must not accidentally re-enable a model call
-        # because an older runtime schedule still says skip_ai=false.
-        skip_ai = True
-    # This is a safety boundary, not a UI preference: data-only collection
-    # slots never invoke the decision agent.
-    if canonical in {"pre_close", POST_CLOSE_OBSERVATION}:
-        skip_ai = True
-    return enabled, skip_ai
+def collection_enabled(schedule: dict[str, dict[str, Any]]) -> bool:
+    policy = schedule.get(POST_CLOSE_OBSERVATION)
+    return bool(policy.get("enabled", True)) if isinstance(policy, dict) else True
 
 
 def collect(
     base_url: str,
-    run_type: str,
     timeout: float,
-    skip_ai_decision: bool = True,
 ) -> dict[str, Any]:
-    canonical = canonical_run_type(run_type)
-    if canonical == POST_CLOSE_OBSERVATION:
-        logger.info("开始盘后确定性观察：同步 Universe 并冻结 Observation Run")
-        universe_sync = request_json(
-            f"{base_url}/observation/groups/sync",
-            method="POST",
-            payload={},
-            timeout=min(timeout, 60.0),
-        )
-        run_payload: dict[str, Any] = {"trigger_mode": "scheduled"}
-        if universe_sync.get("universe_revision_id"):
-            run_payload["universe_revision_id"] = universe_sync["universe_revision_id"]
-        if universe_sync.get("universe_freshness"):
-            run_payload["universe_freshness"] = universe_sync["universe_freshness"]
-        if universe_sync.get("source_url"):
-            run_payload["universe_source_url"] = universe_sync["source_url"]
-        result = request_json(
-            f"{base_url}/observation/runs",
-            method="POST",
-            payload=run_payload,
-            timeout=timeout,
-        )
-        result["universe_sync"] = universe_sync
-        logger.info(
-            "盘后确定性观察完成 run_id=%s status=%s groups=%s symbols=%s",
-            result.get("run_id"),
-            result.get("status"),
-            result.get("group_count", universe_sync.get("group_count")),
-            universe_sync.get("symbol_count"),
-        )
-        return result
-
-    verify_skip_ai_contract(base_url)
-    logger.info(
-        "开始采集 phase=%s（skip_ai_decision=%s）", canonical, skip_ai_decision
-    )
-    result = request_json(
-        f"{base_url}/runs",
+    logger.info("开始盘后确定性观察：同步 Universe 并冻结 Observation Run")
+    universe_sync = request_json(
+        f"{base_url}/observation/groups/sync",
         method="POST",
-        payload={"run_type": canonical, "skip_ai_decision": skip_ai_decision},
+        payload={},
+        timeout=min(timeout, 60.0),
+    )
+    run_payload: dict[str, Any] = {"trigger_mode": "scheduled"}
+    if universe_sync.get("universe_revision_id"):
+        run_payload["universe_revision_id"] = universe_sync["universe_revision_id"]
+    if universe_sync.get("universe_freshness"):
+        run_payload["universe_freshness"] = universe_sync["universe_freshness"]
+    if universe_sync.get("source_url"):
+        run_payload["universe_source_url"] = universe_sync["source_url"]
+    result = request_json(
+        f"{base_url}/observation/runs",
+        method="POST",
+        payload=run_payload,
         timeout=timeout,
     )
+    result["universe_sync"] = universe_sync
     logger.info(
-        "采集完成 phase=%s run_id=%s snapshot_id=%s status=%s",
-        canonical,
+        "盘后确定性观察完成 run_id=%s status=%s groups=%s symbols=%s",
         result.get("run_id"),
-        result.get("snapshot_id"),
         result.get("status"),
+        result.get("group_count", universe_sync.get("group_count")),
+        universe_sync.get("symbol_count"),
     )
     return result
 
@@ -411,19 +315,13 @@ def save_state(state: dict[str, Any]) -> None:
 
 
 def slot_key(scheduled_at: datetime, run_type: str) -> str:
-    return f"{scheduled_at.date().isoformat()}:{canonical_run_type(run_type)}"
+    return f"{scheduled_at.date().isoformat()}:{run_type}"
 
 
 def slot_completed(
     completed: dict[str, Any], scheduled_at: datetime, run_type: str
 ) -> bool:
-    canonical = canonical_run_type(run_type)
-    keys = [slot_key(scheduled_at, canonical)]
-    if canonical == POST_CLOSE_OBSERVATION:
-        # Do not replay a historical post-close slot just because the state
-        # file was written before the scheduler name was migrated.
-        keys.append(f"{scheduled_at.date().isoformat()}:{LEGACY_POST_CLOSE_SLOT}")
-    return any(key in completed for key in keys)
+    return slot_key(scheduled_at, run_type) in completed
 
 
 def due_slots(
@@ -440,7 +338,7 @@ def due_slots(
     for day_offset in (-1, 0):
         date = (now + timedelta(days=day_offset)).date()
         for scheduled_time, run_type, label in SLOTS:
-            if schedule is not None and not slot_policy(schedule, run_type)[0]:
+            if schedule is not None and not collection_enabled(schedule):
                 continue
             nominal_at = datetime.combine(date, scheduled_time, tzinfo=TOKYO)
             scheduled_at = effective_slot_time(
@@ -487,15 +385,10 @@ def main(argv: list[str] | None = None) -> int:
     schedule = load_schedule_settings(base_url)
 
     if args.once:
-        enabled, skip_ai_decision = slot_policy(
-            schedule,
-            args.once,
-            ai_decision_enabled=settings.urus_agent_enabled,
-        )
-        if not enabled:
-            logger.info("phase=%s 已在设置中停用，本次不执行", args.once)
+        if not collection_enabled(schedule):
+            logger.info("slot=%s 已在设置中停用，本次不执行", args.once)
             return 0
-        collect(base_url, args.once, args.request_timeout, skip_ai_decision)
+        collect(base_url, args.request_timeout)
         return 0
 
     state = load_state()
@@ -504,8 +397,7 @@ def main(argv: list[str] | None = None) -> int:
     market_timezone = ZoneInfo(settings.market_timezone)
     calendar = exchange_calendar(settings.market_calendar)
     logger.info(
-        "调度器已启动 timezone=Asia/Tokyo market_timezone=%s calendar=%s "
-        "slots=21:30/pre_market,04:00/pre_close,05:30/post_close_observation",
+        "调度器已启动 timezone=Asia/Tokyo market_timezone=%s calendar=%s slots=05:30/post_close_observation",
         settings.market_timezone,
         settings.market_calendar,
     )
@@ -532,16 +424,10 @@ def main(argv: list[str] | None = None) -> int:
                         allow_start=allow_backend_start,
                     )
                     # Refresh immediately before a due slot so an operator can
-                    # pause or bypass AI without restarting this long-running
-                    # process.
+                    # pause collection without restarting this long-running process.
                     schedule = load_schedule_settings(base_url)
-                    enabled, skip_ai_decision = slot_policy(
-                        schedule,
-                        run_type,
-                        ai_decision_enabled=settings.urus_agent_enabled,
-                    )
-                    if not enabled:
-                        logger.info("phase=%s 已在设置中停用，本次跳过", run_type)
+                    if not collection_enabled(schedule):
+                        logger.info("slot=%s 已在设置中停用，本次跳过", run_type)
                         completed[key] = {
                             "scheduled_at": scheduled_at.isoformat(),
                             "completed_at": datetime.now(TOKYO).isoformat(),
@@ -550,12 +436,10 @@ def main(argv: list[str] | None = None) -> int:
                         }
                         save_state(state)
                         continue
-                    result = collect(
-                        base_url, run_type, args.request_timeout, skip_ai_decision
-                    )
+                    result = collect(base_url, args.request_timeout)
                 except Exception:
                     retry_after[key] = time.monotonic() + args.retry_seconds
-                    logger.exception("采集失败 label=%s phase=%s；稍后重试", label, run_type)
+                    logger.exception("采集失败 label=%s slot=%s；稍后重试", label, run_type)
                     continue
                 completed[key] = {
                     "scheduled_at": scheduled_at.isoformat(),

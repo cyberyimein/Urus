@@ -20,11 +20,8 @@ def _settings(tmp_path):
         instrument_validation_symbols="INTC,SMH",
         moomoo_enabled=False,
         fred_enabled=False,
-        anomalo_enabled=False,
         anomalo_workflow_enabled=True,
         anomalo_workflow_fake_adapter=True,
-        expected_events_enabled=False,
-        urus_agent_enabled=False,
     )
 
 

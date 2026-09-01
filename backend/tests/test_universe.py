@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import UTC, datetime
+
+from app.models.universe import InstrumentUniverseItemModel, InstrumentUniverseVersionModel
+from app.repositories.universe import InstrumentUniverseRepository
 
 
 def test_universe_bootstraps_from_environment_and_is_versioned(client) -> None:
@@ -32,7 +36,7 @@ def test_universe_persists_cross_cutting_themes_and_keeps_primary_label(client) 
     payload = client.get("/api/settings/universe").json()
     intc = next(item for item in payload["items"] if item["symbol"] == "INTC")
     intc["themes"] = ["半导体", "AI 基础设施", "代工"]
-    # A stale legacy primary label must not be silently re-added to an
+    # A stale primary label must not be silently re-added to an
     # explicit list after the user removes it in the editor.
     intc["theme"] = "旧主题"
 
@@ -54,7 +58,7 @@ def test_universe_persists_cross_cutting_themes_and_keeps_primary_label(client) 
         assert row.themes == ["半导体", "AI 基础设施", "代工"]
 
 
-def test_universe_explicit_themes_override_stale_legacy_theme(client) -> None:
+def test_universe_explicit_themes_override_stale_primary_theme(client) -> None:
     payload = client.get("/api/settings/universe").json()
     intc = next(item for item in payload["items"] if item["symbol"] == "INTC")
     intc["themes"] = ["云计算"]
@@ -93,17 +97,6 @@ def test_universe_rejects_invalid_benchmark_and_stale_save(client) -> None:
     assert stale.status_code == 409
 
 
-def test_run_freezes_active_universe_version(client) -> None:
-    universe = client.get("/api/settings/universe").json()
-    created = client.post("/api/runs", json={"run_type": "pre_market"})
-    assert created.status_code == 201
-    run = client.get(f"/api/runs/{created.json()['run_id']}").json()
-    assert run["universe_version_id"] == universe["version_id"]
-    assert run["universe_content_sha256"] == universe["content_sha256"]
-    snapshot = client.get(f"/api/snapshots/{run['snapshot_id']}/frontend").json()
-    assert snapshot["universe"]["version_id"] == universe["version_id"]
-
-
 def test_deleting_symbol_only_changes_new_universe_version(client) -> None:
     original = client.get("/api/settings/universe").json()
     assert any(item["symbol"] == "INTC" for item in original["items"])
@@ -137,3 +130,42 @@ def test_identical_content_can_be_restored_as_later_revision(client) -> None:
     assert restored.status_code == 200
     assert restored.json()["revision"] == changed["revision"] + 1
     assert restored.json()["content_sha256"] == original["content_sha256"]
+
+
+def test_legacy_universe_response_hash_matches_normalized_items() -> None:
+    version = InstrumentUniverseVersionModel(
+        id="legacy-version",
+        revision=1,
+        content_sha256="0" * 64,
+        source="runtime",
+        created_at=datetime(2026, 8, 1, tzinfo=UTC),
+    )
+    version.items = [
+        InstrumentUniverseItemModel(
+            id="legacy-item",
+            version_id=version.id,
+            position=0,
+            symbol="INTC",
+            display_name="Intel",
+            asset_type="equity",
+            theme="半导体",
+            themes=["半导体"],
+            enabled=True,
+            roles={
+                "market_benchmark": False,
+                "equity_watchlist": True,
+                "options_collection": False,
+                "ai_candidate": True,
+                "cta_proxy": True,
+                "event_tracking": True,
+            },
+            benchmarks={"relative_strength": "QQQ", "cta_proxy_for": "NQ"},
+            collection={"quote": True, "daily_history": True, "options": False},
+            notes="legacy",
+        )
+    ]
+
+    response = InstrumentUniverseRepository.response(version)
+
+    assert response.content_sha256 == InstrumentUniverseRepository.content_digest(response.items)
+    assert response.content_sha256 != version.content_sha256

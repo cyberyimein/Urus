@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-import pytest
 import pandas as pd
+import pytest
 
 from app.analytics.options import (
     OptionContract,
@@ -15,14 +15,10 @@ from app.analytics.options import (
     trim_exposure_display,
 )
 from app.analytics.options_volatility import enrich_option_overview
+from app.core.collection_status import CollectionStatus
 from app.core.config import Settings
 from app.integrations.moomoo_options import MoomooOptionsAdapter
-from app.models import StepStatus
 from app.services.options_collection import OptionsCollectionService
-from app.urus_agent.evidence import EvidenceStore
-from app.urus_agent.reports import build_technical_report
-from app.workflows.context import RunContext
-from app.workflows.options import OptionsCollectorStep
 
 
 def contract(
@@ -113,11 +109,7 @@ def test_post_close_alignment_does_not_use_last_price_fallback_for_flags() -> No
                         {
                             "expiration": "2026-08-21",
                             "max_pain": 100.0,
-                            "exposure": {
-                                "walls": {
-                                    "net_dex": {"strike": 100.5, "exposure": 500.0},
-                                }
-                            },
+                            "exposure": {"walls": {"net_dex": {"strike": 100.5, "exposure": 500.0}}},
                         }
                     ],
                 }
@@ -138,68 +130,12 @@ def test_post_close_alignment_does_not_use_last_price_fallback_for_flags() -> No
     assert expiration["flags"] == []
 
 
-def test_technical_report_persists_post_close_option_alignment_from_compact_packet() -> None:
-    packet = {
-        "schema_version": "urus.stage4b_decision_packet.v1",
-        "source": {"dataset_key": "run:post-close-options"},
-        "decision_context": {
-            "current_observation": "post_close_review",
-            "decision_phase": "post_close_review",
-            "trading_date": "2026-08-21",
-        },
-        "observations": {
-            "post_close_review": {
-                "run": {"id": "run-1", "cutoff_time": "2026-08-21T08:00:00Z"},
-                "market": {
-                    "primary": {"symbol": "SPY", "regular_price": 500.0},
-                    "cross_asset_quotes": [
-                        {
-                            "symbol": "QQQ",
-                            "regular_price": 100.2,
-                            "last_price": 101.4,
-                            "quote_time": "2026-08-21T08:00:00Z",
-                        }
-                    ],
-                },
-                "instruments": [],
-                "options": {
-                    "symbols": [
-                        {
-                            "symbol": "QQQ",
-                            "spot": 100.0,
-                            "expirations": [
-                                {
-                                    "expiration": "2026-08-21",
-                                    "max_pain": 100.0,
-                                    "exposure_totals": {"net_dex": 500.0},
-                                    "walls": {
-                                        "net_dex": {"strike": 100.5, "exposure": 500.0}
-                                    },
-                                }
-                            ],
-                        }
-                    ]
-                },
-            }
-        },
-        "quality": {},
-    }
-
-    report = build_technical_report(EvidenceStore(packet))
-    alignment = report["options"]["post_close_alignment"]
-
-    assert alignment["status"] == "flagged"
-    assert alignment["symbols"][0]["close_price"] == pytest.approx(100.2)
-    assert alignment["symbols"][0]["price_kind"] == "regular_price"
-
-
 def test_dex_uses_delta_sign_and_gex_keeps_model_assumption_explicit() -> None:
-    contracts = [
+    result = calculate_exposure([
         contract("CALL", 100, open_interest=10, delta=0.5, gamma=0.02),
         contract("PUT", 100, open_interest=20, delta=-0.4, gamma=0.03),
-    ]
+    ])
 
-    result = calculate_exposure(contracts)
     totals = result["totals"]
     assert totals["call_dex"] == pytest.approx(50_000)
     assert totals["put_dex"] == pytest.approx(-80_000)
@@ -212,19 +148,13 @@ def test_dex_uses_delta_sign_and_gex_keeps_model_assumption_explicit() -> None:
 
 
 def test_gamma_zones_group_significant_contiguous_strikes_and_mark_flips() -> None:
-    contracts = [
+    result = calculate_exposure([
         contract("CALL", 90, open_interest=10, delta=0.4, gamma=0.02),
         contract("PUT", 100, open_interest=20, delta=-0.5, gamma=0.02),
         contract("CALL", 110, open_interest=30, delta=0.6, gamma=0.02),
-    ]
+    ])
 
-    result = calculate_exposure(contracts)
-
-    assert [row["gamma_regime"] for row in result["by_strike"]] == [
-        "positive",
-        "negative",
-        "positive",
-    ]
+    assert [row["gamma_regime"] for row in result["by_strike"]] == ["positive", "negative", "positive"]
     assert [(zone["sign"], zone["start_strike"], zone["end_strike"]) for zone in result["gamma_zones"]] == [
         ("positive", 90.0, 90.0),
         ("negative", 100.0, 100.0),
@@ -234,13 +164,12 @@ def test_gamma_zones_group_significant_contiguous_strikes_and_mark_flips() -> No
 
 
 def test_display_trim_keeps_full_chain_totals_and_walls() -> None:
-    contracts = [
+    exposure = calculate_exposure([
         contract("CALL", 50, open_interest=100, delta=1.0, gamma=0.001),
         contract("PUT", 100, open_interest=10, delta=-0.5, gamma=0.02),
         contract("CALL", 110, open_interest=20, delta=0.4, gamma=0.02),
         contract("CALL", 150, open_interest=1, delta=0.01, gamma=0.001),
-    ]
-    exposure = calculate_exposure(contracts)
+    ])
     totals_before = exposure["totals"].copy()
     walls_before = exposure["walls"].copy()
 
@@ -251,17 +180,14 @@ def test_display_trim_keeps_full_chain_totals_and_walls() -> None:
     assert exposure["calculation_strike_count"] == 4
     assert exposure["display_strike_count"] == 2
     assert [row["strike"] for row in exposure["by_strike"]] == [100, 110]
-    assert "gamma_flip_levels" not in exposure
 
 
 def test_spot_gamma_profile_reprices_contracts_and_finds_nearest_zero_crossing() -> None:
-    contracts = [
-        contract("PUT", 90, open_interest=100, delta=-0.4, gamma=0.02),
-        contract("CALL", 110, open_interest=100, delta=0.4, gamma=0.02),
-    ]
-
     profile = calculate_spot_gamma_profile(
-        contracts,
+        [
+            contract("PUT", 90, open_interest=100, delta=-0.4, gamma=0.02),
+            contract("CALL", 110, open_interest=100, delta=0.4, gamma=0.02),
+        ],
         days_to_expiry=30,
         range_percent=30,
         point_count=121,
@@ -282,36 +208,33 @@ def test_spot_gamma_profile_is_unavailable_without_usable_iv() -> None:
     invalid = contract("CALL", 100, open_interest=10, delta=0.5, gamma=0.02)
     invalid = OptionContract(**{**invalid.__dict__, "implied_volatility": None})
 
-    profile = calculate_spot_gamma_profile([invalid], days_to_expiry=30)
-
-    assert profile == {"available": False, "points": [], "gamma_flip_levels": []}
+    assert calculate_spot_gamma_profile([invalid], days_to_expiry=30) == {
+        "available": False,
+        "points": [],
+        "gamma_flip_levels": [],
+    }
 
 
 def test_expected_move_uses_atm_call_and_put_midpoints() -> None:
-    contracts = [
+    expected = calculate_expected_move([
         contract("CALL", 95, open_interest=1, delta=0.7, gamma=0.01),
         contract("PUT", 95, open_interest=1, delta=-0.3, gamma=0.01),
         contract("CALL", 100, open_interest=1, delta=0.5, gamma=0.02, bid=2.0, ask=2.4),
         contract("PUT", 100, open_interest=1, delta=-0.5, gamma=0.02, bid=1.8, ask=2.2),
-    ]
+    ])
 
-    expected = calculate_expected_move(contracts)
     assert expected == {"amount": 4.2, "percent": 4.2, "atm_strike": 100}
 
 
 def test_crossed_market_does_not_create_expected_move() -> None:
-    contracts = [
+    assert calculate_expected_move([
         contract("CALL", 100, open_interest=1, delta=0.5, gamma=0.02, bid=2.5, ask=2.0),
         contract("PUT", 100, open_interest=1, delta=-0.5, gamma=0.02),
-    ]
-
-    assert calculate_expected_move(contracts)["amount"] is None
+    ])["amount"] is None
 
 
 def test_iv_hv_features_are_deterministic_and_explicitly_proxy_quality() -> None:
-    overview = enrich_option_overview(
-        {"iv": 35.429, "hv_30d": 58.328, "iv_rank": 35.58}
-    )
+    overview = enrich_option_overview({"iv": 35.429, "hv_30d": 58.328, "iv_rank": 35.58})
 
     assert overview["iv_hv_spread"] == pytest.approx(-22.899)
     assert overview["iv_hv_ratio"] == pytest.approx(0.607410, abs=1e-6)
@@ -328,53 +251,6 @@ def test_iv_hv_features_do_not_divide_by_zero() -> None:
     assert "hv30_unavailable_or_non_positive" in overview["iv_hv_warnings"]
 
 
-class FakeOptionsAdapter:
-    def options_snapshot(self) -> dict[str, object]:
-        return {
-            "is_mock": False,
-            "status": "available",
-            "available": True,
-            "provider": "test",
-            "symbols": [],
-        }
-
-    def close(self) -> None:
-        return None
-
-
-def test_options_workflow_uses_the_dedicated_snapshot_adapter() -> None:
-    context = RunContext(
-        run_id="test",
-        run_type="pre_market",
-        cutoff_time=datetime.now(),
-        symbols=["QQQ", "INTC"],
-        options_adapter=FakeOptionsAdapter(),
-    )
-
-    result = OptionsCollectorStep().execute(context)
-
-    assert result.status == StepStatus.SUCCEEDED
-    assert result.payload["provider"] == "test"
-    assert "DEX/GEX" in result.summary
-
-
-def test_option_universe_merges_core_etfs_with_watchlist() -> None:
-    settings = Settings(
-        options_target_symbols="SPY,QQQ,SMH,IGV",
-        options_watchlist_symbols="INTC,NVDA",
-        enabled_symbols="QQQ,INTC,NVDA",
-    )
-
-    assert settings.options_collection_symbol_list == [
-        "SPY",
-        "QQQ",
-        "SMH",
-        "IGV",
-        "INTC",
-        "NVDA",
-    ]
-
-
 def test_options_collection_forwards_the_configured_serial_scope() -> None:
     calls: list[list[str] | None] = []
 
@@ -389,17 +265,10 @@ def test_options_collection_forwards_the_configured_serial_scope() -> None:
                 "symbols": [{"symbol": symbol} for symbol in symbols or []],
             }
 
-    context = RunContext(
-        run_id="options-run",
-        run_type="pre_market",
-        cutoff_time=datetime(2026, 8, 4, tzinfo=UTC),
-        symbols=["QQQ"],
-        option_symbols=["QQQ", "INTC"],
-        options_adapter=RecordingOptionsAdapter(),
-    )
-    result = OptionsCollectorStep().execute(context)
+    result = OptionsCollectionService().collect(RecordingOptionsAdapter(), ["qqq", "INTC", "QQQ"])
 
-    assert result.status == StepStatus.SUCCEEDED
+    assert result.status is CollectionStatus.SUCCEEDED
+    assert result.data_state == "live"
     assert calls == [["QQQ", "INTC"]]
 
 
@@ -415,14 +284,21 @@ def test_options_collection_marks_a_live_provider_without_data_unavailable() -> 
                 "unavailable_symbols": symbols or [],
             }
 
-    result = OptionsCollectionService().collect(
-        UnavailableOptionsAdapter(),
-        ["QQQ"],
-    )
+    result = OptionsCollectionService().collect(UnavailableOptionsAdapter(), ["QQQ"])
 
-    assert result.status == StepStatus.UNAVAILABLE
+    assert result.status is CollectionStatus.UNAVAILABLE
     assert result.data_state == "unavailable"
     assert result.payload["status"] == "unavailable"
+
+
+def test_option_universe_merges_core_etfs_with_watchlist() -> None:
+    settings = Settings(
+        options_target_symbols="SPY,QQQ,SMH,IGV",
+        options_watchlist_symbols="INTC,NVDA",
+        enabled_symbols="QQQ,INTC,NVDA",
+    )
+
+    assert settings.options_collection_symbol_list == ["SPY", "QQQ", "SMH", "IGV", "INTC", "NVDA"]
 
 
 class SnapshotContext:
@@ -447,24 +323,14 @@ class OptionMetadataContext:
         return 0, {}
 
     def get_market_snapshot(self, codes: list[str]):
-        return 0, pd.DataFrame(
-            {
-                "code": codes,
-                "last_price": [100.0 for _ in codes],
-            }
-        )
+        return 0, pd.DataFrame({"code": codes, "last_price": [100.0 for _ in codes]})
 
     def get_option_underlying_overview(self, codes: list[str]):
         return 0, pd.DataFrame({"code": codes})
 
     def get_option_expiration_date(self, code: str):
         del code
-        return 0, pd.DataFrame(
-            {
-                "strike_time": ["2026-08-21"],
-                "option_expiry_date_distance": [0],
-            }
-        )
+        return 0, pd.DataFrame({"strike_time": ["2026-08-21"], "option_expiry_date_distance": [0]})
 
     def close(self) -> None:
         return None
@@ -484,17 +350,14 @@ def test_option_metadata_requests_use_the_shared_rate_class() -> None:
         option_metadata_interval_seconds=0.55,
         rate_limiter=limiter,
     )
-    # Keep this test focused on the metadata endpoints; the chain response is
-    # intentionally empty after the two metadata calls.
     adapter._option_chain = lambda underlying, start, end: pd.DataFrame()
 
     payload = adapter.options_snapshot()
 
-    metadata_calls = [
-        interval for rate_class, interval in limiter.calls if rate_class == "moomoo_option_metadata"
-    ]
+    metadata_calls = [interval for rate_class, interval in limiter.calls if rate_class == "moomoo_option_metadata"]
     assert metadata_calls == [pytest.approx(0.55), pytest.approx(0.55)]
     assert payload["status"] == "unavailable"
+    adapter.close()
 
 
 def test_snapshot_requests_are_spaced_below_moomoo_rate_limit() -> None:
@@ -526,6 +389,7 @@ def test_snapshot_requests_are_spaced_below_moomoo_rate_limit() -> None:
     adapter._market_snapshot(["US.SPY"], "second")
 
     assert sleeps == [pytest.approx(0.51)]
+    adapter.close()
 
 
 def test_expirations_are_grouped_into_thirty_day_chain_windows() -> None:
@@ -537,7 +401,4 @@ def test_expirations_are_grouped_into_thirty_day_chain_windows() -> None:
         ("2026-10-30", 89),
     ]
 
-    assert MoomooOptionsAdapter._expiration_groups(expirations) == [
-        expirations[:3],
-        expirations[3:],
-    ]
+    assert MoomooOptionsAdapter._expiration_groups(expirations) == [expirations[:3], expirations[3:]]

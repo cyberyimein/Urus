@@ -15,6 +15,6 @@ describe('display formatting', () => {
     expect(formatDate('2026-08-02T17:27:00')).toContain('08/03 02:27 JST')
     expect(dataStateLabel('live')).toBe('真实数据')
     expect(dataStateLabel('placeholder')).toBe('占位数据')
-    expect(runTypeLabel('manual_analysis')).toBe('手动即时分析')
+    expect(runTypeLabel('post_close_observation')).toBe('盘后观察')
   })
 })

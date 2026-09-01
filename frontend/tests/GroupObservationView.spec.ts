@@ -122,13 +122,13 @@ describe('GroupObservationView', () => {
     expect(wrapper.text()).toContain('MEDIAN 20D')
     expect(wrapper.text()).toContain('+4.2%')
     expect(wrapper.text()).toContain('较 2026-08-20')
-    expect(wrapper.findAll('.phase-c-small-card')).toHaveLength(2)
+    expect(wrapper.findAll('.observation-small-card')).toHaveLength(2)
 
     await wrapper.find('.heatmap-row:not(.heatmap-header)').trigger('click')
-    expect(wrapper.find('.phase-c-symbol-focus').text()).toContain('AMD')
-    expect(wrapper.find('.phase-c-symbol-focus').text()).toContain('RSI 62.0')
+    expect(wrapper.find('.observation-symbol-focus').text()).toContain('AMD')
+    expect(wrapper.find('.observation-symbol-focus').text()).toContain('RSI 62.0')
 
-    await wrapper.find('.phase-c-hero-actions .primary-button').trigger('click')
+    await wrapper.find('.observation-hero-actions .primary-button').trigger('click')
     await flushPromises()
 
     expect(createRun).toHaveBeenCalledWith(expect.objectContaining({
@@ -138,7 +138,7 @@ describe('GroupObservationView', () => {
     expect(wrapper.text()).toContain('Observation Run succeeded')
   })
 
-  it('separates indicator recommendation from theme groups and hides the legacy self-selection group', async () => {
+  it('separates indicator recommendation from theme groups and hides the persisted self-selection group', async () => {
     const indicator = {
       ...group,
       version_id: 'indicator-version-1',
@@ -150,16 +150,16 @@ describe('GroupObservationView', () => {
       tags: ['universe-synced', 'watchlist'],
       display_order: 0,
     } as ObservationGroup
-    const legacy = {
+    const persistedSelfSelected = {
       ...group,
-      version_id: 'legacy-version-1',
+      version_id: 'persisted-self-selected-version-1',
       group_id: 'core-watchlist',
       source: 'manual',
       display_name: '核心观察组',
       tags: ['watchlist', 'user-qualified'],
       display_order: 10,
     } as ObservationGroup
-    vi.spyOn(api, 'listObservationGroups').mockResolvedValue([indicator, legacy, group])
+    vi.spyOn(api, 'listObservationGroups').mockResolvedValue([indicator, persistedSelfSelected, group])
     vi.spyOn(api, 'getObservationGroup').mockResolvedValue({ group: indicator, latest_snapshot: snapshot })
 
     await router.push('/groups/universe-core-watchlist')
@@ -175,10 +175,10 @@ describe('GroupObservationView', () => {
     })
     await flushPromises()
 
-    expect(wrapper.find('.phase-c-indicator-section').text()).toContain('指标推荐')
-    expect(wrapper.find('.phase-c-indicator-section').text()).not.toContain('核心关注列表')
-    expect(wrapper.find('.phase-c-theme-section').text()).toContain('SECTOR WATCHLIST')
-    expect(wrapper.find('.phase-c-theme-section').text()).toContain('半导体')
+    expect(wrapper.find('.observation-indicator-section').text()).toContain('指标推荐')
+    expect(wrapper.find('.observation-indicator-section').text()).not.toContain('核心关注列表')
+    expect(wrapper.find('.observation-theme-section').text()).toContain('SECTOR WATCHLIST')
+    expect(wrapper.find('.observation-theme-section').text()).toContain('半导体')
     expect(wrapper.text()).not.toContain('核心观察组')
     expect(wrapper.text()).not.toContain('自选组')
   })

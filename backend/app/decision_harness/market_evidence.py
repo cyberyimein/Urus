@@ -53,8 +53,11 @@ class DailyMarketEvidenceService:
         trading_date: date | None = None,
         cutoff_time: datetime | None = None,
         bar_source: Any | None = None,
+        allow_live_collection_after_cutoff: bool | None = None,
     ) -> dict[str, Any]:
         cutoff = as_utc(cutoff_time or utc_now())
+        if allow_live_collection_after_cutoff is None:
+            allow_live_collection_after_cutoff = cutoff_time is None
         scope_type = str(scope_type).strip().lower()
         if scope_type not in SUPPORTED_SCOPE_TYPES:
             raise ValueError(f"不支持的 Decision Scope 类型：{scope_type}")
@@ -77,14 +80,6 @@ class DailyMarketEvidenceService:
         if not is_trading_session_date(target_date, self.calendar_name):
             raise ValueError(f"{target_date.isoformat()} 不是 {self.calendar_name} 的交易日")
 
-        # A newly collected 3A snapshot is copied during persistence. This
-        # fallback makes the first Phase A freeze work against existing data.
-        self.repository.sync_legacy_for_symbols(
-            all_symbols,
-            through_date=target_date,
-            cutoff_time=cutoff,
-            market_timezone=self.market_timezone,
-        )
         collection = {"status": "not_requested", "fetched_symbols": [], "warnings": []}
         if bar_source is not None:
             collection = self.refresh_missing_bars(
@@ -96,8 +91,20 @@ class DailyMarketEvidenceService:
                 through_date=target_date,
                 cutoff_time=cutoff,
                 source_adapter=bar_source,
+                allow_collected_after_cutoff=allow_live_collection_after_cutoff,
             )
-        grouped = self.repository.bars(all_symbols, through_date=target_date, cutoff_time=cutoff)
+        effective_cutoff = cutoff
+        collected_at = collection.get("collected_at")
+        if allow_live_collection_after_cutoff and isinstance(collected_at, str):
+            try:
+                effective_cutoff = max(effective_cutoff, as_utc(datetime.fromisoformat(collected_at)))
+            except ValueError:
+                pass
+        grouped = self.repository.bars(
+            all_symbols,
+            through_date=target_date,
+            cutoff_time=effective_cutoff,
+        )
         quality, manifests, indicator_ids, chart_instruments = self._build_symbol_evidence(
             grouped,
             requested_symbols=requested_symbols,
@@ -125,7 +132,7 @@ class DailyMarketEvidenceService:
             "schema_version": DAILY_DATASET_SCHEMA,
             "feature_version": FEATURE_VERSION,
             "trading_date": target_date.isoformat(),
-            "cutoff_time": cutoff.isoformat(),
+            "cutoff_time": effective_cutoff.isoformat(),
             "market_timezone": self.market_timezone,
             "bar_completion_policy": BAR_COMPLETION_POLICY,
             "scope": scope,
@@ -184,13 +191,14 @@ class DailyMarketEvidenceService:
         through_date: date,
         cutoff_time: datetime,
         source_adapter: Any,
+        allow_collected_after_cutoff: bool = False,
     ) -> dict[str, Any]:
         """Fetch only symbols that cannot currently satisfy the daily contract.
 
-        The adapter is deliberately narrow at this seam: the existing OpenD
-        implementation exposes ``instrument_cards`` and its persistence
-        payload already contains normalized history bars.  A future provider
-        can implement the same output without changing dataset construction.
+        The adapter is deliberately narrow at this seam: the OpenD
+        implementation exposes ``instrument_cards`` and returns normalized
+        ``history_snapshots``. A future provider can implement the same output
+        without changing dataset construction.
         """
 
         normalized = list(dict.fromkeys(normalise_symbol(item) for item in symbols))
@@ -226,24 +234,33 @@ class DailyMarketEvidenceService:
                 "fetched_symbols": [],
                 "warnings": [f"日 K 增量补数失败：{exc}"],
             }
-        persistence = collected.get("_persistence")
-        if not isinstance(persistence, dict):
+        if not isinstance(collected.get("history_snapshots"), list):
             return {
                 "status": "partial",
                 "requested_symbols": normalized,
                 "fetched_symbols": [],
                 "warnings": ["日 K 数据源未返回可持久化的历史 K 线。"],
             }
-        self.repository.sync_legacy_snapshot_bars(
-            persistence,
+        collected_at = utc_now()
+        self.repository.persist_collected_history(
+            collected,
             source="moomoo_opend_history",
             market_timezone=self.market_timezone,
             # Keep the actual acquisition time.  A provider response may
             # contain bars newer than the requested historical target; those
             # rows must not become visible to an earlier point-in-time freeze.
-            collected_at=utc_now(),
+            collected_at=collected_at,
         )
-        refreshed = self.repository.bars(normalized, through_date=through_date, cutoff_time=cutoff_time)
+        visibility_cutoff = (
+            max(as_utc(cutoff_time), collected_at)
+            if allow_collected_after_cutoff
+            else as_utc(cutoff_time)
+        )
+        refreshed = self.repository.bars(
+            normalized,
+            through_date=through_date,
+            cutoff_time=visibility_cutoff,
+        )
         fetched = [
             symbol
             for symbol in missing_symbols
@@ -255,6 +272,7 @@ class DailyMarketEvidenceService:
             "status": "ok" if len(fetched) == len(missing_symbols) else "partial",
             "requested_symbols": normalized,
             "fetched_symbols": fetched,
+            "collected_at": collected_at.isoformat(),
             "warnings": (
                 []
                 if len(fetched) == len(missing_symbols)

@@ -1,226 +1,92 @@
-# Urus Research Context
+# Urus 当前领域上下文
 
-本文统一 Urus 数据采集、AI 决策、报告展示和复盘中使用的领域词汇。
+本文是 Urus 当前运行架构的术语和边界基线。代码、接口、页面和后续设计应优先使用这里的名称；历史迁移文件只承担数据库升级职责，不定义当前运行行为。
 
-## Language
+## 产品边界
 
-**Workflow Run**:
-一次具有固定 `run_id` 和 `cutoff_time` 的数据采集执行；盘前和收盘前是两个不同的 Workflow Run。
-_Avoid_: Job, task, batch
+Urus 负责 Universe、市场数据、日线证据、期权结构、确定性策略、可视化投影和远程决策输入的事实与版本管理。外部数据源只通过适配器进入系统，所有可展示结果都必须带来源、采集时间和质量状态。
 
-**Technical Report**:
-由确定性程序根据冻结的 **Decision Dataset** 数据生成的事实整理报告，主要使用图、表和结构化指标。
-_Avoid_: AI summary, analysis dump
+系统不下单、不管理真实仓位，也不把缺失数据填成旧值或模型推测。远程 AI 是用户主动触发的决策辅助能力，不能修改事实层或扩大输入范围。
 
-**Decision Dataset**:
-由同一交易日盘前和收盘前两个 **Workflow Run** 组成的不可变 Stage 4B 证据包；一个数据集可以产生
-多个 **Decision Session**。
-_Avoid_: Latest run, current frontend snapshot
+## 术语
 
-**Decision Session**:
-基于一个冻结 **Decision Dataset** 的完整 Stage 4B AI 执行，包含股票决策、候选分流、期权决策
-和报告组装；同一数据集可以重跑多个 Decision Session。
-_Avoid_: Chat session, agent conversation
+**Instrument Universe**：版本化的标的配置集合。每个标的包含资产类型、主题、启用状态、采集意图、角色和相对强弱基准；保存新配置会生成新版本。
 
-**Research Report**:
-面向人类研究的不可变展示版本，引用一个 **Decision Dataset** 和零或一个 **Decision Session**。
-数据集冻结后先产生 technical-only 报告；每次 AI 重跑产生新的报告版本，不伪造 Decision Session。
-_Avoid_: Run detail, latest mutable dashboard
+**Observation Group**：由 Universe 自动投影或用户维护的版本化标的集合，包含成员、基准、标签和版本。观察组是组级技术证据的输入，历史运行始终引用当时的组版本。
 
-**Agent Invocation**:
-一个 **Decision Session** 中具有单一 Task、Skill、证据范围和输出 Schema 的 Urus Agent 调用。
-_Avoid_: Agent, prompt, turn
+**Observation Run**：以一个交易日和截止时间为边界的一次确定性收市观察。它冻结 Universe/观察组版本，补齐需要的日线，计算指标、图表和策略，串行采集期权快照，并保存组快照与质量结果。
 
-**Market Context**:
-一次大盘 **Agent Invocation** 对 SPY、QQQ、SMH、SOXX、IGV、宏观事件和质量状态形成的结构化市场判断；
-它是题材分析的已校验上游输入。
-_Avoid_: Market chat, global raw dump
+**Daily Decision Dataset**：对一个 `Decision Scope` 在最后完整日 K 截止时形成的不可变证据包，包含 canonical daily bars、指标、质量和范围身份。相同内容重试时复用已有数据集，不原地修改历史数据集。
 
-**Order-Size Capital Flow**:
-Moomoo 按成交订单金额分档提供的日度主动净流量。Urus 只补最近已完整收盘且尚未缓存的一个交易日，
-数据库长期保留观测，以最近 30 个交易日计算规则信号，只向盘前 **Pre-Market Composite Decision**
-投影最近 5 日。大额单连续流出后转正且中小额单仍流出只能称为吸收候选；中小额单流入但大额单
-流出只能称为派发风险。订单金额档位不等同于机构、散户或账户身份。
-_Avoid_: Institutional flow, retail identity, confirmed smart money
+**Decision Chart Projection**：从 Daily Decision Dataset 和策略结果生成的只读图形投影。它只负责把 K 线、指标、策略 overlay、状态区间和质量信息映射到页面，不在前端重新推导交易信号。
 
-**Theme Decision**:
-一次题材 **Agent Invocation** 对明确 symbol 范围进行的局部排名；多个题材调用可以并发执行，但只能读取
-各自 symbol 与题材基准。
-_Avoid_: Sector summary text, unrestricted watchlist scan
+**Decision Scope**：一次决策冻结的对象范围，类型为 `instrument`、`group` 或 `observation_run`，并包含对应标的、组版本、交易日和基准。决策执行期间不能扩大范围。
 
-**Equity Synthesis**:
-在全部 **Theme Decision** 完成后，对 **Market Context** 和已校验题材输出进行跨题材排序的
-**Agent Invocation**；不再读取原始数据工具。
-_Avoid_: Report rewrite, second fact investigation
+**Strategy Decision**：由确定性策略根据冻结证据产生的结构化结果，包含 stance、action、horizon、原因、风险、确认条件、失效条件和证据引用。它不是原始指标，也不是模型观点。
 
-**Pre-Market Composite Decision**:
-由确定性程序先把市场、题材、标的、事件、期权入场上下文和有效 **Forecast Experience** 编译成紧凑
-只读投影，再由单次无工具 **Agent Invocation** 同时形成大盘预测、题材判断和全标的可评分预测；前五名是
-详细关注清单，其余标的保持简洁但必须保留可评分字段。旧的 Market Context → Theme Decision → Equity
-Synthesis 多模型链路仅作为历史实现，不再用于正式盘前运行。
-_Avoid_: Multi-agent debate, per-theme model fan-out
+**Deterministic Synthesis**：对同一数据集内策略结果进行规则化汇总的只读结果。它不改变任何单一策略结果，也不声称概率或收益保证。
 
-**Forecast Evaluation**:
-由确定性程序把正式盘前预测与同日官方收盘事实逐项对照形成的可审计评分；至少区分市场方向、
-主题领先/落后、标的方向、预期区间、相对表现和置信度校准。模型只能解释评分，不能修改 verdict、
-score、实际收益或 Brier 值。
-_Avoid_: AI self-score, hindsight opinion
+**Option Evidence**：在同一次 Observation Run 中按配置标的和到期日采集的期权快照及链路计算结果，包含 Option Spot、IV、Expected Move、DEX、GEX、Gamma Wall、Gamma Profile 和 Max Pain。
 
-**Post-Close Review**:
-在 **Forecast Evaluation** 完成后，由单次无工具 **Agent Invocation** 解释当日关键结果、预测偏差和
-可验证经验的正式复盘。它不重新运行 **Theme Decision**、不产生全市场排名，也不提出同日交易。
-_Avoid_: Closing stock recap, second Equity Synthesis
+**Regular-Close Alignment**：用交易所官方 regular close 与期权结构价位进行的确定性邻近比较。`near_max_pain` 和 `near_dex_wall` 只表示邻近候选；`dex_influence_candidate` 表示结构性影响候选，不表示 DEX 已经造成收盘。
 
-**Forecast Experience**:
-由 **Post-Close Review** 提出的可证伪经验假设，保存稳定 pattern key、适用市场标签、证据、支持与
-反例次数及状态。盘前只继承数量受控且仍有效的经验，不继承整份历史复盘作为长期记忆。
-_Avoid_: Free-form lesson, prompt memory
+**History Collection State**：按 provider 和 symbol 保存的日线采集状态。`access_state` 描述额度准入和采集进度，`quality_state` 描述数据是否达到日线证据要求；二者独立。
 
-**AI Decision Report**:
-由确定性代码合并一个 **Decision Session** 中已通过校验的股票和期权输出形成的只读报告。
-_Avoid_: AI summary, rewritten report
+**Capacity Plan**：由当前 Universe、canonical daily bars 和 OpenD 实时额度形成的短期容量计划，区分 cache hit、admitted 和 pending quota。计划用于解释和优先级排序，真正请求前仍须通过权威准入检查。
 
-**Decision Trace**:
-一个 **Decision Session** 中证据准备、模型原始返回、工具调用、校验、分流和组装的可观察执行轨迹。
-_Avoid_: Chain of thought, chat history
+**Data State**：页面和接口使用的事实状态，包括 `live`、`mock`、`placeholder`、`partial`、`unavailable` 和 `failed`。状态必须与质量说明一起展示。
 
-**Decision Rationale**:
-模型按输出 Schema 返回的简短、结构化、带 **Evidence Reference** 的决策依据。它可以主动展示并接受
-本地校验，不等同于模型不可见的私有 Chain of Thought。
-_Avoid_: Hidden reasoning, raw model thoughts
+**Remote Decision Run**：用户确认后，Anomalo 对一份精确 Workflow Binding 和冻结输入执行的远程运行记录。Urus 保存输入指纹、远端运行身份、事件、结果 envelope 和校验状态；重跑创建新记录。
 
-**Provider-returned Reasoning**:
-供应商响应中实际存在的 `reasoning`、`analysis` 或类似原始字段。属于未校验的审计材料，默认不加载、
-不展示，但允许用户在模型节点中主动查看。
-_Avoid_: Reconstructed thought, validated evidence
+**Workflow Binding**：把一个远程决策意图绑定到已发布的精确 Workflow Ref、definition hash、compiled hash、能力清单 hash 及输入输出 Schema。运行时只允许使用 active binding，不能按页面点击动态替换流程。
 
-**Research Report Workspace**:
-Urus 面向日常研究的主要前端，包含技术整理、AI 决策和 AI 决策复盘三个 Tab。
-_Avoid_: Dashboard, operations console
+**Decision Harness**：围绕数据冻结、确定性策略、期权分析、页面投影和远程决策接缝的整体模块边界。Urus 拥有事实和校验；远端服务只执行被绑定且已冻结的决策输入。
 
-**Operations Console**:
-用于采集触发、步骤验证、错误诊断和原始 JSON 检查的开发界面。
-_Avoid_: Main research UI
+## 关系
 
-**Evidence Reference**:
-指向冻结证据中 dataset、run、snapshot、phase、path 和时间信息的稳定字段引用。
-_Avoid_: Citation text, source note
+```text
+Instrument Universe
+        │
+        ├── Observation Group version
+        │          │
+        │          └── Observation Run
+        │                 ├── canonical daily_bars
+        │                 ├── Daily Decision Dataset
+        │                 ├── Group Daily Snapshot
+        │                 ├── Option Evidence + Regular-Close Alignment
+        │                 └── Observation Report
+        │
+        └── instrument Decision Scope ──┐
+                                        ├── Chart Projection
+                                        ├── Strategy Decision
+                                        └── Deterministic Synthesis
 
-**Decision Harness**:
-在逻辑上包住数据冻结、Strategy Decision 执行、Decision Workflow Definition、远端 AI 执行、持久化、评价和
-复盘的整体编排 Module。Urus 拥有事实和流程设计；Anomalo 可以作为远端执行平面，对齐并执行有界 Workflow JSON。
-_Avoid_: Prompt wrapper, model memory
+Frozen evidence + active Workflow Binding ──> Remote Decision Run
+```
 
-**Daily Decision Dataset**:
-以一个交易日最后一根完整日 K 为基准，对指定 Decision Scope 的 bars、指标、组状态、Strategy Decision 输入和
-质量状态形成的不可变证据包。它是日 K 产品线的数据集，不要求由盘前和收盘前两个 Workflow Run 配对组成。
-_Avoid_: Latest chart data, mutable indicator cache
+- 一个 Observation Run 可以包含多个观察组，但每个组都引用不可变的组版本。
+- 日线证据只从 `daily_bars` 构建；OpenD 返回的 `history_snapshots` 只负责写入 canonical 存储。
+- 期权属于 Observation Run 的收市后证据，不创建独立的事实运行链；前端在个股工作区内展示它。
+- Regular-Close Alignment 只有在官方收盘价可用时才生成正式标记。Option Spot fallback 只能作为参考位置。
+- 远程 AI 只能读取冻结的 Dataset、Chart Projection、Group Snapshot 或 Observation Run 投影，不能读取未声明范围的数据源。
+- 数据源不可用时保留失败原因和质量状态；不要用历史快照、缓存或模型输出补齐当前事实。
 
-**Capacity Plan**:
-针对一个候选 Universe 版本，由确定性程序结合 OpenD 历史 K 线额度、本地日线新鲜度和安全余量形成的
-容量计划；它区分可直接复用、已准入和等待额度的 symbol。保存前计划用于解释影响，运行前仍须重新执行权威准入。
-_Avoid_: Fixed symbol limit, frontend estimate, reservation token
+## 当前代码边界
 
-**History Collection State**:
-独立于不可变 Universe 版本、按 provider 和 symbol 保存的日线采集进度与质量投影；等待额度、采集中和已取得
-属于运行状态，不会自动停用用户配置。只有历史 K 线成功写入并验证规范化 daily bars 后，等待额度标记才能自动取消。
-_Avoid_: Universe enabled flag, optimistic frontend badge, workflow step status
+| 边界 | 主要实现 |
+| --- | --- |
+| 配置与 Universe | `backend/app/core/config.py`、`backend/app/repositories/universe.py`、`backend/app/api/universe.py` |
+| OpenD 与额度 | `backend/app/integrations/moomoo.py`、`backend/app/integrations/moomoo_options.py`、`backend/app/services/history_quota.py`、`backend/app/services/market_data_collection.py` |
+| 日线证据 | `backend/app/decision_harness/market_evidence.py`、`backend/app/repositories/daily_evidence.py` |
+| 期权分析 | `backend/app/services/options_collection.py`、`backend/app/analytics/options.py`、`backend/app/analytics/options_volatility.py` |
+| 收市观察 | `backend/app/services/observation.py`、`backend/app/decision_harness/group_observation.py`、`backend/app/decision_harness/observation_report.py` |
+| 远程决策 | `backend/app/decision_harness/remote_workflow.py`、`backend/app/services/remote_decision_supervisor.py`、`backend/app/integrations/anomalo_workflow.py` |
+| 页面 | `frontend/src/views/InstrumentDecisionView.vue`、`frontend/src/views/GroupObservationView.vue`、`frontend/src/views/ObservationRunView.vue` |
 
-**Decision Chart Projection**:
-由确定性程序从 Daily Decision Dataset、指标和 Strategy Decision 生成的只读图形投影，包含 K 线 series、指标
-pane、策略 overlay、状态时间段、事件和质量信息。它只负责可视化映射，不产生新的技术或交易判断。
-_Avoid_: Frontend-calculated signal, chart opinion
+## 变更规则
 
-**Decision Scope**:
-一次决策明确冻结的对象范围，类型只能是 instrument、group 或 observation_run，并包含对应 symbol、组版本、
-交易日和 benchmark。AI 和策略都不能在运行中扩大该范围。
-_Avoid_: Prompt symbols, current watchlist
-
-**Observation Group**:
-用户维护的版本化 symbol 集合及其 benchmark，用于组级技术判断和收市后 Observation Run；编辑成员会创建新版本，
-历史决策继续引用旧版本。
-_Avoid_: Mutable watchlist, AI-selected theme
-
-**Decision Workflow Definition**:
-由 Urus 设计、保存和版本化的不可变 Workflow JSON，声明 Decision Scope、输入输出 Schema、Anomalo capability
-节点、依赖、资源策略和失败策略。Anomalo 只能发布和执行精确版本及 hash，不能替换为同名最新流程。
-_Avoid_: Prompt text, remote latest workflow
-
-**Workflow Binding**:
-把一个 Urus AI 决策意图绑定到 Anomalo 已发布精确 Workflow Ref 的不可变运行配置，保存 definition hash、compiled
-hash、capability manifest hash 及输入输出 Schema 版本。发布期负责校验和激活 Binding；日常运行只能调用 active Binding，
-不能在用户点击时动态发布 Workflow。
-_Avoid_: Remote latest workflow, per-click alignment, runtime workflow draft
-
-**Remote Decision Run**:
-Anomalo 对一份 active Workflow Binding 和冻结输入执行产生的远端运行记录；Urus 保存 Workflow Ref、target/input hash、
-状态、结果 envelope 和 trace reference，重跑不会覆盖旧记录。
-_Avoid_: Chat session, local Workflow Run
-
-**Strategy Decision**:
-一个带版本的确定性算法策略根据当前冻结证据对 symbol、主题或市场状态形成的完整结构化决策，包含 action、
-horizon、原因、风险、确认条件、失效条件和 Evidence Reference。
-_Avoid_: Indicator value, model opinion
-
-**Strategy Arbitration Decision**:
-AI 在多个已完成的 Strategy Decision 之间进行采信、否决、组合或放弃的结构化决定；它不修改策略算法，
-也不把策略选择包装成新的原始事实。
-_Avoid_: AI-generated strategy, free-form ranking
-
-**Decision Case**:
-由一次当前决策打开、在 horizon 到达后追加实际结果和评价的可复盘案例；它保存当时的 Decision Dataset、
-全部 Strategy Decision、Strategy Arbitration Decision、检索到的历史案例引用、Decision Trace 和复盘结果。
-它不是自由文本记忆，历史内容不可被后续结果回写。
-_Avoid_: Prompt memory, chat memory
-
-**Case Card**:
-从已结案 Decision Case 生成的有界案例摘要，供当前 Agent Invocation 比较相似条件、当时决策和实际结果；
-它不是当前交易日的事实，也不能替代当前 Decision Dataset。
-_Avoid_: Retrieved transcript, historical proof
-
-**Strategy Evaluation**:
-确定性程序对每个 Strategy Decision（包括未被 AI 采信的策略）与实际结果的评分，用于优化策略算法。
-_Avoid_: AI self-score
-
-**Arbitration Evaluation**:
-确定性程序比较 Strategy Arbitration Decision 与全部策略实际结果、未选策略的反事实结果和市场状态，
-用于识别 AI 的过度信任、过度怀疑、近期偏见和选择遗漏。
-_Avoid_: Model confidence alone
-
-## Relationships
-
-- 两个配对的 **Workflow Run** 形成一个 **Decision Dataset**，并产生一个 **Technical Report**。
-- 一个 **Research Report** 始终引用一个 **Decision Dataset**；AI 尚未运行时其 Decision Session 可以为空。
-- 一个 **Decision Dataset** 可以产生多个重跑版本的 **Decision Session**。
-- **Decision Harness** 在一个冻结 **Decision Dataset** 或 **Daily Decision Dataset** 上运行适用策略；旧 Stage 4B
-  创建 **Decision Session**，日 K 产品线则按 **Decision Scope** 创建确定性结果或 **Remote Decision Run**。
-- 日 K 产品线由一个 **Decision Scope** 形成 **Daily Decision Dataset**；group 和 observation_run scope 必须冻结
-  对应 **Observation Group** 版本。
-- 一个 **Daily Decision Dataset** 可以生成多个面向不同页面和可见窗口的 **Decision Chart Projection**；投影的
-  Strategy Overlay 必须引用原始 **Strategy Decision**，不能由前端推测信号位置。
-- **Decision Workflow Definition** 在受控发布期校验、导入并发布到 Anomalo；active **Workflow Binding** 保存精确
-  Workflow Ref 和预期 hash。Urus 把策略输出和冻结证据编译为运行输入后，日常 **Remote Decision Run** 只能使用
-  该 Binding；target hash 或 input hash 不一致的结果不能被接受。
-- 盘前 **Decision Session** 先生成一个确定性证据投影，再运行一个无工具的 **Pre-Market Composite
-  Decision**；评分所需的全标的预测与前五名详细关注清单来自同一次 **Agent Invocation**。
-- 盘后 **Decision Session** 先生成 **Forecast Evaluation**，再运行一个无工具的 **Post-Close Review**；
-  它可以产生零到多个候选 **Forecast Experience**。
-- 一个 **Decision Session** 产生一个 **AI Decision Report** 和一个 **Decision Trace**。
-- 一个 **Decision Session** 打开一个 **Decision Case**；horizon 到达后追加 **Strategy Evaluation**、
-  **Arbitration Evaluation** 和 **Post-Close Review**，不回写原始决策。
-- **Strategy Evaluation** 必须评价全部策略；**Arbitration Evaluation** 必须评价 AI 选中和未选中的策略，
-  不能只评价最终采信结果。
-- 一个 **AI Decision Report** 包含多个 **Evidence Reference**，每个引用定位到同一 **Decision Dataset** 的 **Technical Report**。
-
-## Example dialogue
-
-> **Dev:** “重新运行模型时，要更新原来的 **AI Decision Report** 吗？”
-> **Domain expert:** “不要。为同一个 **Decision Dataset** 创建新的 **Decision Session**，旧报告和 **Decision Trace** 都必须保留。”
-
-## Flagged ambiguities
-
-- “run” 曾同时指 **Workflow Run** 和单次模型调用；后者统一称为 **Agent Invocation**。
-- “复盘”包括可校验的 **Decision Rationale**；provider 实际返回的额外文本或 reasoning-like 字段属于
-  **Provider-returned Reasoning**，默认折叠但允许用户主动查看。
-- “Dashboard”曾被同时用于研究首页和开发控制台；正式研究入口统一称为
-  **Research Report Workspace**，采集页面统一称为 **Operations Console**。
+1. 新数据类型先定义来源、时间、质量和不可变身份，再接入页面。
+2. 新采集能力必须加入 Observation Run 的单一入口，并复用主机级锁和限频器。
+3. 新页面优先消费后端冻结投影；前端只做格式化、筛选和交互，不重新计算事实。
+4. 任何远程决策入口都必须经过 source locator、输入 hash、binding 和 artifact 校验。
+5. 数据库迁移目录可以保留历史版本，但运行代码、配置示例和开发文档只描述当前模型与接口。

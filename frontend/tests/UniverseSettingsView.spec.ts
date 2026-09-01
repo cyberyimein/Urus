@@ -10,16 +10,16 @@ const universe: UniverseResponse = {
   items: [
     {
       symbol: 'QQQ', display_name: 'QQQ', asset_type: 'market', theme: '科技大盘', enabled: true,
-      roles: { market_benchmark: true, equity_watchlist: false, cta_proxy: true, options_collection: true, event_tracking: false, ai_candidate: true },
-      benchmarks: { relative_strength: null, cta_proxy_for: 'NQ' }, collection: { quote: true, daily_history: true, options: true }, notes: '',
+      roles: { market_benchmark: true, equity_watchlist: false, options_collection: true, ai_candidate: true },
+      benchmarks: { relative_strength: null }, collection: { quote: true, daily_history: true, options: true }, notes: '',
     },
     {
       symbol: 'AAPL', display_name: 'Apple', asset_type: 'equity', theme: '大型科技', enabled: true,
-      roles: { market_benchmark: false, equity_watchlist: true, cta_proxy: false, options_collection: true, event_tracking: true, ai_candidate: true },
-      benchmarks: { relative_strength: 'QQQ', cta_proxy_for: null }, collection: { quote: true, daily_history: true, options: true }, notes: '',
+      roles: { market_benchmark: false, equity_watchlist: true, options_collection: true, ai_candidate: true },
+      benchmarks: { relative_strength: 'QQQ' }, collection: { quote: true, daily_history: true, options: true }, notes: '',
     },
   ],
-  derived: { market_symbols: ['QQQ'], instrument_symbols: ['AAPL'], cta_proxy_symbols: ['QQQ'], option_symbols: ['QQQ', 'AAPL'], event_symbols: ['AAPL'], ai_candidate_symbols: ['QQQ', 'AAPL'] },
+  derived: { market_symbols: ['QQQ'], instrument_symbols: ['AAPL'], option_symbols: ['QQQ', 'AAPL'], ai_candidate_symbols: ['QQQ', 'AAPL'] },
 }
 
 afterEach(() => vi.restoreAllMocks())

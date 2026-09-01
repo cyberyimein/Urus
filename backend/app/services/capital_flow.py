@@ -18,7 +18,7 @@ class CapitalFlowSource(Protocol):
 @lru_cache(maxsize=4)
 def _calendar(name: str) -> Any:
     # exchange_calendars imports pandas/numpy. Keep that allocation inside the
-    # recyclable workflow worker instead of paying it in the API process.
+    # collection path instead of paying it during API module import.
     import exchange_calendars as xcals
 
     return xcals.get_calendar(name)

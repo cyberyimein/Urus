@@ -387,7 +387,7 @@ def test_observation_run_keeps_option_symbols_out_of_history_quota(client) -> No
 
         def instrument_cards(self, symbols: list[str]) -> dict[str, object]:
             self.calls.append(list(symbols))
-            return {"_persistence": {"symbols": []}}
+            return {"history_snapshots": []}
 
     admission = RecordingHistoryAdmission()
     bar_source = RecordingBarSource()
@@ -581,8 +581,8 @@ def test_cross_section_rejects_previous_strategy_implementation_mismatch(client)
             updated = dict(item)
             strategy = dict(updated.get("strategy") or {})
             if strategy.get("name") == "trend_momentum_v1":
-                strategy["version"] = "legacy"
-                strategy["implementation_sha256"] = "legacy-hash"
+                strategy["version"] = "mismatched-version"
+                strategy["implementation_sha256"] = "mismatched-hash"
                 updated["strategy"] = strategy
             decisions.append(updated)
         assert decisions
@@ -604,15 +604,13 @@ def test_refresh_missing_bars_does_not_backdate_collection_time(client) -> None:
     class HistoricalAdapter:
         def instrument_cards(self, symbols: list[str]) -> dict[str, object]:
             return {
-                "_persistence": {
-                    "symbols": [
-                        {
-                            "symbol": symbol,
-                            "history": {"bars": _bars(symbol, session_dates, 20.0)},
-                        }
-                        for symbol in symbols
-                    ]
-                }
+                "history_snapshots": [
+                    {
+                        "symbol": symbol,
+                        "history": {"bars": _bars(symbol, session_dates, 20.0)},
+                    }
+                    for symbol in symbols
+                ]
             }
 
     with client.app.state.session_factory() as session:
@@ -677,13 +675,13 @@ def test_observation_groups_sync_from_active_universe(client) -> None:
     assert any(item["display_name"] == "个股观察" and item["symbols"] == ["INTC"] for item in groups)
 
 
-def test_legacy_self_selected_group_is_hidden_from_active_catalog(client) -> None:
+def test_persisted_self_selected_group_is_hidden_from_active_catalog(client) -> None:
     created = client.post(
         "/api/observation/groups",
         json={
-            "group_id": "legacy-self-selected-group",
+            "group_id": "persisted-self-selected-group",
             "display_name": "核心观察组",
-            "description": "旧版手工自选组",
+            "description": "历史手工自选组",
             "symbols": ["INTC"],
             "benchmark_symbols": ["QQQ"],
             "tags": ["watchlist", "user-qualified"],
@@ -693,9 +691,9 @@ def test_legacy_self_selected_group_is_hidden_from_active_catalog(client) -> Non
 
     visible = client.get("/api/observation/groups")
     assert visible.status_code == 200, visible.text
-    assert all(item["group_id"] != "legacy-self-selected-group" for item in visible.json())
+    assert all(item["group_id"] != "persisted-self-selected-group" for item in visible.json())
 
-    historical = client.get("/api/observation/groups/legacy-self-selected-group")
+    historical = client.get("/api/observation/groups/persisted-self-selected-group")
     assert historical.status_code == 200, historical.text
     assert historical.json()["group"]["display_name"] == "自选组"
 

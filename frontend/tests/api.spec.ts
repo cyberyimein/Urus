@@ -5,7 +5,7 @@ import { api, ApiError } from '@/api/client'
 afterEach(() => vi.unstubAllGlobals())
 
 describe('api client', () => {
-  it('does not reuse a stale dashboard response after a completed run', async () => {
+  it('does not reuse a stale observation response', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ status: 'ok', environment: 'test', database: 'ok' }), {
         status: 200,
@@ -27,11 +27,11 @@ describe('api client', () => {
     await expect(api.health()).rejects.toMatchObject<ApiError>({ code: 'network_error' })
   })
 
-  it('queues a manual current-state analysis through the dedicated endpoint', async () => {
+  it('requests options for a selected observation date', async () => {
     const payload = {
-      run_id: 'manual-1', status: 'pending', session_context: 'intraday',
-      trigger_type: 'manual', analysis_mode: 'current_state', official_cycle: false,
-      eligible_for_scoring: false, updates_official_cta_state: false,
+      run_id: 'observation-1', status: 'succeeded', trading_date: '2026-08-21',
+      cutoff_time: null, available: false, options: { is_mock: true, status: 'placeholder', available: false, data_state: 'placeholder', note: 'fixture' },
+      alignment: null, message: null,
     }
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), {
       status: 202,
@@ -39,22 +39,9 @@ describe('api client', () => {
     }))
     vi.stubGlobal('fetch', fetchMock)
 
-    await expect(api.createManualAnalysis()).resolves.toMatchObject(payload)
-    expect(fetchMock).toHaveBeenCalledWith('/api/analysis/runs', expect.objectContaining({
-      method: 'POST', body: '{}', cache: 'no-store',
-    }))
-  })
-
-  it('deletes a research report through the explicit DELETE endpoint', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ report_id: 'report-1', deleted: true }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
-    }))
-    vi.stubGlobal('fetch', fetchMock)
-
-    await expect(api.deleteResearchReport('report-1')).resolves.toEqual({ report_id: 'report-1', deleted: true })
-    expect(fetchMock).toHaveBeenCalledWith('/api/research-reports/report-1', expect.objectContaining({
-      method: 'DELETE', cache: 'no-store',
+    await expect(api.getObservationOptions('2026-08-21', 'INTC')).resolves.toMatchObject(payload)
+    expect(fetchMock).toHaveBeenCalledWith('/api/observation/options?trading_date=2026-08-21&symbol=INTC', expect.objectContaining({
+      cache: 'no-store',
     }))
   })
 })

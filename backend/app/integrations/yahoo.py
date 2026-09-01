@@ -54,7 +54,7 @@ class YahooDailyAdapter:
         self.market_timezone = market_timezone
         self._client = client or httpx.Client(
             timeout=timeout_seconds,
-            headers={"User-Agent": "Urus/0.1 stage-1a market fallback"},
+            headers={"User-Agent": "Urus/0.1 market-data fallback"},
         )
         self._owns_client = client is None
         self.series = series or DEFAULT_YAHOO_SERIES

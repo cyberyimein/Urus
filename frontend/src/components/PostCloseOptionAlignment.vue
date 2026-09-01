@@ -4,7 +4,7 @@ import { computed } from 'vue'
 import type {
   PostCloseOptionAlignment as PostCloseOptionAlignmentData,
   PostCloseOptionDexWallAlignment,
-} from '@/types/research'
+} from '@/types/options'
 import { formatDate, formatNumber } from '@/utils/format'
 
 const props = defineProps<{

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 from functools import lru_cache
-from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -29,21 +28,19 @@ class Settings(BaseSettings):
     app_port: int = 8000
     database_url: str = "sqlite:///./urus.db"
     # Optional deployed Urus instance used as the source of truth for the
-    # local Phase C watchlist. Leave empty in production to use its own active
-    # Universe; local workstations can point at the deployed API root.
+    # local observation Universe. Leave empty in production to use its own
+    # active Universe; local workstations can point at the deployed API root.
     observation_universe_source_url: str = ""
     observation_universe_sync_timeout_seconds: float = 15.0
     # A stale local revision is a deliberate emergency mode.  Keep the
     # default fail-closed so a broken upstream cannot silently change the
     # observed universe.
     observation_allow_stale_universe: bool = False
-    workflow_process_isolation: bool = True
-    workflow_process_timeout_seconds: float = 7200.0
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     enabled_symbols: str = "QQQ,INTC"
-    # Stage 3A full technical universe: QQQ is added by the collector as the
-    # relative-strength benchmark; these are the sector ETFs and public
-    # watchlist names that receive the same snapshot + daily-history fields.
+    # Configured technical universe: QQQ is the default relative-strength
+    # benchmark; these sector ETFs and public watchlist names receive the same
+    # snapshot and daily-history fields.
     instrument_validation_symbols: str = (
         "SPY,SMH,IGV,LITE,COHR,MRVL,NOK,AMD,INTC,NVDA,NBIS,ORCL,MSFT,NOW,RKLB,AMZN,AAPL,GOOG"
     )
@@ -104,14 +101,9 @@ class Settings(BaseSettings):
     yahoo_base_url: str = "https://query2.finance.yahoo.com/v8/finance/chart"
     yahoo_timeout_seconds: float = 10.0
     yahoo_lookback_days: int = 30
-    anomalo_enabled: bool = False
     anomalo_base_url: str | None = None
-    # Agent web-search runs can take several minutes; keep connection failure
-    # handling separate in the HTTP adapter while allowing a long read window.
-    anomalo_timeout_seconds: float = 600.0
-    # Phase D Workflow runtime is intentionally independent from the legacy
-    # chat/event adapter above.  Keep it disabled until a published Workflow
-    # Binding and a scoped service token are configured.
+    # Remote Workflow execution remains disabled until a published binding and
+    # a scoped service token are configured.
     anomalo_workflow_enabled: bool = False
     anomalo_workflow_token: str | None = None
     anomalo_workflow_connect_timeout_seconds: float = 10.0
@@ -123,58 +115,10 @@ class Settings(BaseSettings):
     remote_decision_event_poll_limit: int = 500
     # A 0.25s poll interval should cover the Workflow read timeout (20 min)
     # after a Urus restart, rather than failing a still-running remote Run
-    # after the old one-minute window.
+    # after a shorter timeout window.
     remote_decision_max_polls: int = 4800
-    # Scheduled events are opt-in during validation. The breaking/news agent
-    # remains defined but disabled until its source policy is finalized.
-    expected_events_enabled: bool = False
-    breaking_events_enabled: bool = False
-    # Select the 1B/3B research overlay. ``events`` preserves the scheduled
-    # event workflow; ``cta`` runs deterministic ETF-proxy trend pressure.
-    # This branch is the CTA research fork. Deployments can still opt back
-    # into the scheduled-event overlay explicitly with `events`.
-    workflow_research_variant: Literal["events", "cta"] = "cta"
-    cta_proxy_symbols: str = "SPY,QQQ,IWM,IEF,TLT,UUP,GLD,USO,HYG,LQD,SMH,IGV"
-    anomalo_scheduled_agent: str = "scheduled-event-investigator"
-    anomalo_breaking_agent: str = "breaking-event-investigator"
-    urus_agent_enabled: bool = False
-    openrouter_api_key: str | None = None
-    openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    urus_agent_model: str = "deepseek/deepseek-v4-flash-0731"
-    urus_agent_temperature: float = 0.1
-    # A full daily-cycle synthesis can be slower than a single small model
-    # turn; keep this configurable while using the long-running local default.
-    urus_agent_timeout_seconds: float = 1200.0
-    # Optional provider-side completion cap.  Leave unset (or set to 0) to let
-    # the model finish a large synthesis response without Urus truncating it.
-    urus_agent_max_completion_tokens: int | None = None
-    urus_agent_input_cost_per_million: float = 0.0
-    urus_agent_cached_input_cost_per_million: float = 0.0
-    urus_agent_cache_write_cost_per_million: float = 0.0
-    urus_agent_output_cost_per_million: float = 0.0
-    urus_agent_max_tool_iterations: int = 8
-    urus_agent_max_tool_result_bytes: int = 100000
-    urus_agent_max_total_tool_result_bytes: int = 500000
-    urus_agent_max_context_bytes: int = 500000
-    urus_agent_max_total_tool_calls: int = 24
-    urus_agent_max_raw_response_bytes: int = 200000
-    # Independent theme invocations run concurrently. Market and synthesis
-    # remain dependency boundaries; option structure is deterministic context.
-    urus_agent_theme_max_concurrency: int = 6
-    urus_agent_enforce_stage_tools: bool = True
-    urus_agent_event_limit: int = 10
-    # Runtime scheduler defaults. They can be overridden from /settings and
-    # are intentionally separate from the provider credentials above.
-    scheduled_pre_market_enabled: bool = True
-    scheduled_pre_market_skip_ai_decision: bool = True
-    scheduled_pre_close_enabled: bool = True
-    scheduled_pre_close_skip_ai_decision: bool = True
+    # Runtime scheduler default. It can be overridden from /settings.
     scheduled_post_close_enabled: bool = True
-    scheduled_post_close_skip_ai_decision: bool = True
-    event_discovery_horizon_days: int = 120
-    event_instrument_symbols: str = (
-        "LITE,COHR,MRVL,NOK,AMD,INTC,NVDA,NBIS,ORCL,MSFT,NOW,RKLB,AMZN,AAPL,GOOG"
-    )
 
     @property
     def cors_origin_list(self) -> list[str]:
@@ -203,22 +147,6 @@ class Settings(BaseSettings):
         return [
             item.strip().upper()
             for item in self.capital_flow_symbols.split(",")
-            if item.strip()
-        ]
-
-    @property
-    def event_instrument_symbol_list(self) -> list[str]:
-        return [
-            item.strip().upper()
-            for item in self.event_instrument_symbols.split(",")
-            if item.strip()
-        ]
-
-    @property
-    def cta_proxy_symbol_list(self) -> list[str]:
-        return [
-            item.strip().upper()
-            for item in self.cta_proxy_symbols.split(",")
             if item.strip()
         ]
 

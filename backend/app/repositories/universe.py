@@ -28,13 +28,6 @@ THEMES = {
     "IEF": "中期国债", "UUP": "美元", "GLD": "黄金", "USO": "原油",
     "SMH": "半导体", "SOXX": "半导体", "IGV": "软件",
 }
-CTA_TARGETS = {
-    "SPY": "ES", "QQQ": "NQ", "IWM": "RTY", "IEF": "TY", "TLT": "US",
-    "UUP": "DXY", "GLD": "GC", "USO": "CL", "HYG": "信用风险", "LQD": "投资级信用",
-    "SMH": "半导体风险", "IGV": "软件风险",
-}
-
-
 def derive_scopes(items: list[InstrumentConfig]) -> UniverseDerivedScopes:
     enabled = [item for item in items if item.enabled]
     return UniverseDerivedScopes(
@@ -43,9 +36,7 @@ def derive_scopes(items: list[InstrumentConfig]) -> UniverseDerivedScopes:
             item.symbol for item in enabled
             if item.collection.daily_history and item.roles.equity_watchlist
         ],
-        cta_proxy_symbols=[item.symbol for item in enabled if item.roles.cta_proxy],
         option_symbols=[item.symbol for item in enabled if item.collection.options],
-        event_symbols=[item.symbol for item in enabled if item.roles.event_tracking],
         ai_candidate_symbols=[item.symbol for item in enabled if item.roles.ai_candidate],
         history_symbols=[item.symbol for item in enabled if item.collection.daily_history],
     )
@@ -56,13 +47,9 @@ def default_universe(settings: Settings) -> list[InstrumentConfig]:
         [item.strip().upper() for item in settings.moomoo_market_symbols.split(",") if item.strip()]
         + settings.instrument_validation_symbol_list
         + settings.enabled_symbol_list
-        + settings.cta_proxy_symbol_list
         + settings.options_collection_symbol_list
-        + settings.event_instrument_symbol_list
     ))
     options = set(settings.options_collection_symbol_list)
-    events = set(settings.event_instrument_symbol_list)
-    cta = set(settings.cta_proxy_symbol_list)
     candidates = set(settings.instrument_validation_symbol_list) | set(settings.enabled_symbol_list)
     configured_history = set(settings.instrument_validation_symbol_list) | set(settings.enabled_symbol_list) | {"QQQ"}
     items: list[InstrumentConfig] = []
@@ -78,14 +65,11 @@ def default_universe(settings: Settings) -> list[InstrumentConfig]:
             "roles": {
                 "market_benchmark": symbol in {"QQQ", "SPY"},
                 "equity_watchlist": symbol in set(settings.instrument_validation_symbol_list),
-                "cta_proxy": symbol in cta,
                 "options_collection": has_options,
-                "event_tracking": symbol in events,
                 "ai_candidate": symbol in candidates,
             },
             "benchmarks": {
                 "relative_strength": None if symbol == "QQQ" else "QQQ",
-                "cta_proxy_for": CTA_TARGETS.get(symbol) if symbol in cta else None,
             },
             # Market proxy ETFs remain snapshot-only by default.  QQQ and the
             # configured technical universe receive daily history; a symbol
@@ -188,7 +172,7 @@ class InstrumentUniverseRepository:
             "benchmarks": item.benchmarks, "collection": item.collection, "notes": item.notes,
         }) for item in version.items]
         return UniverseResponse(
-            version_id=version.id, revision=version.revision, content_sha256=version.content_sha256,
+            version_id=version.id, revision=version.revision, content_sha256=InstrumentUniverseRepository.content_digest(items),
             source=version.source, created_at=version.created_at, items=items, derived=derive_scopes(items),
         )
 
@@ -200,7 +184,5 @@ class InstrumentUniverseRepository:
         if item.collection.quote: effects.append("采集实时报价")
         if item.collection.daily_history: effects.append("采集日线并计算技术指标")
         if item.collection.options: effects.append("采集期权链、IV/HV、Gamma 结构")
-        if item.roles.cta_proxy: effects.append(f"参与 CTA 压力：{item.benchmarks.cta_proxy_for}")
-        if item.roles.event_tracking: effects.append("参与事件检索")
         if item.roles.ai_candidate: effects.append("进入 AI 排名与现状分析")
         return UniverseImpactResponse(symbol=item.symbol, effects=effects)

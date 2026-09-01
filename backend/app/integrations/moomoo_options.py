@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import asdict
 from datetime import UTC, date, datetime
 from math import isfinite
 import socket
@@ -13,7 +12,7 @@ from app.analytics.options import OptionContract, summarize_expiration, trim_exp
 
 
 def _pandas():
-    # Pandas/numpy belong to the short-lived workflow worker. Importing them at
+    # Pandas/numpy belong to the short-lived collection path. Importing them at
     # API startup permanently raised the web process baseline even when no
     # option collection was running.
     import pandas
@@ -347,7 +346,6 @@ class MoomooOptionsAdapter:
         underlying_by_code = underlying.set_index("code").to_dict("index")
 
         symbol_results: list[dict[str, object]] = []
-        persistence_symbols: list[dict[str, object]] = []
         unavailable_symbols: list[str] = []
         warnings = [
             "Open interest is the latest exchange daily update, not a real-time position change.",
@@ -379,7 +377,6 @@ class MoomooOptionsAdapter:
                 continue
 
             expiration_results: list[dict[str, object]] = []
-            persistence_expirations: list[dict[str, object]] = []
             selected_expirations = self._select_expirations(expirations)
             for group in self._expiration_groups(selected_expirations):
                 group_start = group[0][0]
@@ -429,12 +426,6 @@ class MoomooOptionsAdapter:
                         strike_range_percent=self.strike_range_percent,
                     )
                     expiration_results.append(analysis)
-                    persistence_expirations.append(
-                        {
-                            "expiration": expiration,
-                            "contracts": [asdict(contract) for contract in contracts],
-                        }
-                    )
 
             if not expiration_results:
                 warnings.append(f"{code} returned no usable option expirations")
@@ -461,12 +452,6 @@ class MoomooOptionsAdapter:
                         )
                     },
                     "expirations": expiration_results,
-                }
-            )
-            persistence_symbols.append(
-                {
-                    "symbol": code.removeprefix("US."),
-                    "expirations": persistence_expirations,
                 }
             )
 
@@ -506,10 +491,6 @@ class MoomooOptionsAdapter:
             ],
             "warnings": warnings,
             "note": "Moomoo LV1 snapshot-derived DEX/GEX and max-pain analytics; no option subscription used.",
-            "_persistence": {
-                "captured_at": captured_at,
-                "symbols": persistence_symbols,
-            },
         }
 
     def close(self) -> None:

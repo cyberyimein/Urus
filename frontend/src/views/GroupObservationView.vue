@@ -230,37 +230,37 @@ onMounted(() => { void load() })
 
 <template>
   <AppShell />
-  <main class="phase-c-page">
-    <section class="phase-c-hero">
+  <main class="observation-page">
+    <section class="observation-hero">
       <div>
-        <p class="eyebrow">OBSERVATION RUN / GROUP RESEARCH</p>
+        <p class="eyebrow">OBSERVATION RUN / GROUP EVIDENCE</p>
         <h1>组观察工作台</h1>
         <p>先看组的参与度，再看相对强弱和轮动，最后定位到具体个股。所有结果来自同一份收市冻结证据。</p>
       </div>
-      <div class="phase-c-hero-actions">
-        <span class="phase-c-lock">DETERMINISTIC ONLY</span>
+      <div class="observation-hero-actions">
+        <span class="observation-lock">DETERMINISTIC ONLY</span>
         <RouterLink class="secondary-button" to="/observation-runs">运行总览</RouterLink>
         <button class="primary-button" type="button" :disabled="!group || running" @click="runObservation">{{ running ? '正在冻结…' : '执行收市观察' }}</button>
       </div>
     </section>
 
     <div v-if="error" class="error-banner" role="alert">{{ error }}</div>
-    <div v-if="runNotice" class="phase-c-notice">{{ runNotice }}</div>
+    <div v-if="runNotice" class="observation-notice">{{ runNotice }}</div>
 
-    <div class="phase-c-group-selector" aria-label="观察组">
-      <section v-if="indicatorGroups.length" class="phase-c-group-tab-section phase-c-indicator-section">
-        <div class="phase-c-group-section-label"><span>指标推荐</span><small>自动生成 · 只读</small></div>
-        <div class="phase-c-group-tabs">
-          <button v-for="item in indicatorGroups" :key="item.group_id" class="phase-c-group-tab" type="button" :class="{ active: item.group_id === selectedGroupId }" @click="chooseGroup(item.group_id)">
+    <div class="observation-group-selector" aria-label="观察组">
+      <section v-if="indicatorGroups.length" class="observation-group-tab-section observation-indicator-section">
+        <div class="observation-group-section-label"><span>指标推荐</span><small>自动生成 · 只读</small></div>
+        <div class="observation-group-tabs">
+          <button v-for="item in indicatorGroups" :key="item.group_id" class="observation-group-tab" type="button" :class="{ active: item.group_id === selectedGroupId }" @click="chooseGroup(item.group_id)">
             <strong>{{ item.display_name }}</strong>
             <small>{{ item.symbols.length }} symbols · {{ item.benchmark_symbols.join(' / ') || 'no benchmark' }}</small>
           </button>
         </div>
       </section>
-      <section v-if="themeGroups.length" class="phase-c-group-tab-section phase-c-theme-section">
-        <div class="phase-c-group-section-label"><span>SECTOR WATCHLIST</span><small>Universe 主题组</small></div>
-        <div class="phase-c-group-tabs">
-          <button v-for="item in themeGroups" :key="item.group_id" class="phase-c-group-tab" type="button" :class="{ active: item.group_id === selectedGroupId }" @click="chooseGroup(item.group_id)">
+      <section v-if="themeGroups.length" class="observation-group-tab-section observation-theme-section">
+        <div class="observation-group-section-label"><span>SECTOR WATCHLIST</span><small>Universe 主题组</small></div>
+        <div class="observation-group-tabs">
+          <button v-for="item in themeGroups" :key="item.group_id" class="observation-group-tab" type="button" :class="{ active: item.group_id === selectedGroupId }" @click="chooseGroup(item.group_id)">
             <strong>{{ item.display_name }}</strong>
             <small>{{ item.symbols.length }} symbols · {{ item.benchmark_symbols.join(' / ') || 'no benchmark' }}</small>
           </button>
@@ -277,22 +277,22 @@ onMounted(() => { void load() })
     </section>
 
     <template v-else>
-      <section class="phase-c-group-head">
+      <section class="observation-group-head">
         <div>
-          <div class="phase-c-breadcrumb">{{ isIndicatorGroup(group) ? '指标推荐' : 'SECTOR WATCHLIST' }} <span>/</span> {{ group.group_id }} <span>/</span> v{{ group.version }}</div>
+          <div class="observation-breadcrumb">{{ isIndicatorGroup(group) ? '指标推荐' : 'SECTOR WATCHLIST' }} <span>/</span> {{ group.group_id }} <span>/</span> v{{ group.version }}</div>
           <h2>{{ group.display_name }}</h2>
-          <p>{{ group.description || '用户维护的观察组。' }}<span v-if="group.source === 'universe' && (group.tags.includes('indicator-recommendation') || group.tags.includes('watchlist'))" class="phase-c-source-note">指标推荐由已部署 Universe 自动生成；不能在设置页或组观察页手动修改。</span></p>
-          <small v-if="snapshot?.changes.previous_trading_date" class="phase-c-change-note">较 {{ snapshot.changes.previous_trading_date }}：组状态 {{ snapshot.changes.group_state.changed ? '发生变化' : '未变化' }} · MA20 广度 {{ formatPercent((snapshot.changes.breadth_ma20_delta ?? 0) * 100) }}</small>
+          <p>{{ group.description || '用户维护的观察组。' }}<span v-if="group.source === 'universe' && (group.tags.includes('indicator-recommendation') || group.tags.includes('watchlist'))" class="observation-source-note">指标推荐由已部署 Universe 自动生成；不能在设置页或组观察页手动修改。</span></p>
+          <small v-if="snapshot?.changes.previous_trading_date" class="observation-change-note">较 {{ snapshot.changes.previous_trading_date }}：组状态 {{ snapshot.changes.group_state.changed ? '发生变化' : '未变化' }} · MA20 广度 {{ formatPercent((snapshot.changes.breadth_ma20_delta ?? 0) * 100) }}</small>
         </div>
-        <div class="phase-c-group-meta">
+        <div class="observation-group-meta">
           <span>AS OF <strong>{{ snapshot?.trading_date ?? '尚未运行' }}</strong></span>
           <span>VALID <strong>{{ snapshot?.quality.valid_symbol_count ?? 0 }} / {{ group.symbols.length }}</strong></span>
           <span>BENCHMARK <strong>{{ group.benchmark_symbols.join(' / ') || '—' }}</strong></span>
         </div>
       </section>
 
-      <section v-if="snapshot" class="phase-c-dashboard">
-        <div class="phase-c-stat-strip">
+      <section v-if="snapshot" class="observation-dashboard">
+        <div class="observation-stat-strip">
           <div><span>GROUP STATE</span><strong :data-tone="decision?.stance">{{ stateLabels[decision?.state ?? ''] ?? decision?.state ?? '—' }}</strong><small>{{ actionLabels[decision?.action ?? ''] ?? decision?.action }}</small></div>
           <div><span>MEDIAN 20D</span><strong>{{ formatPercent(features?.returns_percent?.['20d']?.median) }}</strong><small>Q1 {{ formatPercent(features?.returns_percent?.['20d']?.q1) }} · Q3 {{ formatPercent(features?.returns_percent?.['20d']?.q3) }}</small></div>
           <div><span>ABOVE MA20</span><strong>{{ formatRatio(features?.breadth?.above_ma20) }}</strong><small>MA50 {{ formatRatio(features?.breadth?.above_ma50) }} · MA200 {{ formatRatio(features?.breadth?.above_ma200) }}</small></div>
@@ -300,68 +300,68 @@ onMounted(() => { void load() })
           <div><span>DISPERSION</span><strong>{{ formatPercent(features?.cross_sectional_dispersion_1d) }}</strong><small>leader concentration {{ formatRatio(features?.leader_concentration) }}</small></div>
         </div>
 
-        <div class="phase-c-chart-grid">
-          <article class="phase-c-card">
-            <div class="phase-c-card-head"><div><span class="section-kicker">A · RELATIVE STRENGTH</span><h3>组相对强弱</h3></div><small>median normalized · {{ snapshot.charts.relative_strength.benchmark }}</small></div>
-            <svg class="phase-c-chart" viewBox="0 0 640 230" role="img" aria-label="组相对强弱时间序列">
-              <g class="phase-c-grid"><line x1="16" x2="624" y1="24" y2="24" /><line x1="16" x2="624" y1="111" y2="111" /><line x1="16" x2="624" y1="198" y2="198" /></g>
-              <path :d="linePath(relativeSeries, 'value')" class="phase-c-line group-line" />
-              <path :d="linePath(relativeSeries, 'benchmark_value')" class="phase-c-line benchmark-line" />
+        <div class="observation-chart-grid">
+          <article class="observation-card">
+            <div class="observation-card-head"><div><span class="section-kicker">A · RELATIVE STRENGTH</span><h3>组相对强弱</h3></div><small>median normalized · {{ snapshot.charts.relative_strength.benchmark }}</small></div>
+            <svg class="observation-chart" viewBox="0 0 640 230" role="img" aria-label="组相对强弱时间序列">
+              <g class="observation-grid"><line x1="16" x2="624" y1="24" y2="24" /><line x1="16" x2="624" y1="111" y2="111" /><line x1="16" x2="624" y1="198" y2="198" /></g>
+              <path :d="linePath(relativeSeries, 'value')" class="observation-line group-line" />
+              <path :d="linePath(relativeSeries, 'benchmark_value')" class="observation-line benchmark-line" />
               <text x="18" y="18">GROUP</text><text x="82" y="18">{{ snapshot.charts.relative_strength.benchmark }}</text><text x="575" y="218">{{ snapshot.trading_date }}</text>
             </svg>
           </article>
 
-          <article class="phase-c-card">
-            <div class="phase-c-card-head"><div><span class="section-kicker">B · MARKET BREADTH</span><h3>市场广度</h3></div><small>有效样本 {{ snapshot.quality.valid_symbol_count }}</small></div>
-            <svg class="phase-c-chart" viewBox="0 0 640 230" role="img" aria-label="组内均线广度">
-              <g class="phase-c-grid"><line x1="16" x2="624" y1="24" y2="24" /><line x1="16" x2="624" y1="111" y2="111" /><line x1="16" x2="624" y1="198" y2="198" /></g>
-              <path :d="breadthPath('above_ma20')" class="phase-c-line breadth-20" /><path :d="breadthPath('above_ma50')" class="phase-c-line breadth-50" /><path :d="breadthPath('above_ma200')" class="phase-c-line breadth-200" />
+          <article class="observation-card">
+            <div class="observation-card-head"><div><span class="section-kicker">B · MARKET BREADTH</span><h3>市场广度</h3></div><small>有效样本 {{ snapshot.quality.valid_symbol_count }}</small></div>
+            <svg class="observation-chart" viewBox="0 0 640 230" role="img" aria-label="组内均线广度">
+              <g class="observation-grid"><line x1="16" x2="624" y1="24" y2="24" /><line x1="16" x2="624" y1="111" y2="111" /><line x1="16" x2="624" y1="198" y2="198" /></g>
+              <path :d="breadthPath('above_ma20')" class="observation-line breadth-20" /><path :d="breadthPath('above_ma50')" class="observation-line breadth-50" /><path :d="breadthPath('above_ma200')" class="observation-line breadth-200" />
               <text x="18" y="18">100%</text><text x="18" y="218">0%</text><text x="555" y="218">{{ snapshot.trading_date }}</text>
             </svg>
-            <div class="phase-c-legend"><span><i class="breadth-20"></i> MA20</span><span><i class="breadth-50"></i> MA50</span><span><i class="breadth-200"></i> MA200</span></div>
+            <div class="observation-legend"><span><i class="breadth-20"></i> MA20</span><span><i class="breadth-50"></i> MA50</span><span><i class="breadth-200"></i> MA200</span></div>
           </article>
 
-          <article class="phase-c-card">
-            <div class="phase-c-card-head"><div><span class="section-kicker">C · ROTATION MAP</span><h3>轮动象限</h3></div><small>X 相对强弱 · Y 5D 变化</small></div>
-            <svg class="phase-c-chart phase-c-rotation" viewBox="0 0 600 230" role="img" aria-label="组内轮动象限">
+          <article class="observation-card">
+            <div class="observation-card-head"><div><span class="section-kicker">C · ROTATION MAP</span><h3>轮动象限</h3></div><small>X 相对强弱 · Y 5D 变化</small></div>
+            <svg class="observation-chart observation-rotation" viewBox="0 0 600 230" role="img" aria-label="组内轮动象限">
               <rect x="20" y="24" width="280" height="174" class="rotation-quadrant weak-improving" /><rect x="300" y="24" width="280" height="174" class="rotation-quadrant leading-improving" />
               <line x1="300" x2="300" y1="24" y2="198" class="rotation-axis" /><line x1="20" x2="580" y1="111" y2="111" class="rotation-axis" />
               <text x="28" y="42">改善但落后</text><text x="438" y="42">领先并增强</text><text x="28" y="188">落后且恶化</text><text x="438" y="188">领先但减弱</text>
-              <g v-for="point in rotation" :key="point.symbol" class="phase-c-selectable-point" :class="{ active: point.symbol === selectedSymbol }" role="button" tabindex="0" @click="selectSymbol(point.symbol)" @keydown.enter="selectSymbol(point.symbol)"><circle :cx="rotationX(point.x_relative_20d)" :cy="rotationY(point.y_relative_change)" :r="Math.max(4, Math.min(10, (point.size ?? 1) * 3))" :data-tone="point.stance" /><text :x="rotationX(point.x_relative_20d) + 7" :y="rotationY(point.y_relative_change) + 3">{{ point.symbol }}</text></g>
+              <g v-for="point in rotation" :key="point.symbol" class="observation-selectable-point" :class="{ active: point.symbol === selectedSymbol }" role="button" tabindex="0" @click="selectSymbol(point.symbol)" @keydown.enter="selectSymbol(point.symbol)"><circle :cx="rotationX(point.x_relative_20d)" :cy="rotationY(point.y_relative_change)" :r="Math.max(4, Math.min(10, (point.size ?? 1) * 3))" :data-tone="point.stance" /><text :x="rotationX(point.x_relative_20d) + 7" :y="rotationY(point.y_relative_change) + 3">{{ point.symbol }}</text></g>
             </svg>
           </article>
 
-          <article class="phase-c-card phase-c-heatmap-card">
-            <div class="phase-c-card-head"><div><span class="section-kicker">D · SYMBOL STATE</span><h3>个股状态热力图</h3></div><small>按 20D 变化排序</small></div>
-            <div class="phase-c-heatmap"><div class="heatmap-row heatmap-header"><span>SYMBOL</span><span>TREND</span><span>MOMENTUM</span><span>VOLUME</span><span>RELATIVE</span><span>20D</span></div><button v-for="row in heatmap" :key="row.symbol" class="heatmap-row" :class="{ active: row.symbol === selectedSymbol }" type="button" @click="selectSymbol(row.symbol)"><strong>{{ row.symbol }}</strong><span :data-tone="heatTone(row.trend)">{{ row.trend }}</span><span :data-tone="heatTone(row.momentum)">{{ row.momentum }}</span><span :data-tone="heatTone(row.volume)">{{ row.volume }}</span><span :data-tone="heatTone(row.relative)">{{ row.relative }}</span><b :data-tone="(row.return_20d ?? 0) >= 0 ? 'positive' : 'negative'">{{ formatPercent(row.return_20d) }}</b></button></div>
+          <article class="observation-card observation-heatmap-card">
+            <div class="observation-card-head"><div><span class="section-kicker">D · SYMBOL STATE</span><h3>个股状态热力图</h3></div><small>按 20D 变化排序</small></div>
+            <div class="observation-heatmap"><div class="heatmap-row heatmap-header"><span>SYMBOL</span><span>TREND</span><span>MOMENTUM</span><span>VOLUME</span><span>RELATIVE</span><span>20D</span></div><button v-for="row in heatmap" :key="row.symbol" class="heatmap-row" :class="{ active: row.symbol === selectedSymbol }" type="button" @click="selectSymbol(row.symbol)"><strong>{{ row.symbol }}</strong><span :data-tone="heatTone(row.trend)">{{ row.trend }}</span><span :data-tone="heatTone(row.momentum)">{{ row.momentum }}</span><span :data-tone="heatTone(row.volume)">{{ row.volume }}</span><span :data-tone="heatTone(row.relative)">{{ row.relative }}</span><b :data-tone="(row.return_20d ?? 0) >= 0 ? 'positive' : 'negative'">{{ formatPercent(row.return_20d) }}</b></button></div>
           </article>
         </div>
 
-        <section v-if="selectedSymbolRow" class="phase-c-card phase-c-symbol-focus">
-          <div class="phase-c-card-head"><div><span class="section-kicker">SELECTED SYMBOL / FROZEN EVIDENCE</span><h3>{{ selectedSymbol }}</h3></div><RouterLink class="text-link" :to="{ name: 'instrument-decision', params: { symbol: selectedSymbol }, query: { dataset: snapshot.dataset_id } }">打开完整个股 →</RouterLink></div>
-          <div class="phase-c-focus-grid">
-            <div class="phase-c-focus-chart"><svg v-if="selectedMultiple" viewBox="0 0 360 120" role="img" :aria-label="`${selectedSymbol} 冻结形态`"><path :d="miniPath(selectedMultiple.points, 'value')" class="small-close-line" /><path :d="miniPath(selectedMultiple.points, 'ma20')" class="small-ma20-line" /><path :d="miniPath(selectedMultiple.points, 'ma50')" class="small-ma50-line" /></svg></div>
+        <section v-if="selectedSymbolRow" class="observation-card observation-symbol-focus">
+          <div class="observation-card-head"><div><span class="section-kicker">SELECTED SYMBOL / FROZEN EVIDENCE</span><h3>{{ selectedSymbol }}</h3></div><RouterLink class="text-link" :to="{ name: 'instrument-decision', params: { symbol: selectedSymbol }, query: { dataset: snapshot.dataset_id } }">打开完整个股 →</RouterLink></div>
+          <div class="observation-focus-grid">
+            <div class="observation-focus-chart"><svg v-if="selectedMultiple" viewBox="0 0 360 120" role="img" :aria-label="`${selectedSymbol} 冻结形态`"><path :d="miniPath(selectedMultiple.points, 'value')" class="small-close-line" /><path :d="miniPath(selectedMultiple.points, 'ma20')" class="small-ma20-line" /><path :d="miniPath(selectedMultiple.points, 'ma50')" class="small-ma50-line" /></svg></div>
             <dl><div><dt>CLOSE</dt><dd>{{ selectedSymbolRow.latest_close ?? '—' }}</dd></div><div><dt>20D</dt><dd>{{ formatPercent(selectedSymbolRow.returns_percent?.['20']) }}</dd></div><div><dt>RSI</dt><dd>{{ typeof selectedSymbolRow.rsi14 === 'number' ? `RSI ${selectedSymbolRow.rsi14.toFixed(1)}` : '—' }}</dd></div><div><dt>RELATIVE</dt><dd>{{ formatPercent(selectedSymbolRow.relative_excess_percent?.['20d']) }}</dd></div><div><dt>QUALITY</dt><dd>{{ selectedSymbolRow.quality_status }}</dd></div></dl>
-            <div class="phase-c-focus-strategies"><p v-if="!selectedStrategies.length">没有可用策略判断。</p><article v-for="item in selectedStrategies" :key="item.decision_id"><strong>{{ item.strategy?.name }}</strong><span>{{ item.stance }} · {{ item.action }} · {{ item.setup_progress?.stage }}</span><small>{{ item.confirmation_conditions?.[0] ?? item.reasons?.[0] ?? '等待更多证据。' }}</small></article></div>
+            <div class="observation-focus-strategies"><p v-if="!selectedStrategies.length">没有可用策略判断。</p><article v-for="item in selectedStrategies" :key="item.decision_id"><strong>{{ item.strategy?.name }}</strong><span>{{ item.stance }} · {{ item.action }} · {{ item.setup_progress?.stage }}</span><small>{{ item.confirmation_conditions?.[0] ?? item.reasons?.[0] ?? '等待更多证据。' }}</small></article></div>
           </div>
         </section>
 
-        <section class="phase-c-lower-grid">
-          <article class="phase-c-card phase-c-ranking-card"><div class="phase-c-card-head"><div><span class="section-kicker">LEADERS / LAGGARDS</span><h3>组内排名</h3></div><small>20D return</small></div><div class="phase-c-rank-columns"><div><span class="rank-label positive">LEADERS</span><button v-for="row in features?.leaders" :key="`leader-${row.symbol}`" type="button" @click="selectSymbol(row.symbol)"><strong>{{ row.symbol }}</strong><b>{{ formatPercent(row.return_percent) }}</b></button></div><div><span class="rank-label negative">LAGGARDS</span><button v-for="row in features?.laggards" :key="`laggard-${row.symbol}`" type="button" @click="selectSymbol(row.symbol)"><strong>{{ row.symbol }}</strong><b>{{ formatPercent(row.return_percent) }}</b></button></div></div></article>
-          <article class="phase-c-card phase-c-decision-card"><div class="phase-c-card-head"><div><span class="section-kicker">GROUP DECISION</span><h3>确定性组建议</h3></div><span class="phase-c-decision-pill" :data-tone="decision?.stance">{{ actionLabels[decision?.action ?? ''] ?? decision?.action }}</span></div><p>{{ decision?.reasons?.[0] ?? '等待足够的组级证据。' }}</p><small v-if="!exactRunId">请先从某次 Observation Run 打开本组的精确快照，才能发起 AI 仲裁。</small><RemoteDecisionPanel ref="groupRemotePanel" intent-type="group_arbitration" :source="groupAiSource" title="确认组级 AI 仲裁" label="主动发起组级 AI 仲裁" :disabled="groupAiDisabled" preflight-on-mount /></article>
+        <section class="observation-lower-grid">
+          <article class="observation-card observation-ranking-card"><div class="observation-card-head"><div><span class="section-kicker">LEADERS / LAGGARDS</span><h3>组内排名</h3></div><small>20D return</small></div><div class="observation-rank-columns"><div><span class="rank-label positive">LEADERS</span><button v-for="row in features?.leaders" :key="`leader-${row.symbol}`" type="button" @click="selectSymbol(row.symbol)"><strong>{{ row.symbol }}</strong><b>{{ formatPercent(row.return_percent) }}</b></button></div><div><span class="rank-label negative">LAGGARDS</span><button v-for="row in features?.laggards" :key="`laggard-${row.symbol}`" type="button" @click="selectSymbol(row.symbol)"><strong>{{ row.symbol }}</strong><b>{{ formatPercent(row.return_percent) }}</b></button></div></div></article>
+          <article class="observation-card observation-decision-card"><div class="observation-card-head"><div><span class="section-kicker">GROUP DECISION</span><h3>确定性组建议</h3></div><span class="observation-decision-pill" :data-tone="decision?.stance">{{ actionLabels[decision?.action ?? ''] ?? decision?.action }}</span></div><p>{{ decision?.reasons?.[0] ?? '等待足够的组级证据。' }}</p><small v-if="!exactRunId">请先从某次 Observation Run 打开本组的精确快照，才能发起 AI 仲裁。</small><RemoteDecisionPanel ref="groupRemotePanel" intent-type="group_arbitration" :source="groupAiSource" title="确认组级 AI 仲裁" label="主动发起组级 AI 仲裁" :disabled="groupAiDisabled" preflight-on-mount /></article>
         </section>
 
-        <section class="phase-c-card phase-c-small-multiples">
-          <div class="phase-c-card-head"><div><span class="section-kicker">SMALL MULTIPLES</span><h3>个股形态速览</h3></div><small>60D normalized · 点击进入个股</small></div>
-          <div class="phase-c-small-grid">
-            <button v-for="item in smallMultiples" :key="item.symbol" class="phase-c-small-card" :class="{ active: item.symbol === selectedSymbol }" type="button" @click="selectSymbol(item.symbol)">
+        <section class="observation-card observation-small-multiples">
+          <div class="observation-card-head"><div><span class="section-kicker">SMALL MULTIPLES</span><h3>个股形态速览</h3></div><small>60D normalized · 点击进入个股</small></div>
+          <div class="observation-small-grid">
+            <button v-for="item in smallMultiples" :key="item.symbol" class="observation-small-card" :class="{ active: item.symbol === selectedSymbol }" type="button" @click="selectSymbol(item.symbol)">
               <div><strong>{{ item.symbol }}</strong><b :data-tone="(item.return_20d ?? 0) >= 0 ? 'positive' : 'negative'">{{ formatPercent(item.return_20d) }}</b></div>
               <svg viewBox="0 0 180 64" role="img" :aria-label="`${item.symbol} 60 日形态`"><path :d="miniPath(item.points, 'value')" class="small-close-line" /><path :d="miniPath(item.points, 'ma20')" class="small-ma20-line" /><path :d="miniPath(item.points, 'ma50')" class="small-ma50-line" /></svg>
             </button>
           </div>
         </section>
       </section>
-      <section v-else class="empty-panel phase-c-empty"><p class="eyebrow">NO FROZEN OBSERVATION</p><h2>还没有组级收市观察。</h2><p>点击右上角“执行收市观察”，系统会冻结组内日 K 并计算广度、轮动和热力图。</p><button class="primary-button" type="button" :disabled="running" @click="runObservation">执行第一次观察</button></section>
+      <section v-else class="empty-panel observation-empty"><p class="eyebrow">NO FROZEN OBSERVATION</p><h2>还没有组级收市观察。</h2><p>点击右上角“执行收市观察”，系统会冻结组内日 K 并计算广度、轮动和热力图。</p><button class="primary-button" type="button" :disabled="running" @click="runObservation">执行第一次观察</button></section>
     </template>
   </main>
 </template>

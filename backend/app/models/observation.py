@@ -10,7 +10,7 @@ from app.core.database import Base
 
 
 class ObservationUniverseRevisionModel(Base):
-    """Immutable audit record for the Universe used by Phase C synchronization."""
+    """Immutable audit record for the Universe used by observation synchronization."""
 
     __tablename__ = "observation_universe_revisions"
     __table_args__ = (

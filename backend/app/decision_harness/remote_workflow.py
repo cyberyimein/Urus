@@ -70,7 +70,7 @@ class CompiledDecision:
 
 
 class RemoteDecisionCompiler:
-    """Compile exact frozen Phase C evidence into a Workflow input envelope."""
+    """Compile exact frozen observation evidence into a Workflow input envelope."""
 
     def __init__(self, session: Session, settings: Settings) -> None:
         self.session = session

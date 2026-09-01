@@ -8,7 +8,7 @@ import type {
   OptionsAnalysis,
   OptionsData,
 } from '@/types/api'
-import type { PostCloseOptionAlignment as PostCloseOptionAlignmentData } from '@/types/research'
+import type { PostCloseOptionAlignment as PostCloseOptionAlignmentData } from '@/types/options'
 import { formatDate, formatNumber, runTypeLabel } from '@/utils/format'
 
 const props = defineProps<{
@@ -314,8 +314,8 @@ const levelMapAriaLabel = computed(() => {
 })
 
 const sourceLabel = computed(() => {
-  const phase = props.sourceRunType ? runTypeLabel(props.sourceRunType) : '最近运行快照'
-  return props.sourceCutoff ? `${phase} · ${formatDate(props.sourceCutoff)}` : phase
+  const runLabel = props.sourceRunType ? runTypeLabel(props.sourceRunType) : '最近运行快照'
+  return props.sourceCutoff ? `${runLabel} · ${formatDate(props.sourceCutoff)}` : runLabel
 })
 
 function signedCompact(value: number | null | undefined): string {
@@ -328,7 +328,7 @@ function signedCompact(value: number | null | undefined): string {
   <section class="instrument-options-evidence" data-testid="instrument-options-evidence">
     <div class="instrument-options-heading">
       <div>
-        <span class="section-kicker">OPTIONS / STAGE 2</span>
+        <span class="section-kicker">OPTIONS / STRUCTURE</span>
         <h2>{{ symbol }} 期权位置</h2>
         <p>用官方收盘价判断它是否靠近 Max Pain 或 DEX Wall；收盘价缺失时仅显示 OPTION SPOT 参考位置，不作回看结论。</p>
       </div>
@@ -458,7 +458,7 @@ function signedCompact(value: number | null | undefined): string {
       </div>
       <div v-else class="instrument-options-empty">
         <strong>暂无可用期权快照</strong>
-        <span>等待 Stage 2 期权采集完成后，这里会随当前股票显示。</span>
+        <span>等待本次盘后观察完成后，期权结构会随当前股票显示。</span>
       </div>
     </template>
   </section>

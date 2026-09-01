@@ -61,7 +61,7 @@ class ObservationGroupSyncService:
             if content_sha != upstream.content_sha256:
                 raise ValueError("上游 content_sha256 与规范化内容不一致")
         except (httpx.HTTPError, TypeError, ValueError, KeyError) as exc:
-            logger.warning("Phase C Universe sync failed source=%s kind=%s", root, self._failure_kind(exc))
+            logger.warning("Observation Universe sync failed source=%s kind=%s", root, self._failure_kind(exc))
             if self.settings.observation_allow_stale_universe:
                 stale = self.revisions.latest(root)
                 if stale is not None:
@@ -122,15 +122,15 @@ class ObservationGroupSyncService:
         warnings: list[str] | None = None,
     ) -> dict[str, Any]:
         universe = universe or self.universe.ensure_default(self.settings)
+        response = self.universe.response(universe)
         if revision is None:
             revision = self.revisions.save(
                 source_url=source_url or "local",
                 upstream_version_id=None,
                 upstream_revision=None,
                 local_universe_version_id=universe.id,
-                content_sha256=universe.content_sha256,
+                content_sha256=response.content_sha256,
             )
-        response = self.universe.response(universe)
         watchlist = [
             item
             for item in response.items
@@ -407,7 +407,18 @@ class ObservationRunService:
                 trading_date=trading_date,
                 cutoff_time=cutoff,
                 bar_source=bar_source,
+                allow_live_collection_after_cutoff=request.cutoff_time is None,
             )
+            if request.cutoff_time is None:
+                evidence_cutoff = str((evidence.get("dataset") or {}).get("cutoff_time") or "")
+                if evidence_cutoff:
+                    try:
+                        collected_cutoff = as_utc(datetime.fromisoformat(evidence_cutoff))
+                    except ValueError:
+                        collected_cutoff = cutoff
+                    if collected_cutoff > run.cutoff_time:
+                        run.cutoff_time = collected_cutoff
+                        self.session.flush()
             options_result = self.options.collect(options_source, option_symbols)
             options_payload = dict(options_result.payload)
             options_alignment = build_post_close_option_alignment(

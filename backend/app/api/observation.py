@@ -142,7 +142,7 @@ def create_observation_run(
     if payload.trigger_mode == "scheduled" and not payload.universe_revision_id:
         # The scheduler normally supplies the revision returned by its
         # explicit sync call. Keep the API safe when a scheduled run is
-        # submitted directly, so it cannot select an old active Universe.
+        # submitted directly, so it cannot select a stale active Universe.
         try:
             if settings.observation_universe_source_url:
                 universe_sync = ObservationGroupSyncService(db, settings).sync()
@@ -220,14 +220,14 @@ def list_observation_runs(
 
 @router.get("/indicator-catalog", response_model=list[dict[str, Any]])
 def list_indicator_catalog() -> list[dict[str, Any]]:
-    """List deterministic indicator lenses available to the Phase C scanner."""
+    """List deterministic indicator lenses available to observation scans."""
 
     return CrossSectionService.indicator_catalog()
 
 
 @router.get("/strategy-catalog", response_model=list[dict[str, Any]])
 def list_strategy_catalog() -> list[dict[str, Any]]:
-    """List deterministic strategy lenses available to the Phase C scanner."""
+    """List deterministic strategy lenses available to observation scans."""
 
     return CrossSectionService.strategy_catalog()
 

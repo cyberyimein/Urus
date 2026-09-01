@@ -15,9 +15,7 @@ from app.repositories.runtime_settings import (
 from app.schemas.settings import (
     RuntimeSettingsResponse,
     RuntimeSettingsUpdate,
-    RuntimeSettingsCapabilities,
     ScheduleSettings,
-    RuntimeModelSettings,
 )
 
 
@@ -33,29 +31,13 @@ def _response(
         payload = {
             **payload,
             **persisted_payload,
-            # Backfill fields absent from pre-pricing runtime rows with the
-            # active environment values instead of showing/saving zeroes.
-            "models": {
-                **payload["models"],
-                **(
-                    persisted_payload.get("models", {})
-                    if isinstance(persisted_payload.get("models"), dict)
-                    else {}
-                ),
-            },
         }
     schedule = ScheduleSettings.model_validate(payload.get("schedule", {}))
-    models = RuntimeModelSettings.model_validate(payload.get("models", {}))
     return RuntimeSettingsResponse(
         revision=persisted.revision if persisted is not None else 0,
         source="runtime" if persisted is not None else "environment",
         updated_at=as_utc(persisted.updated_at) if persisted is not None else None,
         schedule=schedule,
-        models=models,
-        capabilities=RuntimeSettingsCapabilities(
-            ai_decision_enabled=settings.urus_agent_enabled,
-            openrouter_configured=bool(settings.openrouter_api_key),
-        ),
     )
 
 

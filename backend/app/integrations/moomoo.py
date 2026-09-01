@@ -66,7 +66,7 @@ class MarketCollectorAdapter(Protocol):
 
 
 class MoomooAdapter(Protocol):
-    """Future full Moomoo boundary; stage 1A only uses market_card."""
+    """Provider boundary for market, history, capital-flow and option evidence."""
 
     def market_card(self, symbol: str) -> dict[str, object]: ...
 
@@ -106,7 +106,7 @@ class MockQuote:
 
 
 class MockMoomooAdapter:
-    """Deterministic offline adapter used when live stage 1A is disabled."""
+    """Deterministic offline adapter used when live collection is disabled."""
 
     is_live = False
 
@@ -169,8 +169,8 @@ class MockMoomooAdapter:
             "unavailable_symbols": symbols,
             "instruments": cards,
             "quality_status": "unavailable",
-            "quality_warnings": ["3A 尚未启用 Moomoo OpenD，当前为 mock 结构。"],
-            "note": "3A 真实行情尚未启用。",
+            "quality_warnings": ["尚未启用 Moomoo OpenD，当前为 mock 结构。"],
+            "note": "真实行情尚未启用。",
         }
 
     def options_placeholder(self, symbol: str) -> dict[str, object]:
@@ -187,7 +187,7 @@ class DisabledMoomooAdapter(MockMoomooAdapter):
 
 
 class OpenDMarketAdapter:
-    """OpenD adapter for the twice-daily stage 1A market collection.
+    """OpenD adapter for market snapshots and completed daily history.
 
     The SDK and TCP context are lazy so importing Urus and running tests never
     contacts OpenD.  The response is converted to plain JSON-compatible data;
@@ -242,9 +242,8 @@ class OpenDMarketAdapter:
         self._sleeper = sleeper
         self._last_history_request_at: float | None = None
         self._last_snapshot_request_at: float | None = None
-        # A single workflow can ask for QQQ once in 1A and again in 3A. Keep
-        # one immutable-in-run snapshot projection so that overlap does not
-        # consume another OpenD frequency slot.
+        # Keep one immutable-in-run snapshot projection so repeated reads do
+        # not consume another OpenD frequency slot.
         self._snapshot_cache: dict[str, dict[str, Any]] = {}
         self._history_cache: dict[str, list[dict[str, object]]] = {}
 
@@ -315,7 +314,7 @@ class OpenDMarketAdapter:
         )
 
         history = self._history_summary(quote_code, previous_close, include_bars=True)
-        cta_bars = history.pop("bars", [])
+        history.pop("bars", None)
         warnings = list(history.get("warnings", []))
         warnings.extend(str(item) for item in market_snapshot["quality_warnings"])
         quality_status = (
@@ -372,18 +371,8 @@ class OpenDMarketAdapter:
                 _percent(afterhours_price, previous_close) if afterhours_price is not None else None
             ),
             "trend": "not_calculated",
-            "session_note": f"{session_label}；报价来源为 OpenD，不调用旧 Anomalo 服务。",
+            "session_note": f"{session_label}；报价来源为 OpenD。",
             "history": history,
-            "_cta_input": {
-                "provider": "moomoo_openapi",
-                "source_mode": "daily_history",
-                "symbols": [
-                    {
-                        "symbol": display_symbol,
-                        "history": {"bars": cta_bars},
-                    }
-                ],
-            },
             "market_snapshot": market_snapshot_payload,
             "quality_status": quality_status,
             "quality_warnings": warnings,
@@ -473,21 +462,30 @@ class OpenDMarketAdapter:
         if card_payload is None:
             raise RuntimeError(f"OpenD 未返回 {symbol} 个股/ETF 数据")
         card = dict(card_payload)
-        persistence = payload.get("_persistence")
-        if isinstance(persistence, dict):
-            card["_persistence"] = persistence
+        history_snapshots = payload.get("history_snapshots")
+        if isinstance(history_snapshots, list):
+            history_snapshot = next(
+                (
+                    item
+                    for item in history_snapshots
+                    if isinstance(item, dict) and item.get("symbol") == display_symbol
+                ),
+                None,
+            )
+            if history_snapshot is not None:
+                card["history_snapshot"] = history_snapshot
         return card
 
     def instrument_cards(self, symbols: list[str]) -> dict[str, object]:
-        """Collect the configured 3A universe in one quote snapshot and daily histories."""
+        """Collect the configured universe in one quote snapshot and daily histories."""
         if not symbols:
-            raise ValueError("3A 至少需要一个个股或 ETF 标的")
+            raise ValueError("至少需要一个个股或 ETF 标的")
         quote_codes = _unique_quote_codes(["QQQ", *symbols])
         captured_at = datetime.now(UTC).isoformat()
         quota_before = self._quota_snapshot()
         market_snapshot = self._collect_market_snapshot(quote_codes)
         cards: list[dict[str, object]] = []
-        persistence_symbols: list[dict[str, object]] = []
+        history_snapshots: list[dict[str, object]] = []
         unavailable_symbols: list[str] = []
         quality_warnings = list(market_snapshot.get("quality_warnings", []))
         records: dict[str, tuple[dict[str, object], dict[str, object], list[dict[str, object]]]] = {}
@@ -556,14 +554,13 @@ class OpenDMarketAdapter:
                 "relative_strength": relative_strength,
                 "quality_status": card_quality,
                 "quality_warnings": card_warnings,
-                "note": "3A 当前只采集价格、成交、日线技术指标与相对基准输入；财务和事件属于后续步骤。",
+                "note": "当前采集价格、成交、日线技术指标与相对基准输入；财务和事件不属于本采集边界。",
             }
             cards.append(card)
-            persistence_symbols.append(
+            history_snapshots.append(
                 {
                     "symbol": display_symbol,
                     "asset_type": "etf" if display_symbol in DEFAULT_MARKET_SNAPSHOT_SYMBOLS else "equity",
-                    "quote": quote,
                     "history": {"bars": bars},
                 }
             )
@@ -576,7 +573,7 @@ class OpenDMarketAdapter:
         )
         quality_warnings.extend(str(item) for item in quota_audit.get("warnings", []))
         if unavailable_symbols:
-            quality_warnings.extend(f"3A 未返回标的：{symbol}" for symbol in unavailable_symbols)
+            quality_warnings.extend(f"采集未返回标的：{symbol}" for symbol in unavailable_symbols)
         return {
             "is_mock": False,
             "status": "available" if cards else "unavailable",
@@ -588,18 +585,13 @@ class OpenDMarketAdapter:
             "requested_symbols": [_display_symbol(code) for code in quote_codes],
             "unavailable_symbols": unavailable_symbols,
             "instruments": cards,
+            "history_snapshots": history_snapshots,
             "quota_audit": quota_audit,
             "quality_status": "ok" if cards and not unavailable_symbols and all(
                 card.get("quality_status") == "ok" for card in cards
             ) else "partial" if cards else "unavailable",
             "quality_warnings": quality_warnings,
-            "note": "3A 使用 Moomoo OpenD 批量快照和历史日线；未开启实时订阅。",
-            "_persistence": {
-                "captured_at": captured_at,
-                "provider": "moomoo_openapi",
-                "source_mode": "snapshot",
-                "symbols": persistence_symbols,
-            },
+            "note": "使用 Moomoo OpenD 批量快照和历史日线；未开启实时订阅。",
         }
 
     def _collect_market_snapshot(self, quote_codes: list[str]) -> dict[str, object]:
@@ -1216,7 +1208,7 @@ def _quota_audit(
     if after.get("warning"):
         warnings.append(str(after["warning"]))
     if before_subscription is not None and after_subscription is not None and not subscription_unchanged:
-        warnings.append("3A 采集前后股票实时订阅状态发生变化，请检查是否有其他连接修改订阅。")
+        warnings.append("采集前后股票实时订阅状态发生变化，请检查是否有其他连接修改订阅。")
     before_history = before.get("history")
     after_history = after.get("history")
     history_delta = None

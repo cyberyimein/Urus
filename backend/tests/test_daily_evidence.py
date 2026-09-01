@@ -60,21 +60,19 @@ class FakeDailyBarAdapter:
     def instrument_cards(self, symbols: list[str]) -> dict[str, object]:
         self.calls.append(list(symbols))
         return {
-            "_persistence": {
-                "symbols": [
-                    {
-                        "symbol": symbol,
-                        "history": {
-                            "bars": [
-                                {key: value for key, value in bar.items() if key != "symbol"}
-                                for bar in self.bars
-                                if bar["symbol"] == symbol
-                            ]
-                        },
-                    }
-                    for symbol in symbols
-                ]
-            }
+            "history_snapshots": [
+                {
+                    "symbol": symbol,
+                    "history": {
+                        "bars": [
+                            {key: value for key, value in bar.items() if key != "symbol"}
+                            for bar in self.bars
+                            if bar["symbol"] == symbol
+                        ]
+                    },
+                }
+                for symbol in symbols
+            ]
         }
 
 
@@ -111,6 +109,31 @@ def test_daily_evidence_refreshes_only_missing_symbols_then_hits_canonical_cache
         assert first["dataset"]["quality"]["collection"]["fetched_symbols"] == ["INTC"]
         assert second["dataset"]["quality"]["collection"]["status"] == "cache_hit"
         assert adapter.calls == [["INTC"]]
+
+
+def test_live_collection_includes_bars_acquired_after_run_start() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    run_started_at = datetime.now(UTC) - timedelta(minutes=1)
+    session_dates = completed_session_dates(run_started_at, "XNYS", count=20)
+    adapter = FakeDailyBarAdapter(_fixture_bars("INTC", session_dates, 20.0))
+
+    with Session(engine) as session:
+        result = _service(session, minimum_history_bars=20).freeze(
+            scope_type="observation_run",
+            scope_id="observation-live-collection",
+            symbols=["INTC"],
+            trading_date=session_dates[-1],
+            cutoff_time=run_started_at,
+            bar_source=adapter,
+            allow_live_collection_after_cutoff=True,
+        )
+
+        assert result["dataset"]["quality"]["status"] == "ok"
+        assert result["dataset"]["quality"]["collection"]["status"] == "ok"
+        assert result["dataset"]["quality"]["collection"]["fetched_symbols"] == ["INTC"]
+        assert result["dataset"]["bar_manifest"][0]["end_date"] == session_dates[-1].isoformat()
+        assert datetime.fromisoformat(result["dataset"]["cutoff_time"]) > run_started_at
 
 
 def test_daily_evidence_freezes_indicators_and_chart_projection_idempotently() -> None:

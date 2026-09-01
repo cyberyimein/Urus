@@ -2,12 +2,12 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 
 import PostCloseOptionAlignment from '@/components/PostCloseOptionAlignment.vue'
-import type { PostCloseOptionAlignment as PostCloseOptionAlignmentData } from '@/types/research'
+import type { PostCloseOptionAlignment as PostCloseOptionAlignmentData } from '@/types/options'
 
 const alignment = {
   available: true,
   status: 'partial',
-  source_phase: 'post_close_review',
+  source_phase: 'post_close_observation',
   method: 'regular_close_vs_max_pain_and_dex_walls',
   proximity_percent: 0.6,
   price_definition: '正式对照仅使用官方 regular_price。',

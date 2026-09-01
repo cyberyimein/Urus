@@ -11,32 +11,27 @@ SYMBOL_PATTERN = re.compile(r"^[A-Z][A-Z0-9.\-]{0,14}$")
 
 
 class UniverseRoles(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    # Existing Universe versions can contain removed role keys. They are
+    # ignored at this boundary and never emitted by new writes.
+    model_config = ConfigDict(extra="ignore")
 
     market_benchmark: bool = False
     equity_watchlist: bool = False
-    cta_proxy: bool = False
     options_collection: bool = False
-    event_tracking: bool = False
     ai_candidate: bool = False
 
 
 class UniverseBenchmarks(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    # Existing Universe versions can contain removed benchmark keys. They are
+    # ignored at this boundary and never emitted by new writes.
+    model_config = ConfigDict(extra="ignore")
 
     relative_strength: str | None = None
-    cta_proxy_for: str | None = None
 
     @field_validator("relative_strength")
     @classmethod
     def normalize_benchmark(cls, value: str | None) -> str | None:
         return value.strip().upper() if value and value.strip() else None
-
-    @field_validator("cta_proxy_for")
-    @classmethod
-    def normalize_proxy(cls, value: str | None) -> str | None:
-        return value.strip() if value and value.strip() else None
-
 
 class UniverseCollection(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -107,9 +102,9 @@ class InstrumentConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_roles(self) -> "InstrumentConfig":
-        # A legacy payload may only contain ``theme``. When the canonical
+        # Persisted payloads may only contain ``theme``. When the canonical
         # ``themes`` field is explicitly supplied, it is authoritative even
-        # if a response round-trip carries a stale legacy ``theme`` value.
+        # if a response round-trip carries a stale primary ``theme`` value.
         themes = list(self.themes)
         explicit_themes = "themes" in self.model_fields_set
         if not explicit_themes and not themes and self.theme:
@@ -118,8 +113,6 @@ class InstrumentConfig(BaseModel):
             raise ValueError("至少需要填写一个主题")
         self.themes = themes
         self.theme = themes[0]
-        if self.roles.cta_proxy and not self.benchmarks.cta_proxy_for:
-            raise ValueError("CTA proxy 必须填写代表的期货或风险因子")
         if self.roles.options_collection and not self.collection.options:
             raise ValueError("期权采集角色必须同时启用 collection.options")
         if self.roles.market_benchmark and not self.collection.quote:
@@ -161,13 +154,11 @@ class UniverseUpdate(BaseModel):
 class UniverseDerivedScopes(BaseModel):
     market_symbols: list[str]
     instrument_symbols: list[str]
-    cta_proxy_symbols: list[str]
     option_symbols: list[str]
-    event_symbols: list[str]
     ai_candidate_symbols: list[str]
     # History collection is intentionally independent from the protected
-    # indicator-recommendation role.  Keep a default for legacy response
-    # payloads and old tests that construct this schema directly.
+    # indicator-recommendation role. Keep a default for persisted response
+    # payloads and callers that construct this schema directly.
     history_symbols: list[str] = Field(default_factory=list)
 
 

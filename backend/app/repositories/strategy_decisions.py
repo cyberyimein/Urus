@@ -12,7 +12,7 @@ from app.models.strategy_decision import DeterministicSynthesisModel, StrategyDe
 
 
 class StrategyDecisionRepository:
-    """Persistence boundary for immutable Phase B strategy output."""
+    """Persistence boundary for immutable deterministic strategy output."""
 
     def __init__(self, session: Session) -> None:
         self.session = session

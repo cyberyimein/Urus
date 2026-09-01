@@ -105,8 +105,8 @@ body {
 .watch-symbol strong { font: 600 11px var(--decision-font-mono); }
 .watch-symbol small { color: var(--decision-muted); font: 8px var(--decision-font-mono); }
 .rail-footer { display: grid; gap: 10px; margin-top: auto; padding: 12px 8px 0; border-top: 1px solid var(--decision-line-soft); }
-.phase-chip { display: inline-flex; width: fit-content; padding: 4px 6px; border: 1px solid rgba(196, 122, 80, .28); border-radius: 3px; color: var(--decision-teal); background: var(--decision-teal-soft); font: 8px var(--decision-font-mono); letter-spacing: .06em; }
-.phase-chip.small { padding: 3px 5px; font-size: 7px; }
+.decision-chip { display: inline-flex; width: fit-content; padding: 4px 6px; border: 1px solid rgba(196, 122, 80, .28); border-radius: 3px; color: var(--decision-teal); background: var(--decision-teal-soft); font: 8px var(--decision-font-mono); letter-spacing: .06em; }
+.decision-chip.small { padding: 3px 5px; font-size: 7px; }
 .rail-footer p { color: var(--decision-muted); font: 9px/1.45 var(--decision-font-mono); }
 
 .decision-main { min-width: 0; max-width: 1600px; padding: 33px var(--decision-content-gutter) 70px; }

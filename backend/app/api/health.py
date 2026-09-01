@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db, get_settings
 from app.core.config import Settings
-from app.schemas.read_model import HealthResponse, VersionResponse
+from app.schemas.health import HealthResponse, VersionResponse
 
 router = APIRouter()
 
@@ -22,4 +22,3 @@ def version(settings: Settings = Depends(get_settings)) -> VersionResponse:
         app_version=settings.app_version,
         api_schema_version=settings.api_schema_version,
     )
-

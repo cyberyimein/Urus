@@ -102,8 +102,8 @@ class ObservationGroupRepository:
         return self.session.scalar(statement)
 
     @staticmethod
-    def is_legacy_self_selected(model: ObservationGroupVersionModel) -> bool:
-        """Identify the obsolete manual self-selection group without deleting it."""
+    def is_persisted_self_selected(model: ObservationGroupVersionModel) -> bool:
+        """Identify a persisted manual self-selection group without deleting history."""
 
         return model.source == "manual" and bool(
             set(model.tags or []) & {"self-selected", "user-selected", "user-qualified"}
@@ -112,7 +112,7 @@ class ObservationGroupRepository:
     def list_active(
         self,
         *,
-        include_legacy_self_selected: bool = False,
+        include_persisted_self_selected: bool = False,
     ) -> list[ObservationGroupVersionModel]:
         rows = list(
             self.session.scalars(
@@ -125,8 +125,8 @@ class ObservationGroupRepository:
                 )
             )
         )
-        if not include_legacy_self_selected:
-            rows = [row for row in rows if not self.is_legacy_self_selected(row)]
+        if not include_persisted_self_selected:
+            rows = [row for row in rows if not self.is_persisted_self_selected(row)]
         seen: set[str] = set()
         result: list[ObservationGroupVersionModel] = []
         for row in rows:
@@ -145,11 +145,10 @@ class ObservationGroupRepository:
             self.session.commit()
 
     def ensure_default(self, universe_items: list[dict[str, Any]]) -> ObservationGroupVersionModel | None:
-        """Keep the old bootstrap hook side-effect free.
+        """Keep the bootstrap hook side-effect free.
 
         Observation groups are now created only by Universe projection sync or
-        explicit user actions. In particular, a missing active group must not
-        be replaced with the obsolete manual self-selection group.
+        explicit user actions. A missing active group is not synthesized here.
         """
 
         del universe_items
@@ -252,9 +251,9 @@ class ObservationGroupRepository:
         tags = list(model.tags or [])
         display_name = model.display_name
         description = model.description
-        # Keep active groups created by the previous Phase C UI readable while
-        # exposing the new taxonomy to every client. Historical rows and run
-        # references remain untouched; only the API presentation is migrated.
+        # Keep persisted group rows readable while exposing the current
+        # taxonomy to every client. Historical rows and run references remain
+        # untouched; only the API presentation is normalized.
         if model.source == "universe" and (
             "indicator-recommendation" in tags or "watchlist" in tags
         ):

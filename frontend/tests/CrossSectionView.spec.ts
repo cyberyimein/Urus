@@ -179,7 +179,7 @@ const projection: CrossSectionProjection = {
     dataset_ids: ['dataset-1'],
     warnings: [],
   },
-  ai: { available: false, status: 'disabled', reason: 'Phase E' },
+  ai: { available: false, status: 'disabled', reason: 'remote workflow unavailable' },
   content_sha256: 'projection-hash',
 }
 
@@ -419,5 +419,109 @@ describe('CrossSectionView', () => {
     expect(wrapper.findAll('.cross-section-decision-zone')).toHaveLength(9)
     expect(wrapper.findAll('.cross-section-decision-zero')).toHaveLength(3)
     expect(wrapper.text()).toContain('score · -100 至 +100')
+  })
+
+  it('reloads the strategy catalog when the shared route changes from indicators', async () => {
+    const listIndicators = vi.spyOn(api, 'listIndicatorCatalog').mockResolvedValue([projection.indicator!])
+    const listStrategies = vi.spyOn(api, 'listStrategyCatalog').mockResolvedValue([strategyCatalog])
+    vi.spyOn(api, 'listObservationRuns').mockResolvedValue([run])
+    vi.spyOn(api, 'getIndicatorCrossSection').mockResolvedValue(projection)
+    const getStrategyProjection = vi.spyOn(api, 'getStrategyCrossSection').mockResolvedValue(strategyProjection)
+
+    await router.push('/indicators/rsi14?run=run-1')
+    await router.isReady()
+    const wrapper = mount(CrossSectionView, {
+      props: { lensType: 'indicator' },
+      global: {
+        plugins: [router],
+        stubs: {
+          AppShell: true,
+          RouterLink: { template: '<a><slot /></a>' },
+        },
+      },
+    })
+    await flushPromises()
+
+    await router.push('/strategies?run=run-1')
+    await wrapper.setProps({ lensType: 'strategy' })
+    await flushPromises()
+
+    expect(listIndicators).toHaveBeenCalled()
+    expect(listStrategies).toHaveBeenCalled()
+    expect(getStrategyProjection).toHaveBeenCalledWith('run-1', 'trend_momentum_v1')
+    expect(getStrategyProjection).not.toHaveBeenCalledWith('run-1', 'rsi14')
+    expect(wrapper.text()).toContain('策略横向扫描')
+    wrapper.unmount()
+  })
+
+  it('falls back to the newest run with valid rows and leaves the cross-section AI action enabled', async () => {
+    const staleRun = {
+      ...run,
+      run_id: 'run-latest',
+      trading_date: '2026-08-22',
+      report: { summary: { quality_issue_count: 3 } },
+    } as ObservationRun
+    const emptyProjection: CrossSectionProjection = {
+      ...projection,
+      observation_run_id: 'run-latest',
+      scope_id: 'run-latest',
+      content_sha256: 'empty-projection-hash',
+      rows: projection.rows.map((row) => ({
+        ...row,
+        valid: false,
+        status: 'missing',
+        quality_status: 'stale',
+        value: null,
+        previous_value: null,
+        change: null,
+        display_value: '—',
+        state: 'missing',
+      })),
+      quality: {
+        ...projection.quality,
+        status: 'partial',
+        run_status: 'succeeded',
+        valid_row_count: 0,
+        missing_row_count: projection.rows.length,
+      },
+    }
+    vi.spyOn(api, 'listIndicatorCatalog').mockResolvedValue([projection.indicator!])
+    vi.spyOn(api, 'listObservationRuns').mockResolvedValue([staleRun, run])
+    vi.spyOn(api, 'listRemoteDecisions').mockResolvedValue([])
+    vi.spyOn(api, 'preflightRemoteDecision').mockResolvedValue({
+      enabled: true,
+      blockers: [],
+      warnings: [],
+      intent_type: 'indicator_attention',
+      source: { observation_run_id: 'run-1', lens_id: 'rsi14' },
+      source_summary: {},
+      binding: null,
+      input_sha256: 'input-hash',
+      preflight_fingerprint: 'preflight-fingerprint',
+    })
+    const getProjection = vi.spyOn(api, 'getIndicatorCrossSection').mockImplementation(
+      async (runId) => runId === staleRun.run_id ? emptyProjection : projection,
+    )
+
+    await router.push('/indicators')
+    await router.isReady()
+    const wrapper = mount(CrossSectionView, {
+      props: { lensType: 'indicator' },
+      global: {
+        plugins: [router],
+        stubs: {
+          AppShell: true,
+          RouterLink: { template: '<a><slot /></a>' },
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(getProjection).toHaveBeenCalledWith('run-latest', 'rsi14')
+    expect(getProjection).toHaveBeenCalledWith('run-1', 'rsi14')
+    expect(wrapper.find('select').element.value).toBe('run-1')
+    expect(wrapper.text()).toContain('已自动切换到 2026-08-21 的可用冻结 Run')
+    expect(wrapper.find('.cross-section-ai-button').attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
   })
 })
