@@ -4,7 +4,8 @@ import UniverseSettingsView from '@/views/UniverseSettingsView.vue'
 import InstrumentDecisionView from '@/views/InstrumentDecisionView.vue'
 import GroupObservationView from '@/views/GroupObservationView.vue'
 import ObservationRunView from '@/views/ObservationRunView.vue'
-import CrossSectionView from '@/views/CrossSectionView.vue'
+import IndicatorCrossSectionView from '@/views/IndicatorCrossSectionView.vue'
+import StrategyCrossSectionView from '@/views/StrategyCrossSectionView.vue'
 import RemoteDecisionRunView from '@/views/RemoteDecisionRunView.vue'
 
 export const router = createRouter({
@@ -18,10 +19,13 @@ export const router = createRouter({
     // path used by existing clients and bookmarks.
     { path: '/decision-runs/:localRunId', alias: '/remote-decisions/:localRunId', name: 'remote-decision-run', component: RemoteDecisionRunView },
     { path: '/observation-runs', name: 'observation-runs', component: ObservationRunView },
-    { path: '/indicators', name: 'indicators', component: CrossSectionView, props: { lensType: 'indicator' } },
-    { path: '/indicators/:indicatorId', name: 'indicator-cross-section', component: CrossSectionView, props: { lensType: 'indicator' } },
-    { path: '/strategies', name: 'strategies', component: CrossSectionView, props: { lensType: 'strategy' } },
-    { path: '/strategies/:strategyId', name: 'strategy-cross-section', component: CrossSectionView, props: { lensType: 'strategy' } },
+    // Indicator and strategy surfaces intentionally use different route
+    // components. They share the visual implementation, but must not share a
+    // mounted component tree when moving between the two workspaces.
+    { path: '/indicators', name: 'indicators', component: IndicatorCrossSectionView },
+    { path: '/indicators/:indicatorId', name: 'indicator-cross-section', component: IndicatorCrossSectionView },
+    { path: '/strategies', name: 'strategies', component: StrategyCrossSectionView },
+    { path: '/strategies/:strategyId', name: 'strategy-cross-section', component: StrategyCrossSectionView },
     // Keep the settings entry point focused on the active Universe surface.
     { path: '/settings', redirect: { name: 'universe-settings' } },
     { path: '/settings/universe', name: 'universe-settings', component: UniverseSettingsView },

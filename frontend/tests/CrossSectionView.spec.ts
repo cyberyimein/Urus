@@ -267,6 +267,15 @@ const strategyProjection: CrossSectionProjection = {
 afterEach(() => vi.restoreAllMocks())
 
 describe('CrossSectionView', () => {
+  it('uses separate route components for indicator and strategy workspaces', () => {
+    const indicatorComponent = router.resolve('/indicators').matched.at(-1)?.components.default
+    const strategyComponent = router.resolve('/strategies').matched.at(-1)?.components.default
+
+    expect(indicatorComponent).toBeDefined()
+    expect(strategyComponent).toBeDefined()
+    expect(indicatorComponent).not.toBe(strategyComponent)
+  })
+
   it('renders all symbols from the selected observation run and keeps AI disabled', async () => {
     const macd = {
       ...projection.indicator!,
