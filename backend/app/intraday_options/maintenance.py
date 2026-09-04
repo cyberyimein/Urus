@@ -47,12 +47,19 @@ def create_daily_backup(
     destination = sqlite3.connect(temporary_db)
     try:
         source.backup(destination)
+        # The live database uses WAL, but a backup artifact must be a
+        # standalone file. Otherwise opening it for validation can create
+        # sidecar -wal/-shm files in the Time Machine directory.
+        destination.execute("PRAGMA journal_mode=DELETE")
+        destination.commit()
     finally:
         destination.close()
         source.close()
     temporary_db.replace(database_backup)
 
-    with sqlite3.connect(f"file:{database_backup}?mode=ro", uri=True) as check_db:
+    with sqlite3.connect(
+        f"file:{database_backup}?mode=ro&immutable=1", uri=True
+    ) as check_db:
         integrity_check = str(check_db.execute("PRAGMA integrity_check").fetchone()[0])
         table_names = [
             str(row[0])
