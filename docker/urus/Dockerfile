@@ -19,7 +19,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     DATABASE_URL=sqlite:////data/urus.db \
     MOOMOO_SDK_HOME=/data/moomoo_home \
     URUS_SCHEDULER_DATA_DIR=/data/scheduled_collection \
-    MOOMOO_COLLECTION_LOCK_PATH=/data/moomoo_collection.lock
+    MOOMOO_COLLECTION_LOCK_PATH=/data/moomoo_collection.lock \
+    INTRADAY_OPTIONS_DATABASE_URL=sqlite:////data/intraday_options/intraday_options-v2.db \
+    INTRADAY_OPTIONS_RAW_PAYLOAD_DIR=/data/intraday_options/raw \
+    INTRADAY_OPTIONS_BACKUP_DIR=/backups/intraday_options
 
 WORKDIR /app
 RUN mkdir -p /data && pip install --no-cache-dir uv==0.8.4

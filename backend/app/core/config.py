@@ -77,6 +77,21 @@ class Settings(BaseSettings):
     # One host-wide lock serializes the personal collector across workflow
     # subprocesses. The lock file also remembers provider pacing timestamps.
     moomoo_collection_lock_path: str = "data/moomoo_collection.lock"
+    # High-frequency option facts live in a dedicated store so multi-month
+    # research growth cannot inflate or lock the operational Urus database.
+    intraday_options_enabled: bool = False
+    intraday_options_database_url: str = (
+        "sqlite:///./data/intraday_options/intraday_options-v2.db"
+    )
+    intraday_options_raw_payload_dir: str = "data/intraday_options/raw"
+    intraday_options_backup_dir: str = "data/intraday_options/backups"
+    intraday_options_symbols: str = "SPY,QQQ,IWM"
+    intraday_options_fast_band_percent: float = 3.0
+    intraday_options_structure_band_percent: float = 10.0
+    intraday_options_poll_seconds: float = 10.0
+    intraday_options_min_quote_coverage: float = 0.80
+    intraday_options_close_finalizer_delay_minutes: int = 5
+    intraday_options_backup_retention_days: int = 14
     # Minimum completed daily bars required before a chart/evidence package is
     # considered ready for strategy evaluation.  Keep this independent from
     # the provider fetch window so another collector can satisfy the contract.
@@ -193,6 +208,16 @@ class Settings(BaseSettings):
                 for item in self.options_target_dtes.split(",")
                 if item.strip()
             }
+        )
+
+    @property
+    def intraday_options_symbol_list(self) -> list[str]:
+        return list(
+            dict.fromkeys(
+                item.strip().upper()
+                for item in self.intraday_options_symbols.split(",")
+                if item.strip()
+            )
         )
 
 

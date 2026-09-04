@@ -61,6 +61,10 @@ def scheduler_command(uv: str, api_base_url: str) -> list[str]:
     ]
 
 
+def intraday_options_command(uv: str) -> list[str]:
+    return [uv, "run", "python", "scripts/schedule_intraday_options_collection.py"]
+
+
 def _run_migrations(uv: str) -> None:
     subprocess.run(
         [uv, "run", "alembic", "upgrade", "head"],
@@ -144,6 +148,7 @@ def main() -> int:
     stop_requested = [False]
     api_process: subprocess.Popen[bytes] | None = None
     scheduler_process: subprocess.Popen[bytes] | None = None
+    intraday_options_process: subprocess.Popen[bytes] | None = None
 
     def request_shutdown(_signum: int, _frame: object) -> None:
         stop_requested[0] = True
@@ -162,6 +167,9 @@ def main() -> int:
             stop_requested,
         )
         scheduler_process = _start(scheduler_command(uv, scheduler_url))
+        settings_enabled = os.environ.get("INTRADAY_OPTIONS_ENABLED", "false").strip().lower()
+        if settings_enabled in {"1", "true", "yes", "on"}:
+            intraday_options_process = _start(intraday_options_command(uv))
 
         while not stop_requested[0]:
             if api_process.poll() is not None:
@@ -169,6 +177,14 @@ def main() -> int:
             if scheduler_process.poll() is not None:
                 raise RuntimeError(
                     f"Urus scheduler exited unexpectedly (code={scheduler_process.returncode})"
+                )
+            if (
+                intraday_options_process is not None
+                and intraday_options_process.poll() is not None
+            ):
+                raise RuntimeError(
+                    "Urus intraday option collector exited unexpectedly "
+                    f"(code={intraday_options_process.returncode})"
                 )
             time.sleep(poll_seconds)
         return 0
@@ -178,8 +194,9 @@ def main() -> int:
         print(f"Urus container supervisor failed: {exc}", file=sys.stderr, flush=True)
         return 1
     finally:
-        # Stop the scheduler first so it cannot submit a new run while the API
-        # is shutting down, then stop Uvicorn and reap both process groups.
+        # Stop collectors first so neither can start a provider call while the
+        # API is shutting down, then reap every process group.
+        _terminate(intraday_options_process, shutdown_timeout)
         _terminate(scheduler_process, shutdown_timeout)
         _terminate(api_process, shutdown_timeout)
 

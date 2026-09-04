@@ -17,6 +17,7 @@ Environment:
   REMOTE_STORAGE_ROOT     Optional absolute Urus data root; defaults to ~/data/urus
   REMOTE_DIR              Deploy files directory
   REMOTE_DATA_DIR         Persistent SQLite/scheduler directory
+  REMOTE_BACKUP_DIR       Startup-disk directory copied by Time Machine
   REMOTE_ENV_FILE         Default: REMOTE_DIR/urus.env
   REMOTE_CONTAINER_CLI    Default: container
   CONTAINER_NAME          Default: urus
@@ -26,6 +27,7 @@ Environment:
   APP_PORT                Default: 8000
   CONTAINER_CPUS          Default: 4
   CONTAINER_MEMORY        Default: 2G
+  ALLOW_MARKET_HOURS_DEPLOY  Default: 0; set to 1 only for an urgent daytime restart
 EOF
 }
 
@@ -66,6 +68,7 @@ else
 fi
 REMOTE_DIR="${REMOTE_DIR:-$default_remote_dir}"
 REMOTE_DATA_DIR="${REMOTE_DATA_DIR:-$default_data_dir}"
+REMOTE_BACKUP_DIR="${REMOTE_BACKUP_DIR:-/Users/mithridates/UrusBackups}"
 REMOTE_ENV_FILE="${REMOTE_ENV_FILE:-$REMOTE_DIR/urus.env}"
 REMOTE_CONTAINER_CLI="${REMOTE_CONTAINER_CLI:-container}"
 CONTAINER_NAME="${CONTAINER_NAME:-urus}"
@@ -78,14 +81,51 @@ CONTAINER_MEMORY="${CONTAINER_MEMORY:-2G}"
 remote_archive="$REMOTE_DIR/$(basename "$archive_path")"
 remote_database_upload="-"
 
+# A container replacement interrupts the five-minute intraday collector. The
+# old option chain cannot be reconstructed after expiry, so refuse a daytime
+# deployment by default whenever the supplied runtime config enables it. This
+# check runs before any SSH/scp transfer; an operator may opt in explicitly
+# for an emergency patch and accept the resulting capture gap.
+intraday_enabled="${INTRADAY_OPTIONS_ENABLED:-false}"
+if [[ -n "${ENV_FILE:-}" ]]; then
+    [[ -f "$ENV_FILE" ]] || fail "ENV_FILE does not exist: $ENV_FILE"
+    if grep -Eiq '^[[:space:]]*INTRADAY_OPTIONS_ENABLED[[:space:]]*=[[:space:]]*(1|true|yes|on)[[:space:]]*$' "$ENV_FILE"; then
+        intraday_enabled="true"
+    fi
+fi
+market_hour_deploy="${ALLOW_MARKET_HOURS_DEPLOY:-0}"
+market_weekday="$(TZ=America/New_York date +%u)"
+market_hm="$(TZ=America/New_York date +%H%M)"
+if [[ "$intraday_enabled" =~ ^(1|true|yes|on)$ ]] \
+    && [[ "$market_weekday" -le 5 ]] \
+    && (( 10#$market_hm >= 925 && 10#$market_hm < 1605 )) \
+    && [[ ! "$market_hour_deploy" =~ ^(1|true|yes|on)$ ]]; then
+    fail "intraday collector is enabled and US market hours are active; deploy before 09:25 ET or after 16:05 ET (set ALLOW_MARKET_HOURS_DEPLOY=1 only for an emergency)"
+fi
+if [[ "$intraday_enabled" =~ ^(1|true|yes|on)$ ]] \
+    && [[ "$market_weekday" -le 5 ]] \
+    && (( 10#$market_hm >= 925 && 10#$market_hm < 1605 )) \
+    && [[ "$market_hour_deploy" =~ ^(1|true|yes|on)$ ]]; then
+    echo "warning: forcing a market-hours deployment; one or more intraday captures may be missed" >&2
+fi
+
 require_command ssh
 require_command scp
 ssh_args=(-p "$SSH_PORT")
 scp_args=(-P "$SSH_PORT")
-ssh "${ssh_args[@]}" "$ssh_target" "mkdir -p $(shell_quote "$REMOTE_DIR") $(shell_quote "$REMOTE_DATA_DIR")"
+if [[ -z "${ENV_FILE:-}" ]] \
+    && ssh "${ssh_args[@]}" "$ssh_target" \
+        "test -f $(shell_quote "$REMOTE_ENV_FILE") && grep -Eiq '^[[:space:]]*INTRADAY_OPTIONS_ENABLED[[:space:]]*=[[:space:]]*(1|true|yes|on)[[:space:]]*$' $(shell_quote "$REMOTE_ENV_FILE")"; then
+    intraday_enabled="true"
+    if [[ "$market_weekday" -le 5 ]] \
+        && (( 10#$market_hm >= 925 && 10#$market_hm < 1605 )) \
+        && [[ ! "$market_hour_deploy" =~ ^(1|true|yes|on)$ ]]; then
+        fail "remote intraday collector is enabled and US market hours are active; deploy before 09:25 ET or after 16:05 ET"
+    fi
+fi
+ssh "${ssh_args[@]}" "$ssh_target" "mkdir -p $(shell_quote "$REMOTE_DIR") $(shell_quote "$REMOTE_DATA_DIR") $(shell_quote "$REMOTE_BACKUP_DIR")"
 scp "${scp_args[@]}" "$archive_path" "$ssh_target:$remote_archive"
 if [[ -n "${ENV_FILE:-}" ]]; then
-    [[ -f "$ENV_FILE" ]] || fail "ENV_FILE does not exist: $ENV_FILE"
     scp "${scp_args[@]}" "$ENV_FILE" "$ssh_target:$REMOTE_ENV_FILE"
 fi
 if [[ -n "${DATABASE_FILE:-}" ]]; then
@@ -98,11 +138,12 @@ ssh "${ssh_args[@]}" "$ssh_target" "bash -s" -- \
     "$REMOTE_CONTAINER_CLI" "$remote_archive" "$image_ref" "$CONTAINER_NAME" \
     "$SCHEDULER_NAME" "$CONTAINER_NETWORK" "$HOST_PORT" "$APP_PORT" \
     "$REMOTE_ENV_FILE" "$REMOTE_DATA_DIR" "$remote_database_upload" \
-    "$CONTAINER_CPUS" "$CONTAINER_MEMORY" <<'REMOTE_SCRIPT'
+    "$CONTAINER_CPUS" "$CONTAINER_MEMORY" "$REMOTE_BACKUP_DIR" <<'REMOTE_SCRIPT'
 set -Eeuo pipefail
 container_cli="$1"; archive="$2"; image_ref="$3"; app_name="$4"; scheduler_name="$5"
 network="$6"; host_port="$7"; app_port="$8"; env_file="$9"; data_dir="${10}"; database_upload="${11:-}"
 container_cpus="${12:-4}"; container_memory="${13:-2G}"
+backup_dir="${14}"
 
 "$container_cli" system start >/dev/null 2>&1 || true
 if ! "$container_cli" network list | awk 'NR > 1 {print $1}' | grep -Fxq "$network"; then
@@ -147,7 +188,11 @@ common+=(
     --env "MOOMOO_SDK_HOME=/data/moomoo_home"
     --env "URUS_SCHEDULER_DATA_DIR=/data/scheduled_collection"
     --env "MOOMOO_COLLECTION_LOCK_PATH=/data/moomoo_collection.lock"
+    --env "INTRADAY_OPTIONS_DATABASE_URL=sqlite:////data/intraday_options/intraday_options-v2.db"
+    --env "INTRADAY_OPTIONS_RAW_PAYLOAD_DIR=/data/intraday_options/raw"
+    --env "INTRADAY_OPTIONS_BACKUP_DIR=/backups/intraday_options"
     --volume "$data_dir:/data"
+    --volume "$backup_dir:/backups"
 )
 
 "$container_cli" run --detach --name "$app_name" "${common[@]}" \

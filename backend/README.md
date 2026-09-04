@@ -20,6 +20,19 @@ The application creates missing local tables on startup for a fresh checkout. Al
 
 The scheduler invokes this endpoint once after the US session. It never starts a separate data worker and it never invokes AI. The stock and option adapters share `MoomooCollectionCoordinator`, which holds the host-wide lock and persists pacing timestamps for snapshot, history, option metadata, and option-chain calls.
 
+The optional intraday option collector is a separate supervised process because
+it runs every five minutes during the regular session. It still uses the same
+host-wide coordinator and rate buckets. Set `INTRADAY_OPTIONS_ENABLED=true` to
+collect SPY/QQQ/IWM facts into the dedicated
+`/data/intraday_options/intraday_options-v2.db`; compressed raw capture payloads
+are stored under `/data/intraday_options/raw`. These tables are intentionally
+not part of `urus.db` or the main Alembic history.
+Incomplete captures retry inside the four-minute temporal window without
+mixing attempts. A post-close pass refreshes finalized one-minute bars, writes
+supervised outcome labels, and creates an app-consistent daily backup.
+SPY/QQQ/IWM take history-symbol capacity before the broader Urus observation
+universe; normal history reserve policy is applied only to the remaining slots.
+
 ## API surface
 
 - `GET/PUT /api/settings`
