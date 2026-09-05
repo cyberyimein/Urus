@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 import gzip
 import json
 from pathlib import Path
@@ -420,8 +420,42 @@ def test_moomoo_intraday_adapter_uses_two_nearest_expiries_and_snapshot_batches(
     assert payload["provider_raw"]["option_snapshot_batches"]
     first_batch = payload["provider_raw"]["option_snapshot_batches"][0]
     assert first_batch["request_started_at"] <= first_batch["response_received_at"]
-    assert all(call["ktype"] == "K_1M" and call["autype"] == "NONE" for call in context.history_calls)
+    assert all(call["ktype"] == "K_1M" and call["autype"] == "None" for call in context.history_calls)
     assert all(len(codes) <= 2 for codes in context.snapshot_calls[1:])
+
+
+def test_intraday_close_returns_incomplete_when_minute_bars_fail() -> None:
+    class FailingContext:
+        def get_history_kl_quota(self, *, get_detail):
+            assert get_detail is True
+            return 0, (0, 3, [{"code": "US.SPY"}, {"code": "US.QQQ"}, {"code": "US.IWM"}])
+
+        def request_history_kline(self, **_kwargs):
+            return 1, "bad history request", None
+
+        def close(self):
+            pass
+
+    adapter = MoomooIntradayOptionsAdapter(
+        host="test",
+        port=11111,
+        symbols=["SPY", "QQQ", "IWM"],
+        target_dtes=[0, 1],
+        max_dte=7,
+        strike_range_percent=10,
+        batch_size=400,
+        quote_context_factory=lambda **_kwargs: FailingContext(),
+        sleeper=lambda _seconds: None,
+    )
+
+    payload = adapter.capture_session_close(
+        symbols=["SPY", "QQQ", "IWM"],
+        trading_date=date(2026, 9, 4),
+    )
+
+    assert payload["complete"] is False
+    assert payload["official_closes"] == {}
+    assert payload["minute_bar_unavailable_symbols"] == ["IWM", "QQQ", "SPY"]
 
 
 def test_intraday_symbols_take_history_capacity_before_urus_reserve() -> None:

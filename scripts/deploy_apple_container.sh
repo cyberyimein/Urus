@@ -17,6 +17,7 @@ Environment:
   REMOTE_STORAGE_ROOT     Optional absolute Urus data root; defaults to ~/data/urus
   REMOTE_DIR              Deploy files directory
   REMOTE_DATA_DIR         Persistent SQLite/scheduler directory
+  REMOTE_DATABASE_FILENAME Active Urus SQLite filename inside REMOTE_DATA_DIR (default: urus.db)
   REMOTE_BACKUP_DIR       Startup-disk directory copied by Time Machine
   REMOTE_ENV_FILE         Default: REMOTE_DIR/urus.env
   REMOTE_CONTAINER_CLI    Default: container
@@ -68,6 +69,7 @@ else
 fi
 REMOTE_DIR="${REMOTE_DIR:-$default_remote_dir}"
 REMOTE_DATA_DIR="${REMOTE_DATA_DIR:-$default_data_dir}"
+REMOTE_DATABASE_FILENAME="${REMOTE_DATABASE_FILENAME:-urus.db}"
 REMOTE_BACKUP_DIR="${REMOTE_BACKUP_DIR:-/Users/mithridates/UrusBackups}"
 REMOTE_ENV_FILE="${REMOTE_ENV_FILE:-$REMOTE_DIR/urus.env}"
 REMOTE_CONTAINER_CLI="${REMOTE_CONTAINER_CLI:-container}"
@@ -78,6 +80,9 @@ HOST_PORT="${HOST_PORT:-7777}"
 APP_PORT="${APP_PORT:-8000}"
 CONTAINER_CPUS="${CONTAINER_CPUS:-4}"
 CONTAINER_MEMORY="${CONTAINER_MEMORY:-2G}"
+if [[ -z "$REMOTE_DATABASE_FILENAME" || "$REMOTE_DATABASE_FILENAME" == */* || "$REMOTE_DATABASE_FILENAME" == .* ]]; then
+    fail "REMOTE_DATABASE_FILENAME must be a non-hidden basename without '/'"
+fi
 remote_archive="$REMOTE_DIR/$(basename "$archive_path")"
 remote_database_upload="-"
 
@@ -138,12 +143,13 @@ ssh "${ssh_args[@]}" "$ssh_target" "bash -s" -- \
     "$REMOTE_CONTAINER_CLI" "$remote_archive" "$image_ref" "$CONTAINER_NAME" \
     "$SCHEDULER_NAME" "$CONTAINER_NETWORK" "$HOST_PORT" "$APP_PORT" \
     "$REMOTE_ENV_FILE" "$REMOTE_DATA_DIR" "$remote_database_upload" \
-    "$CONTAINER_CPUS" "$CONTAINER_MEMORY" "$REMOTE_BACKUP_DIR" <<'REMOTE_SCRIPT'
+    "$CONTAINER_CPUS" "$CONTAINER_MEMORY" "$REMOTE_BACKUP_DIR" "$REMOTE_DATABASE_FILENAME" <<'REMOTE_SCRIPT'
 set -Eeuo pipefail
 container_cli="$1"; archive="$2"; image_ref="$3"; app_name="$4"; scheduler_name="$5"
 network="$6"; host_port="$7"; app_port="$8"; env_file="$9"; data_dir="${10}"; database_upload="${11:-}"
 container_cpus="${12:-4}"; container_memory="${13:-2G}"
-backup_dir="${14}"
+backup_dir="${14}"; database_filename="${15:-urus.db}"
+database_path="$data_dir/$database_filename"
 
 "$container_cli" system start >/dev/null 2>&1 || true
 if ! "$container_cli" network list | awk 'NR > 1 {print $1}' | grep -Fxq "$network"; then
@@ -166,10 +172,10 @@ if [[ ! -f "$env_file" ]]; then
     exit 1
 fi
 if [[ -n "$database_upload" && -f "$database_upload" ]]; then
-    if [[ -f "$data_dir/urus.db" ]]; then
-        cp "$data_dir/urus.db" "$data_dir/urus.db.backup.$(date +%Y%m%d%H%M%S)"
+    if [[ -f "$database_path" ]]; then
+        cp "$database_path" "$database_path.backup.$(date +%Y%m%d%H%M%S)"
     fi
-    mv "$database_upload" "$data_dir/urus.db"
+    mv "$database_upload" "$database_path"
 fi
 
 common=(
@@ -184,7 +190,7 @@ common+=(
     --env "APP_ENV=production"
     --env "APP_HOST=0.0.0.0"
     --env "APP_PORT=$app_port"
-    --env "DATABASE_URL=sqlite:////data/urus.db"
+    --env "DATABASE_URL=sqlite:////data/$database_filename"
     --env "MOOMOO_SDK_HOME=/data/moomoo_home"
     --env "URUS_SCHEDULER_DATA_DIR=/data/scheduled_collection"
     --env "MOOMOO_COLLECTION_LOCK_PATH=/data/moomoo_collection.lock"

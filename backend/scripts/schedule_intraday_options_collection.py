@@ -176,10 +176,16 @@ def run_close_finalizer(
     coordinator = MoomooCollectionCoordinator(settings)
     adapter = build_adapter(settings, coordinator)
     try:
-        payload = adapter.capture_session_close(
-            symbols=settings.intraday_options_symbol_list,
-            trading_date=trading_date,
-        )
+        try:
+            payload = adapter.capture_session_close(
+                symbols=settings.intraday_options_symbol_list,
+                trading_date=trading_date,
+            )
+        except Exception:
+            # A close-finalizer provider error must not terminate the optional
+            # intraday collector (and therefore the whole Urus container).
+            logger.exception("收盘终结请求异常 date=%s；稍后重试", trading_date)
+            return False
         if not payload.get("complete"):
             logger.warning(
                 "收盘终结数据不完整 date=%s closes=%s",

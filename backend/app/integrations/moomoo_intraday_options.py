@@ -8,6 +8,13 @@ from app.integrations.moomoo_options import MoomooOptionsAdapter, _pandas
 from app.services.history_quota import detail_symbols
 
 
+# ``futu-api`` uses the case-sensitive string ``"None"`` as the key for
+# ``AuType.NONE``.  Keep the provider literal here rather than using the
+# human-readable enum name ``"NONE"``; the SDK validates this before it sends
+# a request to OpenD.
+HISTORY_KLINE_AUTYPE_NONE = "None"
+
+
 class MoomooIntradayOptionsAdapter(MoomooOptionsAdapter):
     """Narrow index-ETF point-in-time collector using the shared OpenD limiter."""
 
@@ -144,7 +151,7 @@ class MoomooIntradayOptionsAdapter(MoomooOptionsAdapter):
                 start=trading_date,
                 end=trading_date,
                 ktype="K_1M",
-                autype="NONE",
+                autype=HISTORY_KLINE_AUTYPE_NONE,
                 max_count=1000,
                 page_req_key=page_req_key,
                 extended_time=False,
@@ -500,8 +507,15 @@ class MoomooIntradayOptionsAdapter(MoomooOptionsAdapter):
         admission = self._history_admission(codes)
         raw_batches: list[dict[str, Any]] = []
         bars: list[dict[str, object]] = []
+        unavailable_symbols: list[str] = []
+        warnings: list[str] = []
         for code in admission.get("admitted_codes", []):
-            bars.extend(self._minute_bars(str(code), trading_date.isoformat(), raw_batches))
+            try:
+                bars.extend(self._minute_bars(str(code), trading_date.isoformat(), raw_batches))
+            except Exception as exc:
+                symbol = str(code).removeprefix("US.").upper()
+                unavailable_symbols.append(symbol)
+                warnings.append(f"{code} minute bars failed: {exc}")
         official_closes: dict[str, float] = {}
         for symbol in symbols:
             symbol_bars = [item for item in bars if item["symbol"] == symbol.upper()]
@@ -516,8 +530,10 @@ class MoomooIntradayOptionsAdapter(MoomooOptionsAdapter):
             "trading_date": trading_date.isoformat(),
             "requested_symbols": [item.upper() for item in symbols],
             "underlying_bars": bars,
+            "minute_bar_unavailable_symbols": sorted(set(unavailable_symbols)),
             "official_closes": official_closes,
             "provider_raw": {"history_kline_batches": raw_batches},
+            "warnings": warnings,
             "complete": set(official_closes) == {item.upper() for item in symbols},
         }
 
