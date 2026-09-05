@@ -61,6 +61,16 @@ const stateLabels: Record<string, string> = {
   mixed: '内部混合',
   insufficient_data: '数据不足',
 }
+const impulseLabels: Record<string, string> = {
+  improving: '边际改善',
+  deteriorating: '边际恶化',
+  stable: '边际稳定',
+  unavailable: '暂无前日比较',
+}
+const levelLabels: Record<string, string> = { strong: '强势', mixed: '分化', weak: '弱势', insufficient_data: '数据不足' }
+const setupLabels: Record<string, string> = { confirmed: '已确认', near_confirmation: '接近确认', forming: '形成中', absent: '无 setup', invalidated: '已失效' }
+const supportLabels: Record<string, string> = { singleton: '单标的', small: '小样本', adequate: '标准样本', insufficient_data: '数据不足' }
+const evidenceLabels: Record<string, string> = { low: '低', standard: '标准' }
 
 function isIndicatorGroup(value: ObservationGroup | null | undefined) {
   return value?.source === 'universe' && (value.tags ?? []).some((tag) => tag === 'indicator-recommendation' || tag === 'watchlist')
@@ -293,11 +303,12 @@ onMounted(() => { void load() })
 
       <section v-if="snapshot" class="observation-dashboard">
         <div class="observation-stat-strip">
-          <div><span>GROUP STATE</span><strong :data-tone="decision?.stance">{{ stateLabels[decision?.state ?? ''] ?? decision?.state ?? '—' }}</strong><small>{{ actionLabels[decision?.action ?? ''] ?? decision?.action }}</small></div>
+          <div><span>LEVEL × IMPULSE × SETUP</span><strong :data-tone="decision?.stance">{{ levelLabels[decision?.level ?? ''] ?? stateLabels[decision?.state ?? ''] ?? decision?.state ?? '—' }}</strong><small>{{ impulseLabels[decision?.impulse ?? ''] ?? decision?.impulse ?? '—' }} · {{ setupLabels[decision?.setup ?? ''] ?? decision?.setup ?? '—' }}</small></div>
           <div><span>MEDIAN 20D</span><strong>{{ formatPercent(features?.returns_percent?.['20d']?.median) }}</strong><small>Q1 {{ formatPercent(features?.returns_percent?.['20d']?.q1) }} · Q3 {{ formatPercent(features?.returns_percent?.['20d']?.q3) }}</small></div>
           <div><span>ABOVE MA20</span><strong>{{ formatRatio(features?.breadth?.above_ma20) }}</strong><small>MA50 {{ formatRatio(features?.breadth?.above_ma50) }} · MA200 {{ formatRatio(features?.breadth?.above_ma200) }}</small></div>
           <div><span>RELATIVE 20D</span><strong>{{ formatPercent(Number(features?.relative_strength?.median_excess_20d ?? NaN)) }}</strong><small>{{ features?.relative_strength?.benchmark ?? '—' }}</small></div>
           <div><span>DISPERSION</span><strong>{{ formatPercent(features?.cross_sectional_dispersion_1d) }}</strong><small>leader concentration {{ formatRatio(features?.leader_concentration) }}</small></div>
+          <div v-if="decision?.sample_support"><span>SAMPLE SUPPORT</span><strong>{{ supportLabels[decision.sample_support.kind] ?? decision.sample_support.kind }}</strong><small>{{ decision.sample_support.valid_symbol_count }} / {{ decision.sample_support.requested_symbol_count }} · 证据强度 {{ evidenceLabels[decision.evidence_strength ?? ''] ?? decision.evidence_strength ?? '—' }}</small></div>
         </div>
 
         <div class="observation-chart-grid">
@@ -342,7 +353,7 @@ onMounted(() => { void load() })
           <div class="observation-focus-grid">
             <div class="observation-focus-chart"><svg v-if="selectedMultiple" viewBox="0 0 360 120" role="img" :aria-label="`${selectedSymbol} 冻结形态`"><path :d="miniPath(selectedMultiple.points, 'value')" class="small-close-line" /><path :d="miniPath(selectedMultiple.points, 'ma20')" class="small-ma20-line" /><path :d="miniPath(selectedMultiple.points, 'ma50')" class="small-ma50-line" /></svg></div>
             <dl><div><dt>CLOSE</dt><dd>{{ selectedSymbolRow.latest_close ?? '—' }}</dd></div><div><dt>20D</dt><dd>{{ formatPercent(selectedSymbolRow.returns_percent?.['20']) }}</dd></div><div><dt>RSI</dt><dd>{{ typeof selectedSymbolRow.rsi14 === 'number' ? `RSI ${selectedSymbolRow.rsi14.toFixed(1)}` : '—' }}</dd></div><div><dt>RELATIVE</dt><dd>{{ formatPercent(selectedSymbolRow.relative_excess_percent?.['20d']) }}</dd></div><div><dt>QUALITY</dt><dd>{{ selectedSymbolRow.quality_status }}</dd></div></dl>
-            <div class="observation-focus-strategies"><p v-if="!selectedStrategies.length">没有可用策略判断。</p><article v-for="item in selectedStrategies" :key="item.decision_id"><strong>{{ item.strategy?.name }}</strong><span>{{ item.stance }} · {{ item.action }} · {{ item.setup_progress?.stage }}</span><small>{{ item.confirmation_conditions?.[0] ?? item.reasons?.[0] ?? '等待更多证据。' }}</small></article></div>
+            <div class="observation-focus-strategies"><p v-if="!selectedStrategies.length">没有可用策略判断。</p><article v-for="item in selectedStrategies" :key="item.decision_id"><strong>{{ item.strategy?.name }}</strong><span>{{ item.stance }} · {{ item.action }} · {{ item.setup_plan?.stage ?? item.setup_progress?.stage }}</span><small v-if="item.setup_plan">触发 {{ item.setup_plan.confirmation_operator }} {{ item.setup_plan.confirmation_price ?? '—' }} · 距离 {{ item.setup_plan.remaining_atr ?? '—' }} ATR · 失效 {{ item.setup_plan.invalidation_operator }} {{ item.setup_plan.invalidation_price ?? '—' }}</small><small v-else>{{ item.confirmation_conditions?.[0] ?? item.reasons?.[0]?.detail ?? '等待更多证据。' }}</small></article></div>
           </div>
         </section>
 

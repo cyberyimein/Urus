@@ -19,7 +19,7 @@ const run = {
   successful_group_count: 1,
   failed_group_count: 0,
   report: {
-    schema_version: 'urus.observation_report.v1',
+    schema_version: 'urus.observation_report.v2',
     mode: 'deterministic-only',
     run_id: 'run-1',
     trading_date: '2026-08-24',
@@ -70,5 +70,40 @@ describe('ObservationRunView', () => {
     expect(text).toContain('机会泳道')
     expect(text).toContain('风险泳道')
     expect(text).toContain('DETERMINISTIC ONLY')
+  })
+
+  it('renders v2 themes and explicitly explains when cross-section ranking is unavailable', async () => {
+    const v2Run = {
+      ...run,
+      report: {
+        ...run.report,
+        schema_version: 'urus.observation_report.v2',
+        ranking_status: 'unavailable',
+        leading_themes: [{ group_id: 'leaders', group_name: '领先组', phase: 'broad_strength_stable', category: 'leader' }],
+        deteriorating_themes: [{ group_id: 'fading', group_name: '恶化组', phase: 'broad_strength_deteriorating', category: 'deteriorating' }],
+        reversal_themes: [{ group_id: 'reversal', group_name: '潜在反转组', phase: 'broad_weakness_improving', category: 'reversal_watch' }],
+      },
+    } as ObservationRun
+    vi.spyOn(api, 'listObservationRuns').mockResolvedValue([v2Run])
+
+    await router.push('/observation-runs')
+    await router.isReady()
+    const wrapper = mount(ObservationRunView, {
+      global: {
+        plugins: [router],
+        stubs: { AppShell: true, RouterLink: { template: '<a><slot /></a>' } },
+      },
+    })
+    await flushPromises()
+
+    const text = wrapper.text()
+    expect(text).toContain('领先主题')
+    expect(text).toContain('领先组')
+    expect(text).toContain('恶化主题')
+    expect(text).toContain('恶化组')
+    expect(text).toContain('潜在反转主题')
+    expect(text).toContain('潜在反转组')
+    expect(text).toContain('样本不足')
+    expect(text).toContain('排名不可用')
   })
 })

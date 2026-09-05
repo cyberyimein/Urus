@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-from math import fsum, isfinite, sqrt
-from statistics import median
+from math import fsum, isfinite, log, sqrt
+from statistics import median, pstdev
 from typing import Any
 
 from app.analytics.technical import calculate_relative_strength, calculate_technical_indicators
 from app.decision_harness.contracts import FEATURE_VERSION, content_sha256
+from app.decision_harness.group_phase import evaluate_group_phase, sample_support
+from app.decision_harness.setup_projection import project_symbol_setups
 
 
-GROUP_SNAPSHOT_SCHEMA = "urus.group_daily_snapshot.v3"
+GROUP_SNAPSHOT_SCHEMA = "urus.group_daily_snapshot.v4"
 
 
 def build_group_snapshot(
@@ -36,6 +38,7 @@ def build_group_snapshot(
         None,
     )
     benchmark = instruments.get(benchmark_symbol) if benchmark_symbol else None
+    benchmark_bars = list((benchmark.get("price") or {}).get("bars") or []) if benchmark else []
     symbol_rows: list[dict[str, Any]] = []
     for symbol in symbols:
         instrument = instruments.get(symbol) or {}
@@ -52,18 +55,33 @@ def build_group_snapshot(
             if benchmark and benchmark_symbol
             else {"available": False, "excess_returns_percent": {}}
         )
-        symbol_rows.append(_symbol_row(symbol, bars, quality, indicators, relative))
+        symbol_rows.append(
+            _symbol_row(symbol, bars, quality, indicators, relative, benchmark_bars)
+        )
 
     valid_rows = [row for row in symbol_rows if row["valid"]]
     features = _features(valid_rows, len(symbol_rows), benchmark_symbol)
     charts = _charts(symbol_rows, valid_rows, instruments, benchmark_symbol)
-    group_decision = _group_decision(features, valid_rows, len(symbol_rows))
-    group_strategy_decisions = _group_strategy_decisions(group, features, group_decision)
     group_strategy_decision_rows = [
         item
         for item in evidence.get("strategy_decisions", [])
         if str((item.get("scope") or {}).get("symbol") or item.get("symbol") or "") in symbols
     ]
+    symbol_setups = project_symbol_setups(group_strategy_decision_rows)
+    support = sample_support(len(valid_rows), len(symbol_rows))
+    group_decision = evaluate_group_phase(
+        features,
+        (previous_snapshot or {}).get("features"),
+        symbol_setups,
+        support,
+    )
+    changes = _changes(previous_snapshot, features, group_decision)
+    group_strategy_decisions = _group_strategy_decisions(group, features, group_decision)
+    group_synthesis = _group_synthesis(
+        dict(evidence.get("deterministic_synthesis") or {}),
+        group,
+        symbols,
+    )
     payload = {
         "schema_version": GROUP_SNAPSHOT_SCHEMA,
         "feature_version": FEATURE_VERSION,
@@ -99,15 +117,119 @@ def build_group_snapshot(
         "symbols": symbol_rows,
         "charts": charts,
         "group_decision": group_decision,
+        "symbol_setups": symbol_setups,
         "group_strategy_decisions": group_strategy_decisions,
-        "changes": _changes(previous_snapshot, features, group_decision),
+        "changes": changes,
         "strategy_decisions": group_strategy_decision_rows,
-        "deterministic_synthesis": evidence.get("deterministic_synthesis", {}),
+        "deterministic_synthesis": group_synthesis,
     }
     payload["content_sha256"] = content_sha256(
         {key: value for key, value in payload.items() if key != "content_sha256"}
     )
     return payload
+
+
+def _group_synthesis(
+    synthesis: dict[str, Any],
+    group: dict[str, Any],
+    symbols: list[str],
+) -> dict[str, Any]:
+    """Project a dataset synthesis onto one Observation Group."""
+
+    if not synthesis:
+        return {}
+    available = dict(synthesis.get("symbol_summaries") or {})
+    selected = {symbol: dict(available[symbol]) for symbol in symbols if symbol in available}
+    if not available:
+        # Historical synthesis payloads predate symbol summaries. Preserve
+        # them rather than pretending the dataset-level vote is group-local.
+        return synthesis
+
+    bullish_count = sum(int(item.get("bullish_count") or 0) for item in selected.values())
+    bearish_count = sum(int(item.get("bearish_count") or 0) for item in selected.values())
+    neutral_count = sum(int(item.get("neutral_count") or 0) for item in selected.values())
+    not_applicable_count = sum(
+        int(item.get("not_applicable_count") or 0) for item in selected.values()
+    )
+    error_count = sum(int(item.get("error_count") or 0) for item in selected.values())
+    states = {str(item.get("consensus_state") or "no_signal") for item in selected.values()}
+    actions = {str(item.get("suggested_action") or "no_action") for item in selected.values()}
+    if states == {"insufficient_data"} and not (bullish_count or bearish_count or neutral_count):
+        consensus_state, suggested_action = "insufficient_data", "no_action"
+    elif "conflicted" in states:
+        consensus_state, suggested_action = "conflicted", "watch"
+    elif states == {"aligned"} and actions == {"prioritize"}:
+        consensus_state, suggested_action = "aligned", "prioritize"
+    elif states == {"aligned"} and actions == {"avoid"}:
+        consensus_state, suggested_action = "aligned", "avoid"
+    elif states <= {"no_signal"}:
+        consensus_state, suggested_action = "no_signal", "no_action"
+    else:
+        consensus_state, suggested_action = "mixed", "watch"
+
+    projected = {
+        key: value
+        for key, value in synthesis.items()
+        if key
+        not in {
+            "scope",
+            "consensus_state",
+            "suggested_action",
+            "bullish_count",
+            "bearish_count",
+            "neutral_count",
+            "not_applicable_count",
+            "error_count",
+            "strongest_supporting_strategy_ids",
+            "strongest_conflicting_strategy_ids",
+            "conflict_summary",
+            "symbol_summaries",
+            "content_sha256",
+        }
+    }
+    projected.update(
+        {
+            "scope": {
+                "scope_type": "group",
+                "scope_id": group["group_id"],
+                "scope_version": group.get("version"),
+                "symbols": symbols,
+            },
+            "consensus_state": consensus_state,
+            "suggested_action": suggested_action,
+            "bullish_count": bullish_count,
+            "bearish_count": bearish_count,
+            "neutral_count": neutral_count,
+            "not_applicable_count": not_applicable_count,
+            "error_count": error_count,
+            "strongest_supporting_strategy_ids": [
+                decision_id
+                for item in selected.values()
+                for decision_id in item.get("strongest_supporting_strategy_ids") or []
+            ],
+            "strongest_conflicting_strategy_ids": [
+                decision_id
+                for item in selected.values()
+                for decision_id in item.get("strongest_conflicting_strategy_ids") or []
+            ],
+            "conflict_summary": (
+                "组内至少一个标的存在策略方向冲突。"
+                if consensus_state == "conflicted"
+                else "组内标的方向分化。"
+                if consensus_state == "mixed" and bullish_count and bearish_count
+                else "组级结论由组内标的的独立合成结果汇总。"
+            ),
+            "symbol_summaries": selected,
+        }
+    )
+    projected["content_sha256"] = content_sha256(
+        {
+            key: value
+            for key, value in projected.items()
+            if key not in {"generated_at", "content_sha256"}
+        }
+    )
+    return projected
 
 
 def _symbol_row(
@@ -116,6 +238,7 @@ def _symbol_row(
     quality: dict[str, Any],
     indicators: dict[str, Any],
     relative: dict[str, Any],
+    benchmark_bars: list[dict[str, Any]],
 ) -> dict[str, Any]:
     closes = [_number(item.get("close")) for item in bars]
     closes = [value for value in closes if value is not None]
@@ -142,6 +265,10 @@ def _symbol_row(
         },
         "volume_ratio_20d": _number(volume.get("volume_ratio_20d")),
         "volume_signal": volume.get("signal"),
+        "realized_volatility_20d_annualized": _metric(
+            indicators.get("realized_volatility_20d")
+        ),
+        "tracking_error_20d_annualized": _tracking_error_20d(bars, benchmark_bars),
         "warnings": list(quality.get("warnings") or []),
     }
 
@@ -176,6 +303,8 @@ def _features(rows: list[dict[str, Any]], requested_count: int, benchmark: str |
     relative_20 = values(("relative_excess_percent", "20d"))
     volume_values = values(("volume_ratio_20d",))
     dispersion_values = values(("returns_percent", "1"))
+    realized_volatility = values(("realized_volatility_20d_annualized",))
+    tracking_error = values(("tracking_error_20d_annualized",))
     return {
         "valid_symbol_count": len(rows),
         "requested_symbol_count": requested_count,
@@ -199,6 +328,15 @@ def _features(rows: list[dict[str, Any]], requested_count: int, benchmark: str |
             "positive_excess_20d_percent": _ratio(sum(value > 0 for value in relative_20), len(relative_20)),
         },
         "cross_sectional_dispersion_1d": _round(_stdev(dispersion_values)),
+        "volatility": {
+            "median_realized_volatility_20d_annualized": _round(median(realized_volatility))
+            if realized_volatility
+            else None,
+            "median_tracking_error_20d_annualized": _round(median(tracking_error))
+            if tracking_error
+            else None,
+            "tracking_error_source": "daily_log_return_difference",
+        },
         "leaders": _ranked(rows, "20", reverse=True),
         "laggards": _ranked(rows, "20", reverse=False),
         "leader_concentration": _leader_concentration(rows),
@@ -289,35 +427,6 @@ def _charts(
         "rotation": rotation,
         "heatmap": heatmap,
         "small_multiples": _small_multiples(valid_rows, instruments),
-    }
-
-
-def _group_decision(features: dict[str, Any], rows: list[dict[str, Any]], requested: int) -> dict[str, Any]:
-    valid = len(rows)
-    if not valid or valid < max(1, requested // 2 + 1):
-        return {"state": "insufficient_data", "stance": "insufficient_data", "action": "no_action", "reasons": ["组内有效样本不足。"]}
-    breadth = _number((features.get("breadth") or {}).get("above_ma20")) or 0
-    relative = _number((features.get("relative_strength") or {}).get("median_excess_20d")) or 0
-    concentration = _number(features.get("leader_concentration")) or 0
-    if breadth >= 0.65 and relative > 0:
-        state, stance, action = "broad_strength", "bullish", "prioritize"
-        reasons = ["组内多数标的站上 MA20，且组中位数相对基准为正。"]
-    elif breadth < 0.35 and relative < 0:
-        state, stance, action = "broad_weakness", "bearish", "avoid"
-        reasons = ["组内多数标的低于 MA20，且组中位数相对基准为负。"]
-    elif concentration >= 0.65 and breadth < 0.55:
-        state, stance, action = "narrow_leadership", "neutral", "watch"
-        reasons = ["组的强势集中在少数领涨标的，内部参与度不足。"]
-    else:
-        state, stance, action = "mixed", "neutral", "watch"
-        reasons = ["组内强弱与广度尚未形成一致方向。"]
-    return {
-        "state": state,
-        "stance": stance,
-        "action": action,
-        "reasons": reasons,
-        "participation": breadth,
-        "leader_concentration": concentration,
     }
 
 
@@ -467,6 +576,32 @@ def _trend_state(latest: float | None, averages: dict[str, Any]) -> dict[str, An
         "state": "strong" if latest is not None and values[20] is not None and latest > values[20] else "weak" if latest is not None and values[20] is not None and latest < values[20] else "mixed",
         **{f"above_ma{window}": latest is not None and values[window] is not None and latest > values[window] for window in (20, 50, 200)},
     }
+
+
+def _tracking_error_20d(
+    bars: list[dict[str, Any]], benchmark_bars: list[dict[str, Any]]
+) -> float | None:
+    if not benchmark_bars:
+        return None
+    instrument = {str(item.get("date")): _number(item.get("close")) for item in bars}
+    benchmark = {str(item.get("date")): _number(item.get("close")) for item in benchmark_bars}
+    dates = sorted(set(instrument) & set(benchmark))
+    differences: list[float] = []
+    for previous, current in zip(dates, dates[1:]):
+        left_previous, left_current = instrument.get(previous), instrument.get(current)
+        right_previous, right_current = benchmark.get(previous), benchmark.get(current)
+        if not all(
+            value is not None and value > 0
+            for value in (left_previous, left_current, right_previous, right_current)
+        ):
+            continue
+        differences.append(
+            log(float(left_current) / float(left_previous))
+            - log(float(right_current) / float(right_previous))
+        )
+    if len(differences) < 20:
+        return None
+    return _round(pstdev(differences[-20:]) * sqrt(252) * 100)
 
 
 def _shared_window_dates(instruments: dict[str, Any], symbols: list[str], window: int) -> list[str]:

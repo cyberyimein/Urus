@@ -3,9 +3,11 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import httpx
+import pytest
 
 from app.decision_harness.group_observation import build_group_snapshot
 from app.decision_harness.market_evidence import DailyMarketEvidenceService
+from app.decision_harness.observation_report import build_observation_report, rank_observation_groups
 from app.models.observation import GroupDailySnapshotModel
 from app.repositories.daily_evidence import DailyEvidenceRepository
 from app.repositories.observation import ObservationUniverseRevisionRepository
@@ -67,7 +69,7 @@ def test_group_snapshot_exposes_breadth_rotation_and_heatmap() -> None:
         evidence,
     )
 
-    assert snapshot["schema_version"] == "urus.group_daily_snapshot.v3"
+    assert snapshot["schema_version"] == "urus.group_daily_snapshot.v4"
     assert snapshot["feature_version"] == "technical_v5"
     assert snapshot["features"]["valid_symbol_count"] == 2
     assert snapshot["features"]["breadth"]["above_ma20"] == 1.0
@@ -126,6 +128,495 @@ def test_group_snapshot_excludes_partial_and_stale_symbols_from_decision() -> No
     assert snapshot["features"]["valid_symbol_count"] == 1
 
 
+def _report_decision(
+    *,
+    decision_id: str,
+    symbol: str,
+    stance: str,
+    stage: str = "confirmed",
+    score: float = 50,
+) -> dict[str, object]:
+    return {
+        "decision_id": decision_id,
+        "scope": {"symbol": symbol},
+        "strategy": {"name": "fixture", "version": "1.0"},
+        "stance": stance,
+        "action": "prioritize" if stance == "bullish" else "avoid",
+        "score": score,
+        "setup_progress": {
+            "stage": stage,
+            "confirmation_distance_atr": 0.5,
+        },
+        "status": "ok",
+    }
+
+
+def _report_snapshot(
+    *,
+    group_id: str,
+    group_name: str,
+    decisions: list[dict[str, object]],
+) -> dict[str, object]:
+    return {
+        "status": "succeeded",
+        "snapshot_id": f"snapshot-{group_id}",
+        "dataset_id": "dataset-report",
+        "group_id": group_id,
+        "payload": {
+            "group": {
+                "group_id": group_id,
+                "display_name": group_name,
+            },
+            "features": {
+                "returns_percent": {"20d": {"median": 1.0}},
+                "relative_strength": {"median_excess_20d": 0.5},
+                "breadth": {"above_ma20": 0.5},
+            },
+            "changes": {},
+            "quality": {},
+            "group_decision": {"state": "mixed", "stance": "neutral", "action": "watch"},
+            "symbols": [],
+            "strategy_decisions": decisions,
+        },
+    }
+
+
+def test_observation_report_opportunity_lanes_exclude_bearish_decisions() -> None:
+    report = build_observation_report(
+        run_id="run-opportunities",
+        trading_date="2026-08-21",
+        snapshots=[
+            _report_snapshot(
+                group_id="software",
+                group_name="软件",
+                decisions=[
+                    _report_decision(
+                        decision_id="bullish-confirmed",
+                        symbol="MSFT",
+                        stance="bullish",
+                    ),
+                    _report_decision(
+                        decision_id="bearish-confirmed",
+                        symbol="NVDA",
+                        stance="bearish",
+                    ),
+                    _report_decision(
+                        decision_id="bearish-forming",
+                        symbol="AMD",
+                        stance="bearish",
+                        stage="forming",
+                    ),
+                ],
+            )
+        ],
+    )
+
+    assert all(
+        item["stance"] != "bearish"
+        for lane in report["opportunity_lanes"].values()
+        for item in lane
+    )
+    assert {item["decision_id"] for item in report["risk_lanes"]["bearish"]} == {
+        "bearish-confirmed",
+        "bearish-forming",
+    }
+
+
+def test_observation_report_deduplicates_overlapping_decisions_and_keeps_membership() -> None:
+    shared = _report_decision(
+        decision_id="shared-decision",
+        symbol="INTC",
+        stance="bullish",
+    )
+    report = build_observation_report(
+        run_id="run-overlap",
+        trading_date="2026-08-21",
+        snapshots=[
+            _report_snapshot(group_id="chips", group_name="芯片", decisions=[shared]),
+            _report_snapshot(
+                group_id="turnarounds",
+                group_name="反转",
+                decisions=[dict(shared)],
+            ),
+        ],
+    )
+
+    confirmed = report["opportunity_lanes"]["confirmed"]
+    assert len([item for item in confirmed if item["decision_id"] == "shared-decision"]) == 1
+    item = next(item for item in confirmed if item["decision_id"] == "shared-decision")
+    assert set(item["group_ids"]) == {"chips", "turnarounds"}
+
+
+def test_group_snapshot_scopes_global_synthesis_to_group_symbols() -> None:
+    dates = [f"2026-01-{index + 1:02d}" for index in range(80)]
+    evidence = {
+        "dataset": {
+            "dataset_id": "dataset-group-synthesis-scope",
+            "feature_version": "technical_v5",
+            "trading_date": dates[-1],
+            "indicator_snapshot_ids": [],
+            "scope": {"scope_type": "observation_run", "scope_id": "run-1", "symbols": ["AAA", "BBB"]},
+        },
+        "chart": {
+            "instruments": {
+                symbol: {
+                    "price": {"bars": _bars(symbol, dates, start)},
+                    "quality": {"status": "ok", "warnings": []},
+                }
+                for symbol, start in (("AAA", 20.0), ("BBB", 40.0))
+            }
+        },
+        "strategy_decisions": [
+            _report_decision(
+                decision_id="aaa-bullish",
+                symbol="AAA",
+                stance="bullish",
+                score=70,
+            ),
+            _report_decision(
+                decision_id="bbb-bearish",
+                symbol="BBB",
+                stance="bearish",
+                score=-70,
+            ),
+        ],
+        "deterministic_synthesis": {
+            "schema_version": "urus.deterministic_synthesis.v1",
+            "dataset_id": "dataset-group-synthesis-scope",
+            "scope": {"scope_type": "observation_run", "scope_id": "run-1", "symbols": ["AAA", "BBB"]},
+            "consensus_state": "conflicted",
+            "suggested_action": "watch",
+            "bullish_count": 1,
+            "bearish_count": 1,
+            "symbol_summaries": {
+                "AAA": {"symbol": "AAA", "consensus_state": "aligned", "suggested_action": "prioritize", "bullish_count": 2, "bearish_count": 0},
+                "BBB": {"symbol": "BBB", "consensus_state": "aligned", "suggested_action": "avoid", "bullish_count": 0, "bearish_count": 2},
+            },
+        },
+    }
+
+    snapshot = build_group_snapshot(
+        {
+            "group_id": "aaa-only",
+            "version_id": "aaa-only-v1",
+            "version": 1,
+            "display_name": "AAA only",
+            "symbols": ["AAA"],
+            "benchmark_symbols": [],
+        },
+        evidence,
+    )
+
+    synthesis = snapshot["deterministic_synthesis"]
+    assert set(synthesis["symbol_summaries"]) == {"AAA"}
+    assert synthesis["consensus_state"] == "aligned"
+    assert synthesis["suggested_action"] == "prioritize"
+    assert synthesis["bullish_count"] == 2
+    assert synthesis["bearish_count"] == 0
+
+
+def test_group_snapshot_preserves_mixed_symbol_synthesis_action() -> None:
+    dates = [f"2026-01-{index + 1:02d}" for index in range(80)]
+    snapshot = build_group_snapshot(
+        {
+            "group_id": "mixed-group",
+            "version_id": "mixed-group-v1",
+            "version": 1,
+            "display_name": "Mixed group",
+            "symbols": ["AAA"],
+            "benchmark_symbols": [],
+        },
+        {
+            "dataset": {
+                "dataset_id": "dataset-mixed-symbol",
+                "feature_version": "technical_v5",
+                "trading_date": dates[-1],
+                "indicator_snapshot_ids": [],
+            },
+            "chart": {
+                "instruments": {
+                    "AAA": {
+                        "price": {"bars": _bars("AAA", dates, 20.0)},
+                        "quality": {"status": "ok", "warnings": []},
+                    }
+                }
+            },
+            "strategy_decisions": [],
+            "deterministic_synthesis": {
+                "schema_version": "urus.deterministic_synthesis.v1",
+                "dataset_id": "dataset-mixed-symbol",
+                "scope": {"scope_type": "observation_run", "scope_id": "run-1", "symbols": ["AAA"]},
+                "consensus_state": "mixed",
+                "suggested_action": "watch",
+                "bullish_count": 1,
+                "bearish_count": 0,
+                "neutral_count": 4,
+                "symbol_summaries": {
+                    "AAA": {
+                        "symbol": "AAA",
+                        "consensus_state": "mixed",
+                        "suggested_action": "watch",
+                        "bullish_count": 1,
+                        "bearish_count": 0,
+                        "neutral_count": 4,
+                    }
+                },
+            },
+        },
+    )
+
+    synthesis = snapshot["deterministic_synthesis"]
+    assert synthesis["consensus_state"] == "mixed"
+    assert synthesis["suggested_action"] == "watch"
+
+
+def test_group_decision_marks_broad_strength_deterioration_as_watch() -> None:
+    dates = [f"2026-02-{index + 1:02d}" for index in range(28)]
+    evidence = {
+        "dataset": {
+            "dataset_id": "dataset-group-impulse",
+            "feature_version": "technical_v5",
+            "trading_date": dates[-1],
+            "indicator_snapshot_ids": [],
+        },
+        "chart": {
+            "instruments": {
+                symbol: {
+                    "price": {"bars": _bars(symbol, dates, start, slope=0.25)},
+                    "quality": {"status": "ok", "warnings": []},
+                }
+                for symbol, start in (("AAA", 20.0), ("BBB", 40.0))
+            }
+            | {
+                "QQQ": {
+                    "price": {"bars": _bars("QQQ", dates, 300.0, slope=0.01)},
+                    "quality": {"status": "ok", "warnings": []},
+                }
+            }
+        },
+        "strategy_decisions": [],
+        "deterministic_synthesis": {},
+    }
+    previous_snapshot = {
+        "trading_date": "2026-01-30",
+        "features": {
+            "returns_percent": {"20d": {"median": 99.0}},
+            "relative_strength": {"median_excess_20d": 99.0},
+            "breadth": {"above_ma20": 1.0},
+            "leaders": [{"symbol": "AAA"}],
+        },
+        "group_decision": {
+            "state": "broad_strength",
+            "stance": "bullish",
+            "action": "prioritize",
+        },
+    }
+
+    snapshot = build_group_snapshot(
+        {
+            "group_id": "impulse-group",
+            "version_id": "impulse-group-v1",
+            "version": 1,
+            "display_name": "Impulse group",
+            "symbols": ["AAA", "BBB"],
+            "benchmark_symbols": ["QQQ"],
+        },
+        evidence,
+        previous_snapshot=previous_snapshot,
+    )
+
+    decision = snapshot["group_decision"]
+    assert decision["state"] == "broad_strength"
+    assert decision["impulse"] == "deteriorating"
+    assert decision["phase"] == "broad_strength_deteriorating"
+    assert decision["action"] == "watch"
+
+
+@pytest.mark.parametrize("symbol_count", [1, 2, 3])
+def test_group_phase_marks_singleton_and_small_groups_low_evidence(
+    symbol_count: int,
+) -> None:
+    dates = [f"2026-03-{index + 1:02d}" for index in range(80)]
+    symbols = ["AAA", "BBB", "CCC"][:symbol_count]
+    snapshot = build_group_snapshot(
+        {
+            "group_id": f"small-{symbol_count}",
+            "version_id": f"small-{symbol_count}-v1",
+            "version": 1,
+            "display_name": "Small group",
+            "symbols": symbols,
+            "benchmark_symbols": [],
+        },
+        {
+            "dataset": {
+                "dataset_id": f"dataset-small-{symbol_count}",
+                "feature_version": "technical_v5",
+                "trading_date": dates[-1],
+                "indicator_snapshot_ids": [],
+            },
+            "chart": {
+                "instruments": {
+                    symbol: {
+                        "price": {"bars": _bars(symbol, dates, 20.0 + index * 10)},
+                        "quality": {"status": "ok", "warnings": []},
+                    }
+                    for index, symbol in enumerate(symbols)
+                }
+            },
+            "strategy_decisions": [],
+            "deterministic_synthesis": {},
+        },
+    )
+
+    assert snapshot["schema_version"] == "urus.group_daily_snapshot.v4"
+    decision = snapshot["group_decision"]
+    assert snapshot["quality"]["valid_symbol_count"] == symbol_count
+    assert decision["evidence_strength"] == "low"
+    assert decision["rank_eligible"] is False
+    assert decision["action"] != "prioritize"
+    assert decision["category"] != "leader"
+
+
+@pytest.mark.parametrize("has_setup", [False, True])
+def test_weak_improving_group_needs_unique_symbol_setup_for_reversal_watch(
+    has_setup: bool,
+) -> None:
+    dates = [f"2026-04-{index + 1:02d}" for index in range(80)]
+    strategy_decisions = []
+    symbol_summaries = {
+        "AAA": {"symbol": "AAA", "consensus_state": "mixed", "suggested_action": "watch"},
+        "BBB": {"symbol": "BBB", "consensus_state": "aligned", "suggested_action": "avoid"},
+    }
+    if has_setup:
+        setup = {
+            "stage": "near_confirmation",
+            "direction": "bullish",
+            "confirmation_price": 18.0,
+            "confirmation_operator": ">=",
+            "observation_price": 17.0,
+            "remaining_price": 1.0,
+            "remaining_percent": 5.9,
+            "remaining_atr": 0.4,
+            "invalidation_price": 14.0,
+            "invalidation_distance_price": 3.0,
+            "invalidation_distance_percent": 17.6,
+            "invalidation_distance_atr": 1.2,
+        }
+        symbol_summaries["AAA"]["primary_setup"] = setup
+        strategy_decisions = [
+            {
+                "decision_id": f"aaa-setup-{index}",
+                "scope": {"symbol": "AAA"},
+                "status": "ok",
+                "stance": "bullish",
+                "action": "watch",
+                "setup_progress": {
+                    "stage": "near_confirmation",
+                    "confirmation_distance_atr": 0.4,
+                },
+                "setup_plan": setup,
+            }
+            for index in range(3)
+        ]
+
+    snapshot = build_group_snapshot(
+        {
+            "group_id": "weak-improving",
+            "version_id": "weak-improving-v1",
+            "version": 1,
+            "display_name": "Weak improving group",
+            "symbols": ["AAA", "BBB"],
+            "benchmark_symbols": ["QQQ"],
+        },
+        {
+            "dataset": {
+                "dataset_id": "dataset-weak-improving",
+                "feature_version": "technical_v5",
+                "trading_date": dates[-1],
+                "indicator_snapshot_ids": [],
+            },
+            "chart": {
+                "instruments": {
+                    "AAA": {
+                        "price": {"bars": _bars("AAA", dates, 20.0, slope=-0.25)},
+                        "quality": {"status": "ok", "warnings": []},
+                    },
+                    "BBB": {
+                        "price": {"bars": _bars("BBB", dates, 30.0, slope=-0.2)},
+                        "quality": {"status": "ok", "warnings": []},
+                    },
+                    "QQQ": {
+                        "price": {"bars": _bars("QQQ", dates, 300.0, slope=0.1)},
+                        "quality": {"status": "ok", "warnings": []},
+                    },
+                }
+            },
+            "strategy_decisions": strategy_decisions,
+            "deterministic_synthesis": {
+                "schema_version": "urus.deterministic_synthesis.v1",
+                "symbol_summaries": symbol_summaries,
+            },
+        },
+        previous_snapshot={
+            "trading_date": "2026-03-31",
+            "features": {
+                "returns_percent": {"20d": {"median": -99.0}},
+                "relative_strength": {"median_excess_20d": -99.0},
+                "breadth": {"above_ma20": 0.0},
+                "leaders": [],
+            },
+            "group_decision": {
+                "state": "broad_weakness",
+                "stance": "bearish",
+                "action": "avoid",
+            },
+        },
+    )
+
+    decision = snapshot["group_decision"]
+    assert snapshot["schema_version"] == "urus.group_daily_snapshot.v4"
+    assert decision["state"] == "broad_weakness"
+    assert decision["impulse"] == "improving"
+    assert decision["phase"] == "broad_weakness_improving"
+    assert decision["setup_participation"] == (0.5 if has_setup else 0.0)
+    assert decision["category"] == ("reversal_watch" if has_setup else "weak")
+    assert decision["action"] == "watch" if has_setup else decision["action"] != "prioritize"
+
+
+def test_observation_report_deduplicates_overlapping_strategy_conflicts() -> None:
+    decisions = [
+        _report_decision(
+            decision_id="shared-bullish",
+            symbol="INTC",
+            stance="bullish",
+            score=65,
+        ),
+        _report_decision(
+            decision_id="shared-bearish",
+            symbol="INTC",
+            stance="bearish",
+            score=-65,
+        ),
+    ]
+    report = build_observation_report(
+        run_id="run-conflict-overlap",
+        trading_date="2026-08-21",
+        snapshots=[
+            _report_snapshot(group_id="chips", group_name="芯片", decisions=decisions),
+            _report_snapshot(
+                group_id="turnarounds",
+                group_name="反转",
+                decisions=[dict(item) for item in decisions],
+            ),
+        ],
+    )
+
+    assert len(report["strategy_conflicts"]) == 1
+    conflict = report["strategy_conflicts"][0]
+    assert set(conflict["decision_ids"]) == {"shared-bullish", "shared-bearish"}
+    assert set(conflict["group_ids"]) == {"chips", "turnarounds"}
+
+
 def test_observation_group_version_and_run_are_idempotent(client) -> None:
     cutoff = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
     session_dates = completed_session_dates(cutoff, "XNYS", count=260)
@@ -167,7 +658,7 @@ def test_observation_group_version_and_run_are_idempotent(client) -> None:
     assert first_body["group_count"] == 1
     assert first_body["group_snapshots"][0]["group_id"] == "semiconductors"
     report = first_body["report"]
-    assert report["schema_version"] == "urus.observation_report.v1"
+    assert report["schema_version"] == "urus.observation_report.v2"
     assert report["mode"] == "deterministic-only"
     assert report["group_rankings"][0]["group_id"] == "semiconductors"
     assert {item["symbol"] for item in report["anomalies"]["leaders"]} <= {"INTC", "AMD"}
@@ -175,6 +666,13 @@ def test_observation_group_version_and_run_are_idempotent(client) -> None:
     assert set(report["opportunity_lanes"]) == {"confirmed", "near_confirmation", "forming"}
     assert set(report["risk_lanes"]) == {"invalidated", "bearish"}
     assert report["content_sha256"]
+
+    listed = client.get("/api/observation/runs?limit=1")
+    assert listed.status_code == 200, listed.text
+    assert listed.json()[0]["run_id"] == first_body["run_id"]
+    listed_detail = client.get(f"/api/observation/runs/{listed.json()[0]['run_id']}")
+    assert listed_detail.status_code == 200, listed_detail.text
+    assert listed_detail.json()["run_id"] == first_body["run_id"]
 
     indicator_catalog = client.get("/api/observation/indicator-catalog")
     assert indicator_catalog.status_code == 200
@@ -525,7 +1023,7 @@ def test_cross_section_exposes_previous_trading_session_comparison(client) -> No
     assert "previous_action" in strategy_row
 
 
-def test_cross_section_rejects_previous_strategy_implementation_mismatch(client) -> None:
+def test_cross_section_starts_new_strategy_comparison_chain_after_implementation_change(client) -> None:
     cutoff = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
     session_dates = completed_session_dates(cutoff, "XNYS", count=261)
     with client.app.state.session_factory() as session:
@@ -593,8 +1091,36 @@ def test_cross_section_rejects_previous_strategy_implementation_mismatch(client)
     projection = client.get(
         f"/api/observation/runs/{current_run.json()['run_id']}/strategies/trend_momentum_v1"
     )
-    assert projection.status_code == 409, projection.text
-    assert projection.json()["error"]["code"] == "cross_section_strategy_version_conflict"
+    assert projection.status_code == 200, projection.text
+    projection_body = projection.json()
+    assert projection_body["comparison"]["status"] == "unavailable"
+    assert projection_body["comparison"]["previous_trading_date"] is None
+    assert projection_body["comparison"]["available_group_count"] == 0
+    assert all(row["previous_trading_date"] is None for row in projection_body["rows"])
+
+    current_snapshot_id = current_run.json()["group_snapshots"][0]["snapshot_id"]
+    with client.app.state.session_factory() as session:
+        snapshot = session.get(GroupDailySnapshotModel, current_snapshot_id)
+        assert snapshot is not None
+        payload = dict(snapshot.payload_json)
+        decisions = []
+        for item in payload.get("strategy_decisions", []):
+            updated = dict(item)
+            strategy = dict(updated.get("strategy") or {})
+            if strategy.get("name") == "trend_momentum_v1":
+                strategy["implementation_sha256"] = "mismatched-current-hash"
+                updated["strategy"] = strategy
+            decisions.append(updated)
+        assert decisions
+        payload["strategy_decisions"] = decisions
+        snapshot.payload_json = payload
+        session.commit()
+
+    current_projection = client.get(
+        f"/api/observation/runs/{current_run.json()['run_id']}/strategies/trend_momentum_v1"
+    )
+    assert current_projection.status_code == 409, current_projection.text
+    assert current_projection.json()["error"]["code"] == "cross_section_strategy_version_conflict"
 
 
 def test_refresh_missing_bars_does_not_backdate_collection_time(client) -> None:
@@ -896,3 +1422,117 @@ def test_relative_strength_projection_rejects_mixed_benchmarks(client) -> None:
     )
     assert projection.status_code == 409
     assert projection.json()["error"]["code"] == "cross_section_benchmark_conflict"
+
+
+def _report_rank_row(
+    group_id: str,
+    relative_20d: float | None,
+    expected_tracking_move_20d: float | None,
+    *,
+    rank_eligible: bool = True,
+) -> dict:
+    return {
+        "group_id": group_id,
+        "group_name": group_id,
+        "snapshot_id": f"snapshot-{group_id}",
+        "decision_ids": [f"decision-{group_id}"],
+        "rank_eligible": rank_eligible,
+        "relative_20d": relative_20d,
+        "expected_tracking_move_20d": expected_tracking_move_20d,
+    }
+
+
+def test_rank_observation_groups_requires_five_eligible_groups_and_is_order_invariant() -> None:
+    eligible = [
+        _report_rank_row(f"g{index}", float(index), 1.0)
+        for index in range(1, 6)
+    ]
+    rows = eligible + [_report_rank_row("ineligible", 100.0, 1.0, rank_eligible=False)]
+
+    ranked = rank_observation_groups(rows)
+    reversed_ranked = rank_observation_groups(list(reversed(rows)))
+
+    assert [item["group_id"] for item in ranked] == ["g1", "g2", "g3", "g4", "g5"]
+    assert "ineligible" not in {item["group_id"] for item in ranked}
+    normalized = {item["group_id"]: item["rank_normalized"] for item in ranked}
+    assert normalized == {"g1": -1.0, "g2": -0.5, "g3": 0.0, "g4": 0.5, "g5": 1.0}
+    assert normalized == {
+        item["group_id"]: item["rank_normalized"] for item in reversed_ranked
+    }
+    assert rank_observation_groups(eligible[:4]) == []
+
+
+def test_rank_observation_groups_uses_bounded_relative_efficiency_and_deduplicates() -> None:
+    rows = [
+        _report_rank_row("fast", 2.0, 1.0),
+        _report_rank_row("floor", 1.0, 0.1),
+        _report_rank_row("missing-relative", None, 1.0),
+        _report_rank_row("missing-move", 2.0, None),
+        _report_rank_row("fifth", 0.5, 1.0),
+    ]
+    duplicated = rows + [dict(rows[0])]
+
+    baseline = rank_observation_groups(rows)
+    with_duplicate = rank_observation_groups(duplicated)
+    baseline_by_group = {item["group_id"]: item for item in baseline}
+    duplicate_by_group = {item["group_id"]: item for item in with_duplicate}
+
+    assert len(with_duplicate) == len(baseline) == 5
+    assert duplicate_by_group.keys() == baseline_by_group.keys()
+    assert duplicate_by_group["fast"] == baseline_by_group["fast"]
+    assert duplicate_by_group["fast"]["relative_efficiency"] == pytest.approx(2.0)
+    assert duplicate_by_group["floor"]["relative_efficiency"] == pytest.approx(2.0)
+    assert duplicate_by_group["missing-relative"]["relative_efficiency"] is None
+    assert duplicate_by_group["missing-move"]["relative_efficiency"] is None
+
+
+def _v2_report_snapshot(group_id: str, phase: str, category: str) -> dict:
+    return {
+        "group_id": group_id,
+        "snapshot_id": f"snapshot-{group_id}",
+        "dataset_id": "dataset-report-v2",
+        "status": "succeeded",
+        "payload": {
+            "group": {"group_id": group_id, "display_name": group_id.title()},
+            "features": {
+                "valid_symbol_count": 5,
+                "returns_percent": {"20d": {"median": 2.0}},
+                "relative_strength": {"median_excess_20d": 1.0},
+                "breadth": {"above_ma20": 0.8},
+            },
+            "changes": {
+                "median_20d_delta_percent": 0.2,
+                "relative_20d_delta_percent": 0.1,
+                "breadth_ma20_delta": 0.1,
+            },
+            "quality": {"status": "ok", "warnings": []},
+            "group_decision": {
+                "state": "broad_strength" if "strength" in phase else "broad_weakness",
+                "phase": phase,
+                "category": category,
+                "rank_eligible": True,
+                "stance": "constructive",
+                "action": "prioritize",
+            },
+        },
+    }
+
+
+def test_observation_report_v2_buckets_themes_and_keeps_legacy_fields() -> None:
+    report = build_observation_report(
+        run_id="run-report-v2",
+        trading_date="2026-08-28",
+        snapshots=[
+            _v2_report_snapshot("leaders", "broad_strength_stable", "leader"),
+            _v2_report_snapshot("deteriorating", "broad_strength_deteriorating", "deteriorating"),
+            _v2_report_snapshot("reversal", "broad_weakness_improving", "reversal_watch"),
+        ],
+    )
+
+    assert report["schema_version"] == "urus.observation_report.v2"
+    assert {item["group_id"] for item in report["leading_themes"]} == {"leaders"}
+    assert {item["group_id"] for item in report["deteriorating_themes"]} == {"deteriorating"}
+    assert {item["group_id"] for item in report["reversal_themes"]} == {"reversal"}
+    assert "group_rankings" in report
+    assert "improving_groups" in report
+    assert "deteriorating_groups" in report

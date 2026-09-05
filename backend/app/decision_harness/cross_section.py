@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import isfinite
 from statistics import median
 from typing import Any
@@ -198,13 +198,34 @@ class CrossSectionService:
         rows: list[dict[str, Any]] = []
         groups: list[dict[str, Any]] = []
         transitions: list[dict[str, Any]] = []
+        effective_contexts: list[_SnapshotContext] = []
+        strategy_version_reset_groups: list[str] = []
 
         for context in contexts:
             group = _group_identity(context.snapshot, context.payload)
             current_decisions = _strategy_map(context.payload, strategy_id)
             _ensure_strategy_identity(definition, current_decisions, group["group_id"])
             previous_decisions = _strategy_map(context.previous_payload, strategy_id)
-            _ensure_strategy_identity(definition, previous_decisions, group["group_id"])
+            previous_matches = _ensure_strategy_identity(
+                definition,
+                previous_decisions,
+                group["group_id"],
+                allow_mismatch=True,
+            )
+            effective_context = context
+            if not previous_matches:
+                # A strategy implementation change starts a new comparison
+                # chain.  Keep the current snapshot strict, but never compare
+                # it with a previous snapshot produced by another strategy
+                # implementation.
+                previous_decisions = {}
+                effective_context = replace(
+                    context,
+                    previous_snapshot=None,
+                    previous_payload=None,
+                )
+                strategy_version_reset_groups.append(group["group_id"])
+            effective_contexts.append(effective_context)
             group_rows: list[dict[str, Any]] = []
             for symbol_row in context.payload.get("symbols") or []:
                 symbol = str(symbol_row.get("symbol") or "")
@@ -213,7 +234,7 @@ class CrossSectionService:
                 row = _strategy_row(
                     definition,
                     group,
-                    context,
+                    effective_context,
                     symbol_row,
                     decision,
                     previous_decision,
@@ -222,25 +243,32 @@ class CrossSectionService:
                 rows.append(row)
                 if row["transition"] is not None:
                     transitions.append(_transition_row(row))
-            groups.append(_group_summary(group, context, group_rows, value_key="score"))
+            groups.append(_group_summary(group, effective_context, group_rows, value_key="score"))
 
         rows.sort(key=_row_sort_key)
         _attach_attention_features(rows, kind="strategy")
         transitions.sort(key=_transition_sort_key)
-        payload = _base_projection(run, contexts, failed_groups, lens={
+        payload = _base_projection(run, effective_contexts, failed_groups, lens={
             "type": "strategy",
             "id": definition["id"],
             "version": definition.get("version"),
             "feature_version": definition.get("feature_version"),
             "implementation_sha256": definition.get("implementation_sha256"),
         })
+        if strategy_version_reset_groups:
+            payload["comparison"]["warnings"] = [
+                "前一交易日策略实现版本不同，已从新的策略比较链开始；当前快照仍按当前目录严格校验。"
+            ]
+            payload["comparison"]["strategy_version_reset_group_ids"] = sorted(
+                set(strategy_version_reset_groups)
+            )
         payload.update(
             {
                 "strategy": definition,
                 "groups": groups,
                 "rows": rows,
                 "transitions": transitions,
-                "quality": _projection_quality(run, contexts, failed_groups, rows),
+                "quality": _projection_quality(run, effective_contexts, failed_groups, rows),
             }
         )
         return _with_digest(payload)
@@ -458,12 +486,16 @@ def _strategy_map(payload: dict[str, Any] | None, strategy_id: str) -> dict[str,
 
 
 def _ensure_strategy_identity(
-    definition: dict[str, Any], decisions: dict[str, dict[str, Any]], group_id: str
-) -> None:
+    definition: dict[str, Any],
+    decisions: dict[str, dict[str, Any]],
+    group_id: str,
+    *,
+    allow_mismatch: bool = False,
+) -> bool:
     """Never present a historical decision under a different implementation."""
 
     if not decisions:
-        return
+        return True
     expected = (
         str(definition["id"]),
         str(definition.get("version") or ""),
@@ -478,12 +510,15 @@ def _ensure_strategy_identity(
         for item in decisions.values()
     }
     if observed != {expected}:
+        if allow_mismatch:
+            return False
         raise AppError(
             "冻结 Run 中的策略实现版本与当前策略目录不一致，不能静默混合。",
             code="cross_section_strategy_version_conflict",
             status_code=409,
             details={"strategy_id": definition["id"], "group_id": group_id, "expected": expected, "observed": sorted(observed)},
         )
+    return True
 
 
 def _strategy_row(

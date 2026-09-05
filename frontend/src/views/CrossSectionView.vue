@@ -810,6 +810,9 @@ onMounted(() => { void loadPage() })
               <span data-state="stage"><i></i>阶段与 score 分开显示</span>
               <span data-state="comparison"><i></i>实心标记当前 · 暗标记前一交易日</span>
             </div>
+            <p v-if="comparison.warnings?.length" class="cross-section-warning cross-section-comparison-warning" role="status">
+              {{ comparison.warnings.join('；') }}
+            </p>
           </div>
           <div class="cross-section-provenance">
             <span>VERSION <b>{{ projection.lens.version ?? '—' }}</b></span>

@@ -110,7 +110,8 @@ export interface GroupDailySnapshot {
     heatmap: Array<Record<string, any>>
     small_multiples: Array<{ symbol: string; points: Array<{ time: string; value: number | null; ma20: number | null; ma50: number | null }>; return_20d: number | null; trend: string | null }>
   }
-  group_decision: { state: string; stance: string; action: string; reasons: string[]; participation?: number | null; leader_concentration?: number | null }
+  group_decision: { state: string; level?: string; impulse?: string; phase?: string; setup?: string; category?: string; stance: string; action: string; reasons: string[]; participation?: number | null; setup_participation?: number | null; leader_concentration?: number | null; evidence_strength?: string; rank_eligible?: boolean; sample_support?: Record<string, any> }
+  symbol_setups?: Record<string, { symbol: string; candidate_count: number; primary_setup: Record<string, any> | null; alternatives: Array<Record<string, any>> }>
   group_strategy_decisions: Array<Record<string, any>>
   changes: {
     previous_trading_date: string | null
@@ -140,6 +141,10 @@ export interface ObservationReport {
   }
   summary: Record<string, number>
   group_rankings: Array<Record<string, any>>
+  ranking_status?: string
+  leading_themes?: Array<Record<string, any>>
+  deteriorating_themes?: Array<Record<string, any>>
+  reversal_themes?: Array<Record<string, any>>
   improving_groups: Array<Record<string, any>>
   deteriorating_groups: Array<Record<string, any>>
   anomalies: { leaders: Array<Record<string, any>>; laggards: Array<Record<string, any>> }

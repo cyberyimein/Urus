@@ -14,6 +14,7 @@ const props = withDefaults(defineProps<{
   label?: string
   disabled?: boolean
   compact?: boolean
+  collapseHistory?: boolean
   preflightOnMount?: boolean
   triggerClass?: string
 }>(), {
@@ -21,6 +22,7 @@ const props = withDefaults(defineProps<{
   label: 'AI 评估',
   disabled: false,
   compact: false,
+  collapseHistory: false,
   preflightOnMount: false,
   triggerClass: '',
 })
@@ -30,6 +32,7 @@ const stopConfirmVisible = ref(false)
 const route = useRoute()
 const router = useRouter()
 const { preflight, run, history, loading, error, prepare, submit, restore, stop, rerun, reset } = useRemoteDecision()
+const historyExpanded = ref(!props.collapseHistory)
 const blocker = computed(() => preflight.value?.blockers[0]?.message ?? '')
 const returnTo = computed(() => {
   const query = { ...route.query }
@@ -105,6 +108,10 @@ function historyStatus(status: string) {
   return labels[status] ?? status
 }
 
+function toggleHistory() {
+  historyExpanded.value = !historyExpanded.value
+}
+
 async function confirmStop() {
   stopConfirmVisible.value = false
   await stop()
@@ -132,10 +139,15 @@ async function restoreRun() {
 watch(() => [props.disabled, props.intentType, props.source], () => {
   confirmVisible.value = false
   stopConfirmVisible.value = false
+  historyExpanded.value = !props.collapseHistory
   reset()
   void refreshPreflight()
   void restoreRun()
 }, { deep: true, immediate: true })
+
+watch(() => props.collapseHistory, (collapsed) => {
+  historyExpanded.value = !collapsed
+})
 
 defineExpose({ open })
 </script>
@@ -159,7 +171,18 @@ defineExpose({ open })
         <a v-for="card in run.result.notable_cards.slice(0, 5)" :key="String(card.card_id)" :href="`#card-${String(card.card_id)}`"><b>#{{ card.rank }}</b><strong>{{ card.symbol ?? card.card_id }}</strong><span>{{ card.why_notable ?? card.finding_type ?? '值得关注' }}</span></a>
       </div>
     </article>
-    <article v-if="historyRuns.length" class="remote-decision-history">
+    <template v-if="historyRuns.length && props.collapseHistory">
+      <button v-if="!historyExpanded" class="remote-history-toggle" type="button" @click="toggleHistory">查看历史（{{ history.length }}）</button>
+      <article v-else class="remote-decision-history">
+        <header><span class="section-kicker">DECISION HISTORY</span><strong>最近 {{ history.length }} 次</strong><button class="remote-history-toggle" type="button" @click="toggleHistory">收起历史</button></header>
+        <RouterLink v-for="item in historyRuns" :key="item.local_run_id" class="remote-history-item" :to="historyRoute(item)">
+          <div><strong>{{ historyDate(item) }}</strong><small>{{ item.workflow_ref }} · {{ historyStatus(item.status) }}</small></div>
+          <span>{{ item.result ? resultLabel(item.result) : item.safe_error_message ?? '暂无结果' }}</span>
+          <b>→</b>
+        </RouterLink>
+      </article>
+    </template>
+    <article v-else-if="historyRuns.length" class="remote-decision-history">
       <header><span class="section-kicker">DECISION HISTORY</span><strong>最近 {{ history.length }} 次</strong></header>
       <RouterLink v-for="item in historyRuns" :key="item.local_run_id" class="remote-history-item" :to="historyRoute(item)">
         <div><strong>{{ historyDate(item) }}</strong><small>{{ item.workflow_ref }} · {{ historyStatus(item.status) }}</small></div>
@@ -213,6 +236,8 @@ defineExpose({ open })
 .remote-decision-history { padding: 14px; border: 1px solid rgba(120, 150, 184, .24); border-radius: 11px; background: rgba(15, 31, 51, .55); }
 .remote-decision-history header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
 .remote-decision-history header strong { color: #91a4c0; font-size: 11px; font-weight: 500; }
+.remote-history-toggle { border: 0; background: transparent; color: #9fe3c8; cursor: pointer; font-size: 12px; padding: 3px 0; text-align: left; }
+.remote-decision-history header .remote-history-toggle { margin-left: auto; }
 .remote-history-item { display: grid; grid-template-columns: 112px 1fr 18px; align-items: center; gap: 8px; padding: 9px 0; border-top: 1px solid rgba(130, 154, 189, .12); color: inherit; text-decoration: none; }
 .remote-history-item:hover { color: #b8e9d4; }
 .remote-history-item div { display: grid; gap: 3px; }

@@ -21,7 +21,10 @@ const stateLabels: Record<string, string> = {
   broad_strength: '广泛走强', broad_weakness: '广泛走弱', narrow_leadership: '少数领涨',
   mixed: '内部混合', insufficient_data: '数据不足', confirmed: '已确认',
   invalidated: '已失效', armed: '接近确认', near_confirmation: '接近确认',
-  watching: '形成中', forming: '形成中', bearish: '偏空',
+  watching: '形成中', forming: '形成中', bearish: '弱势 / 多头回避',
+}
+const impulseLabels: Record<string, string> = {
+  improving: '改善', deteriorating: '恶化', stable: '稳定', unavailable: '暂无比较',
 }
 
 function formatPercent(value: unknown) {
@@ -143,6 +146,14 @@ onMounted(() => { void load() })
           <div class="observation-card-head"><div><span class="section-kicker">UNIVERSE PROVENANCE</span><h3>本次运行的关注列表来源</h3></div><small>{{ report.provenance?.universe_freshness ?? selectedRun.universe_freshness }}</small></div>
           <p class="observation-muted-row">{{ report.provenance?.universe_source_url ?? selectedRun.universe_source_url ?? '本地 Universe' }} · Revision {{ report.provenance?.universe_revision_id ?? selectedRun.universe_revision_id ?? '—' }}</p>
         </section>
+        <section class="observation-run-summary observation-theme-summary">
+          <div class="observation-section-heading"><div><span class="section-kicker">DECISION PHASES</span><h2>领先 / 恶化 / 潜在反转主题</h2></div><small>强弱 × 边际变化 × setup</small></div>
+          <div class="observation-three-columns">
+            <article class="observation-card"><h3 class="positive">领先主题</h3><p v-if="!report.leading_themes?.length" class="observation-muted-row">暂无满足 setup 的领先主题。</p><RouterLink v-for="item in report.leading_themes ?? []" :key="item.group_id" class="observation-list-row" :to="`/groups/${item.group_id}`"><strong>{{ item.group_name }}</strong><span>{{ item.phase }}</span></RouterLink></article>
+            <article class="observation-card"><h3 class="negative">恶化主题</h3><p v-if="!report.deteriorating_themes?.length" class="observation-muted-row">暂无强势恶化主题。</p><RouterLink v-for="item in report.deteriorating_themes ?? []" :key="item.group_id" class="observation-list-row" :to="`/groups/${item.group_id}`"><strong>{{ item.group_name }}</strong><span>{{ item.phase }}</span></RouterLink></article>
+            <article class="observation-card"><h3>潜在反转主题</h3><p v-if="!report.reversal_themes?.length" class="observation-muted-row">暂无带 setup 的改善弱势组。</p><RouterLink v-for="item in report.reversal_themes ?? []" :key="item.group_id" class="observation-list-row" :to="`/groups/${item.group_id}`"><strong>{{ item.group_name }}</strong><span>{{ item.phase }}</span></RouterLink></article>
+          </div>
+        </section>
         <section class="observation-run-visuals">
           <article class="observation-card observation-momentum-map">
             <div class="observation-card-head"><div><span class="section-kicker">GROUP MOMENTUM MAP</span><h3>组动量与变化</h3></div><small>相对强弱 × 日变化</small></div>
@@ -169,7 +180,8 @@ onMounted(() => { void load() })
 
         <section class="observation-card observation-ranking-table">
           <div class="observation-card-head"><div><span class="section-kicker">GROUP RANKING</span><h3>组强弱排行</h3></div><small>透明技术分；不是概率</small></div>
-          <RouterLink v-for="(item, index) in report.group_rankings" :key="item.group_id" class="observation-ranking-row" :to="`/groups/${item.group_id}`"><b>{{ index + 1 }}</b><strong>{{ item.group_name }}</strong><span>{{ stateLabels[item.state] ?? item.state }}</span><span>20D {{ formatPercent(item.median_20d) }}</span><span>RS {{ formatPercent(item.relative_20d) }}</span><span>MA20 {{ formatRatio(item.breadth_ma20) }}</span></RouterLink>
+          <p v-if="report.ranking_status === 'unavailable' || report.group_rankings.every(item => item.ranking_status === 'unavailable')" class="observation-muted-row">样本不足，截面排名不可用；仅展示组决策阶段。</p>
+          <RouterLink v-for="(item, index) in report.group_rankings" :key="item.group_id" class="observation-ranking-row" :to="`/groups/${item.group_id}`"><b>{{ index + 1 }}</b><strong>{{ item.group_name }}</strong><span>{{ stateLabels[item.state] ?? item.state }} · {{ impulseLabels[item.impulse] ?? item.impulse ?? '—' }}</span><span>20D {{ formatPercent(item.median_20d) }}</span><span>RS {{ formatPercent(item.relative_20d) }}</span><span>MA20 {{ formatRatio(item.breadth_ma20) }}</span></RouterLink>
         </section>
 
         <section class="observation-two-columns observation-anomalies">
@@ -178,12 +190,12 @@ onMounted(() => { void load() })
         </section>
 
         <section class="observation-lanes">
-          <article class="observation-card"><div class="observation-card-head"><div><span class="section-kicker">OPPORTUNITY LANES</span><h3>机会泳道</h3></div></div><div v-for="(items, lane) in report.opportunity_lanes" :key="lane" class="observation-lane"><strong>{{ stateLabels[String(lane)] ?? lane }}</strong><span v-if="!items.length">—</span><RouterLink v-for="item in items" :key="item.decision_id" :to="instrumentLink(item)">{{ item.symbol }} · {{ item.strategy_name }}</RouterLink></div></article>
+          <article class="observation-card"><div class="observation-card-head"><div><span class="section-kicker">OPPORTUNITY LANES</span><h3>机会泳道</h3></div></div><div v-for="(items, lane) in report.opportunity_lanes" :key="lane" class="observation-lane"><strong>{{ stateLabels[String(lane)] ?? lane }}</strong><span v-if="!items.length">—</span><RouterLink v-for="item in items" :key="item.decision_id" :to="instrumentLink(item)">{{ item.symbol }} · {{ item.strategy_name }}<small v-if="item.setup_plan?.confirmation_price != null">触发 {{ item.setup_plan.confirmation_operator }} {{ item.setup_plan.confirmation_price }} · {{ item.setup_plan.remaining_atr ?? '—' }} ATR · 失效 {{ item.setup_plan.invalidation_price ?? '—' }}</small></RouterLink></div></article>
           <article class="observation-card"><div class="observation-card-head"><div><span class="section-kicker">RISK LANES</span><h3>风险泳道</h3></div></div><div v-for="(items, lane) in report.risk_lanes" :key="lane" class="observation-lane"><strong>{{ stateLabels[String(lane)] ?? lane }}</strong><span v-if="!items.length">—</span><RouterLink v-for="item in items" :key="item.decision_id" :to="instrumentLink(item)">{{ item.symbol }} · {{ item.strategy_name }}</RouterLink></div></article>
         </section>
 
         <section v-if="report.strategy_conflicts.length || report.quality_issues.length" class="observation-two-columns">
-          <article class="observation-card"><div class="observation-card-head"><div><span class="section-kicker">STRATEGY CONFLICTS</span><h3>策略冲突</h3></div><small>{{ report.strategy_conflicts.length }}</small></div><RouterLink v-for="item in report.strategy_conflicts" :key="`${item.group_id}:${item.symbol}`" class="observation-list-row" :to="instrumentLink(item)"><strong>{{ item.symbol }} · {{ item.group_name }}</strong><span>{{ item.summary }}</span></RouterLink><p v-if="!report.strategy_conflicts.length" class="observation-muted-row">未发现方向冲突。</p></article>
+          <article class="observation-card"><div class="observation-card-head"><div><span class="section-kicker">STRATEGY CONFLICTS</span><h3>策略冲突</h3></div><small>{{ report.strategy_conflicts.length }}</small></div><RouterLink v-for="item in report.strategy_conflicts" :key="`${item.group_id}:${item.symbol}`" class="observation-list-row" :to="instrumentLink(item)"><strong>{{ item.symbol }} · {{ (item.group_names ?? [item.group_name]).join(' / ') }}</strong><span>{{ item.summary }}</span></RouterLink><p v-if="!report.strategy_conflicts.length" class="observation-muted-row">未发现方向冲突。</p></article>
           <article class="observation-card"><div class="observation-card-head"><div><span class="section-kicker">DATA QUALITY</span><h3>数据问题</h3></div><small>{{ report.quality_issues.length }}</small></div><p v-for="(item, index) in report.quality_issues" :key="index" class="observation-list-row"><strong>{{ item.symbol ?? item.group_id }}</strong><span>{{ item.status }} · {{ item.message }}</span></p></article>
         </section>
       </template>

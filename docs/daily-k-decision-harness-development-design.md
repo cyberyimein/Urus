@@ -157,6 +157,19 @@ OpenD 的历史返回通过 `history_snapshots` 进入 `DailyEvidenceRepository.
 
 页面刷新不能自动重新提交；重跑必须显式创建新的 Remote Decision Run。远端结果不能修改 Dataset、Chart Projection、策略或期权事实。
 
+Deterministic Synthesis 先在每个 symbol 内部合成，再保留数据集级横截面总览。个股页面读取对应的 `symbol_summaries[symbol]`；Group Daily Snapshot 只投影组内 symbol summaries。不同标的之间的一多一空属于横截面分化，不得显示成某个个股自身的策略冲突。
+
+Observation Report 的机会与风险泳道按 `decision_id` 去重，并通过 `group_ids` 保留重叠观察组归属。bearish Strategy Decision 只能进入风险泳道；confirmed 只有在非 bearish 时才进入机会泳道。
+
+### 7.1 P1 决策阶段、Setup 与排名
+
+- Strategy Decision v2 增加机器可读 `setup_plan`，冻结方向、阶段、触发操作符/价格、观察价、剩余价格/百分比/ATR，以及失效操作符/价格/距离。
+- Symbol Setup Projection 按 `decision_id` 去重，为每个标的稳定选择 primary setup；前端只展示该投影，不重新计算价位。
+- Group Daily Snapshot v4 用 Group Decision Phase 合并 `level × impulse × setup`，输出 `leader`、`deteriorating`、`reversal_watch` 等 category。
+- Sample Support 对单标的和少于 4 个有效成员的组标记低证据、取消排名资格，并把动作上限限制为 `watch`。
+- Observation Report v2 输出领先主题、恶化主题和潜在反转主题；旧 `group_rankings`、`improving_groups`、`deteriorating_groups` 暂时保留兼容。
+- Cross-sectional Group Ranking 仅在至少 5 个合格组时可用。20 日超额收益先除以预期 20 日 tracking move，再与 MA20/MA50 广度、`1 - leader_concentration` 一起做 mid-rank 标准化到 `[-1, 1]`。缺失因子不填零。
+
 ## 8. 前端信息架构
 
 - `/instruments/:symbol` 是个股工作区，包含价格、技术证据、策略结果和期权结构；
@@ -187,6 +200,7 @@ OpenD 的历史返回通过 `history_snapshots` 进入 `DailyEvidenceRepository.
 | 收市观察编排 | `backend/app/services/observation.py` |
 | 日线冻结 | `backend/app/decision_harness/market_evidence.py` |
 | 组快照 | `backend/app/decision_harness/group_observation.py` |
+| Setup、组阶段与排名 | `backend/app/decision_harness/setup_projection.py`、`backend/app/decision_harness/group_phase.py`、`backend/app/decision_harness/group_ranking.py` |
 | 期权采集 | `backend/app/services/options_collection.py`、`backend/app/integrations/moomoo_options.py` |
 | 期权计算 | `backend/app/analytics/options.py`、`backend/app/analytics/options_volatility.py` |
 | 历史额度 | `backend/app/services/history_quota.py`、`backend/app/services/market_data_collection.py` |

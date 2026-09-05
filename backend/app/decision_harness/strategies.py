@@ -10,9 +10,10 @@ from uuid import uuid4
 
 from app.analytics.technical import calculate_relative_strength, calculate_technical_indicators
 from app.decision_harness.contracts import content_sha256
+from app.decision_harness.setup_projection import build_setup_plan, project_symbol_setups
 
 
-STRATEGY_DECISION_SCHEMA = "urus.strategy_decision.v1"
+STRATEGY_DECISION_SCHEMA = "urus.strategy_decision.v2"
 CONFIDENCE_TYPE = "heuristic_unvalidated"
 HORIZON = {"unit": "trading_day", "value": 5}
 STRATEGY_NAMES = (
@@ -150,6 +151,7 @@ class StrategyAdapter:
         confirmation_conditions: list[str],
         invalidation_conditions: list[str],
         visual_anchors: list[dict[str, Any]],
+        setup_plan: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         strategy = {
             "name": self.name,
@@ -176,6 +178,7 @@ class StrategyAdapter:
             "confidence": None,
             "confidence_type": CONFIDENCE_TYPE,
             "setup_progress": setup_progress,
+            "setup_plan": setup_plan,
             "reasons": reasons,
             "risks": risks,
             "confirmation_conditions": confirmation_conditions,
@@ -310,6 +313,16 @@ class TrendMomentumStrategy(StrategyAdapter):
             confirmation_conditions=["价格维持在 MA20/MA50 方向一致的一侧。", "MACD 柱体不反向恶化。"],
             invalidation_conditions=["收盘跌破 MA50（多头）或重新站上 MA50（空头）。", "相对基准持续落后。"],
             visual_anchors=anchors,
+            setup_plan=_directional_price_setup(
+                context=context,
+                direction="bullish" if score >= 0 else "bearish",
+                stage=stage,
+                trigger=trigger,
+                trigger_reference="ma20",
+                invalidation=invalidation,
+                invalidation_reference="ma50",
+                atr=atr,
+            ),
         )
 
 
@@ -430,6 +443,16 @@ class MeanReversionStrategy(StrategyAdapter):
             confirmation_conditions=["价格重新收回布林带内侧。", "RSI14 方向与价格修复同步。"],
             invalidation_conditions=["继续沿趋势方向扩张并伴随放量。", "价格远离中轨后未出现反转确认。"],
             visual_anchors=anchors,
+            setup_plan=_directional_price_setup(
+                context=context,
+                direction="bullish" if score >= 0 else "bearish",
+                stage=stage,
+                trigger=middle,
+                trigger_reference="bollinger_middle_20",
+                invalidation=lower if score >= 0 else upper,
+                invalidation_reference="bollinger_outer_band_20_2",
+                atr=atr,
+            ),
         )
 
 
@@ -631,6 +654,7 @@ class QualityLeftSideReversalStrategy(StrategyAdapter):
             if support and atr is not None
             else None
         )
+        confirmation = float(support["upper"]) if support else close
         return self._decision(
             context,
             status="ok",
@@ -661,6 +685,18 @@ class QualityLeftSideReversalStrategy(StrategyAdapter):
                 "人工或基本面资格审查判定投资逻辑已破坏。",
             ],
             visual_anchors=anchors,
+            setup_plan=build_setup_plan(
+                direction=stance,
+                stage=stage,
+                observation_price=close,
+                confirmation_price=confirmation,
+                confirmation_operator=">=",
+                confirmation_reference=str(support["label"]) if support else "latest_close",
+                invalidation_price=invalidation,
+                invalidation_operator="<=",
+                invalidation_reference="support_lower_minus_0.5_atr",
+                atr=atr,
+            ),
         )
 
 
@@ -785,6 +821,16 @@ class BreakoutVolumeStrategy(StrategyAdapter):
             confirmation_conditions=["收盘维持在突破位外侧。", "成交量参与不快速衰减。"],
             invalidation_conditions=["收盘重新回到突破位内侧。", "突破后出现放量反向 K 线。"],
             visual_anchors=anchors,
+            setup_plan=_directional_price_setup(
+                context=context,
+                direction="bullish" if score >= 0 else "bearish",
+                stage=stage,
+                trigger=trigger,
+                trigger_reference="prior_20d_extreme",
+                invalidation=invalidation,
+                invalidation_reference="opposite_prior_20d_extreme",
+                atr=atr,
+            ),
         )
 
 
@@ -823,6 +869,27 @@ class RelativeStrengthRotationStrategy(StrategyAdapter):
         score = _bounded_score(score)
         stance, action = _stance_action(score)
         relative_series_id = f"relative_performance_vs_{context.benchmark}"
+        if stance == "bullish":
+            confirmation_conditions = [
+                f"相对 {context.benchmark} 的 5 日超额收益保持为正，且 20 日超额收益同向。"
+            ]
+            invalidation_conditions = [
+                f"相对 {context.benchmark} 的 5 日超额收益转负并持续。"
+            ]
+        elif stance == "bearish":
+            confirmation_conditions = [
+                f"相对 {context.benchmark} 的 5 日超额收益保持为负，且 20 日超额收益同向。"
+            ]
+            invalidation_conditions = [
+                f"相对 {context.benchmark} 的 5 日超额收益转正并持续。"
+            ]
+        else:
+            confirmation_conditions = [
+                f"相对 {context.benchmark} 的 5 日和 20 日超额收益形成同向持续。"
+            ]
+            invalidation_conditions = [
+                f"相对 {context.benchmark} 的 5 日和 20 日超额收益再次分化。"
+            ]
         return self._decision(
             context,
             status="ok" if excess else "not_applicable",
@@ -841,8 +908,8 @@ class RelativeStrengthRotationStrategy(StrategyAdapter):
                 f"相对强弱只表达相对 {context.benchmark} 的表现，不等于绝对上涨。",
                 "短样本相对强弱可能受单日异常收益影响。",
             ],
-            confirmation_conditions=[f"相对 {context.benchmark} 的 5 日和 20 日超额收益保持同向。"],
-            invalidation_conditions=[f"相对 {context.benchmark} 的 5 日超额收益转负并持续。"],
+            confirmation_conditions=confirmation_conditions,
+            invalidation_conditions=invalidation_conditions,
             visual_anchors=(
                 [
                     _series_anchor(
@@ -983,6 +1050,63 @@ class StrategyRegistry:
 def deterministic_synthesis(
     dataset: dict[str, Any], decisions: list[dict[str, Any]], strategy_set_sha256: str
 ) -> dict[str, Any]:
+    summary = _decision_consensus(decisions)
+    decisions_by_symbol: dict[str, list[dict[str, Any]]] = {
+        str(symbol): [] for symbol in (dataset.get("scope") or {}).get("symbols") or []
+    }
+    for item in decisions:
+        symbol = str((item.get("scope") or {}).get("symbol") or item.get("symbol") or "")
+        if symbol:
+            decisions_by_symbol.setdefault(symbol, []).append(item)
+    symbol_summaries = {
+        symbol: {"symbol": symbol, **_decision_consensus(symbol_decisions)}
+        for symbol, symbol_decisions in sorted(decisions_by_symbol.items())
+    }
+
+    strategy_set: list[dict[str, Any]] = []
+    seen_strategies: set[tuple[str, str, str]] = set()
+    for item in decisions:
+        strategy = item["strategy"]
+        identity = (
+            str(strategy["name"]),
+            str(strategy["version"]),
+            str(strategy["implementation_sha256"]),
+        )
+        if identity in seen_strategies:
+            continue
+        seen_strategies.add(identity)
+        strategy_set.append(
+            {
+                "name": identity[0],
+                "version": identity[1],
+                "implementation_sha256": identity[2],
+            }
+        )
+
+    payload: dict[str, Any] = {
+        "schema_version": "urus.deterministic_synthesis.v1",
+        "dataset_id": dataset["dataset_id"],
+        "scope": dict(dataset["scope"]),
+        "strategy_set_sha256": strategy_set_sha256,
+        **summary,
+        "symbol_summaries": symbol_summaries,
+        "strategy_set": strategy_set,
+        "generated_at": datetime.now(UTC).isoformat(),
+    }
+    payload["content_sha256"] = content_sha256(
+        {key: value for key, value in payload.items() if key not in {"generated_at", "content_sha256"}}
+    )
+    return payload
+
+
+def _decision_consensus(decisions: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize decisions that share one explicit scope.
+
+    Dataset-level callers retain their cross-sectional summary, while
+    ``symbol_summaries`` use the same rules without allowing one symbol's
+    direction to become another symbol's conflict.
+    """
+
     usable = [
         item
         for item in decisions
@@ -1027,31 +1151,7 @@ def deterministic_synthesis(
         key=lambda item: abs(_number(item.get("score")) or 0),
         reverse=True,
     )
-    strategy_set: list[dict[str, Any]] = []
-    seen_strategies: set[tuple[str, str, str]] = set()
-    for item in decisions:
-        strategy = item["strategy"]
-        identity = (
-            str(strategy["name"]),
-            str(strategy["version"]),
-            str(strategy["implementation_sha256"]),
-        )
-        if identity in seen_strategies:
-            continue
-        seen_strategies.add(identity)
-        strategy_set.append(
-            {
-                "name": identity[0],
-                "version": identity[1],
-                "implementation_sha256": identity[2],
-            }
-        )
-
-    payload: dict[str, Any] = {
-        "schema_version": "urus.deterministic_synthesis.v1",
-        "dataset_id": dataset["dataset_id"],
-        "scope": dict(dataset["scope"]),
-        "strategy_set_sha256": strategy_set_sha256,
+    return {
         "consensus_state": consensus_state,
         "bullish_count": len(bullish),
         "bearish_count": len(bearish),
@@ -1062,13 +1162,7 @@ def deterministic_synthesis(
         "strongest_conflicting_strategy_ids": [item["decision_id"] for item in conflicting],
         "suggested_action": suggested_action,
         "conflict_summary": _conflict_summary(consensus_state, bullish, bearish, neutral),
-        "strategy_set": strategy_set,
-        "generated_at": datetime.now(UTC).isoformat(),
     }
-    payload["content_sha256"] = content_sha256(
-        {key: value for key, value in payload.items() if key not in {"generated_at", "content_sha256"}}
-    )
-    return payload
 
 
 def _build_context(dataset: dict[str, Any], chart: dict[str, Any], symbol: str) -> StrategyContext:
@@ -1171,6 +1265,33 @@ def _distance_atr(value: float | None, reference: float | None, atr: float | Non
     if value is None or reference is None or atr is None or atr <= 0:
         return None
     return abs(value - reference) / atr
+
+
+def _directional_price_setup(
+    *,
+    context: StrategyContext,
+    direction: str,
+    stage: str,
+    trigger: float | None,
+    trigger_reference: str,
+    invalidation: float | None,
+    invalidation_reference: str,
+    atr: float | None,
+) -> dict[str, Any]:
+    close = _number((context.latest or {}).get("close"))
+    bullish = direction == "bullish"
+    return build_setup_plan(
+        direction=direction,
+        stage=stage,
+        observation_price=close,
+        confirmation_price=trigger,
+        confirmation_operator=">=" if bullish else "<=",
+        confirmation_reference=trigger_reference,
+        invalidation_price=invalidation,
+        invalidation_operator="<=" if bullish else ">=",
+        invalidation_reference=invalidation_reference,
+        atr=atr,
+    )
 
 
 def _rounded(value: float | None) -> float | None:

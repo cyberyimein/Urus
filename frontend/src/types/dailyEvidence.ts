@@ -163,6 +163,23 @@ export interface StrategyDecision {
     bars_in_stage: number
     changed_from_previous_stage: boolean | null
   }
+  setup_plan?: {
+    direction: string
+    stage: string
+    confirmation_price: number | null
+    confirmation_operator: string | null
+    confirmation_reference?: string | null
+    observation_price: number | null
+    remaining_price: number | null
+    remaining_percent: number | null
+    remaining_atr: number | null
+    invalidation_price: number | null
+    invalidation_operator?: string | null
+    invalidation_reference?: string | null
+    invalidation_distance_price: number | null
+    invalidation_distance_percent: number | null
+    invalidation_distance_atr: number | null
+  } | null
   reasons: Array<{ code: string; detail: string }>
   risks: string[]
   confirmation_conditions: string[]
@@ -190,6 +207,7 @@ export interface DeterministicSynthesis {
   strongest_conflicting_strategy_ids?: string[]
   suggested_action?: StrategyAction
   conflict_summary?: string
+  symbol_summaries?: Record<string, DeterministicSynthesis>
   strategy_set?: Array<Record<string, string>>
   generated_at?: string
   content_sha256?: string

@@ -39,6 +39,8 @@ export interface CrossSectionComparison {
   group_count: number
   previous_snapshot_ids: string[]
   previous_dataset_ids: string[]
+  warnings?: string[]
+  strategy_version_reset_group_ids?: string[]
 }
 
 export interface CrossSectionRow {

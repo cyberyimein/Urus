@@ -87,6 +87,18 @@ const groupSubtitle = (group: WatchGroup) => {
   if (isIndicatorGroup(group)) return `${group.benchmark} benchmark · 自动生成`
   return `${group.benchmark} benchmark`
 }
+const initializeGroupExpansion = () => {
+  const selectedSectorExists = watchGroups.value.some((group) => (
+    !isIndicatorGroup(group) && group.symbols.includes(selectedSymbol.value)
+  ))
+  for (const group of watchGroups.value) {
+    if (expandedGroups[group.id] !== undefined) continue
+    const containsSelectedSymbol = group.symbols.includes(selectedSymbol.value)
+    expandedGroups[group.id] = containsSelectedSymbol && (
+      !isIndicatorGroup(group) || !selectedSectorExists
+    )
+  }
+}
 const selectedGroup = computed<WatchGroup>(() => sectorGroups.value.find((group) => group.symbols.includes(selectedSymbol.value))
   ?? indicatorGroups.value.find((group) => group.symbols.includes(selectedSymbol.value))
   ?? {
@@ -125,6 +137,15 @@ function latestSeriesValue(seriesId: string): number | null {
   return point?.value ?? null
 }
 
+function numericSeriesValues(seriesId: string, startsWith = false): number[] {
+  const item = projection.value?.instruments?.[selectedSymbol.value]?.series?.find((entry) => (
+    startsWith ? entry.series_id.startsWith(seriesId) : entry.series_id === seriesId
+  ))
+  return (item?.points ?? [])
+    .map((entry) => entry.value)
+    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
+}
+
 const ma20 = computed(() => latestSeriesValue('ma20'))
 const ma50 = computed(() => latestSeriesValue('ma50'))
 const ma200 = computed(() => latestSeriesValue('ma200'))
@@ -134,6 +155,18 @@ const relative = computed(() => {
   const series = projection.value?.instruments?.[selectedSymbol.value]?.series?.find((entry) => entry.series_id.startsWith('relative_performance'))
   if (!series) return null
   return [...series.points].reverse().find((point) => typeof point.value === 'number')?.value ?? null
+})
+const relativeFiveDayChange = computed(() => {
+  const values = numericSeriesValues('relative_performance', true)
+  if (values.length < 6) return null
+  const current = values.at(-1)!
+  const previous = values.at(-6)!
+  return previous === 0 ? null : ((current / previous) - 1) * 100
+})
+const macdHistogramChange = computed(() => {
+  const values = numericSeriesValues('macd_histogram')
+  if (values.length < 2) return null
+  return values.at(-1)! - values.at(-2)!
 })
 
 const trend = computed(() => {
@@ -170,6 +203,10 @@ const firstWarning = computed(() => quality.value?.warnings?.[0] ?? dataset.valu
 const latestIndicatorSnapshot = computed(() => projection.value?.instruments?.[selectedSymbol.value]?.indicator_snapshot_id ?? null)
 const symbolStrategyDecisions = computed(() => strategyDecisions.value.filter((item) => item.scope.symbol === selectedSymbol.value))
 const activeStrategyDecision = computed(() => symbolStrategyDecisions.value.find((item) => item.strategy.name === activeStrategy.value) ?? null)
+const displaySynthesis = computed(() => (
+  deterministicSynthesis.value.symbol_summaries?.[selectedSymbol.value]
+  ?? deterministicSynthesis.value
+))
 const synthesisLabel = computed(() => {
   const labels: Record<string, string> = {
     aligned: '方向一致',
@@ -178,10 +215,10 @@ const synthesisLabel = computed(() => {
     no_signal: '暂无信号',
     insufficient_data: '数据不足',
   }
-  return labels[deterministicSynthesis.value.consensus_state ?? ''] ?? '等待策略'
+  return labels[displaySynthesis.value.consensus_state ?? ''] ?? '等待策略'
 })
 const synthesisTone = computed(() => {
-  const state = deterministicSynthesis.value.consensus_state
+  const state = displaySynthesis.value.consensus_state
   if (state === 'aligned') return 'positive'
   if (state === 'conflicted' || state === 'insufficient_data') return 'negative'
   if (state === 'mixed') return 'warning'
@@ -189,7 +226,7 @@ const synthesisTone = computed(() => {
 })
 const synthesisActionLabel = computed(() => {
   const labels: Record<string, string> = { prioritize: '优先观察', watch: '等待确认', avoid: '回避', wait: '等待', no_action: '不行动' }
-  return labels[deterministicSynthesis.value.suggested_action ?? ''] ?? '—'
+  return labels[displaySynthesis.value.suggested_action ?? ''] ?? '—'
 })
 const strategyNameLabels: Record<string, string> = {
   trend_momentum_v1: '趋势动量',
@@ -206,6 +243,78 @@ const strategyActionLabels: Record<string, string> = {
   no_action: '不行动',
 }
 const strategyStanceLabels: Record<string, string> = { bullish: '偏多', bearish: '偏空', neutral: '中性', insufficient_data: '不可用' }
+const setupStageLabels: Record<string, string> = {
+  confirmed: '已确认',
+  near_confirmation: '接近确认',
+  armed: '待触发',
+  watching: '观察中',
+  forming: '形成中',
+  invalidated: '已失效',
+  insufficient_data: '数据不足',
+}
+const primaryStrategyDecision = computed<StrategyDecision | null>(() => {
+  const decisions = symbolStrategyDecisions.value.filter((item) => item.status === 'ok')
+  const preferredIds = [
+    ...(displaySynthesis.value.strongest_supporting_strategy_ids ?? []),
+    ...(displaySynthesis.value.strongest_conflicting_strategy_ids ?? []),
+  ]
+  for (const decisionId of preferredIds) {
+    const decision = decisions.find((item) => item.decision_id === decisionId)
+    if (decision) return decision
+  }
+  const stagePriority: Record<string, number> = {
+    confirmed: 0,
+    near_confirmation: 1,
+    armed: 1,
+    watching: 2,
+    forming: 3,
+    invalidated: 4,
+  }
+  return [...decisions].sort((left, right) => {
+    const leftStage = left.setup_plan?.stage ?? left.setup_progress.stage
+    const rightStage = right.setup_plan?.stage ?? right.setup_progress.stage
+    const stageDelta = (stagePriority[leftStage] ?? 9) - (stagePriority[rightStage] ?? 9)
+    if (stageDelta) return stageDelta
+    const stanceDelta = Number(right.stance !== 'neutral') - Number(left.stance !== 'neutral')
+    if (stanceDelta) return stanceDelta
+    return Math.abs(right.score ?? 0) - Math.abs(left.score ?? 0)
+  })[0] ?? null
+})
+const primarySetupStage = computed(() => {
+  const decision = primaryStrategyDecision.value
+  const stage = decision?.setup_plan?.stage ?? decision?.setup_progress.stage ?? 'insufficient_data'
+  return setupStageLabels[stage] ?? stage
+})
+const primarySetupDirection = computed(() => {
+  const direction = primaryStrategyDecision.value?.setup_plan?.direction ?? primaryStrategyDecision.value?.stance
+  return strategyStanceLabels[direction ?? ''] ?? direction ?? '—'
+})
+const impulse = computed(() => {
+  const values = [relativeFiveDayChange.value, macdHistogramChange.value].filter((value): value is number => value !== null)
+  if (!values.length) return { label: '等待变化', tone: 'neutral', detail: '需要至少两个可比观察点' }
+  const score = values.reduce((sum, value) => sum + (value > 0 ? 1 : value < 0 ? -1 : 0), 0)
+  if (score > 0) return { label: '改善', tone: 'positive', detail: '短周期相对强弱或动量正在回升' }
+  if (score < 0) return { label: '恶化', tone: 'negative', detail: '短周期相对强弱或动量正在转弱' }
+  return { label: '分化', tone: 'warning', detail: '短周期指标尚未形成一致变化' }
+})
+const relativeMetric = computed(() => {
+  const benchmark = dataset.value?.scope?.benchmark_symbols?.[0] ?? selectedGroup.value.benchmark
+  const level = relative.value === null ? '—' : relative.value.toFixed(1)
+  return `相对指数 ${level} · 5D ${formatPercent(relativeFiveDayChange.value)} vs ${benchmark}`
+})
+const momentumMetric = computed(() => {
+  const rsiText = rsi.value === null ? '—' : rsi.value.toFixed(1)
+  const macdText = macdHistogram.value === null ? '—' : macdHistogram.value.toFixed(3)
+  const change = macdHistogramChange.value
+  const changeText = change === null ? '—' : `${change >= 0 ? '+' : ''}${change.toFixed(3)}`
+  return `RSI14 ${rsiText} · MACD ${macdText} (${changeText})`
+})
+const trendMetric = computed(() => {
+  const close = latestBar.value?.close
+  if (close === undefined) return '价格距离尚不可用'
+  const distance = (average: number | null) => average === null || average === 0 ? '—' : formatPercent(((close / average) - 1) * 100)
+  return `距 MA20 ${distance(ma20.value)} · MA50 ${distance(ma50.value)} · MA200 ${distance(ma200.value)}`
+})
 const historicalDatasetId = computed(() => typeof route.query.dataset === 'string' ? route.query.dataset : '')
 const optionsData = computed<OptionsData | null>(() => optionsPayload.value)
 const postCloseOptionAlignment = computed<PostCloseOptionAlignment | null>(() => optionsAlignment.value)
@@ -249,8 +358,9 @@ function toggleWatchGroup(groupId: string) {
 function chooseSymbol(symbol: string) {
   const normalized = symbol.trim().toUpperCase()
   if (!normalized || normalized === selectedSymbol.value) return
-  const group = watchGroups.value.find((item) => item.symbols.includes(normalized))
-  if (group) expandedGroups[group.id] = true
+  watchGroups.value
+    .filter((item) => item.symbols.includes(normalized))
+    .forEach((item) => { expandedGroups[item.id] = true })
   selectedSymbol.value = normalized
   symbolDraft.value = normalized
   cursorIndex.value = null
@@ -501,7 +611,7 @@ async function loadWatchGroups() {
   try {
     const groups = await api.listObservationGroups()
     watchGroups.value = groups
-      .map((group) => ({
+    .map((group) => ({
         id: group.group_id,
         name: group.display_name,
         benchmark: group.benchmark_symbols[0] ?? '—',
@@ -510,13 +620,11 @@ async function loadWatchGroups() {
         tags: group.tags ?? [],
       }))
       .filter((group) => !isLegacySelfSelectedGroup(group))
-    for (const group of watchGroups.value) {
-      if (expandedGroups[group.id] === undefined) expandedGroups[group.id] = !isIndicatorGroup(group)
-    }
+    initializeGroupExpansion()
   } catch {
     // Keep local UI debugging usable when the observation API is offline.
     watchGroups.value = defaultWatchGroups.map((group) => ({ ...group, symbols: [...group.symbols], tags: [...group.tags] }))
-    for (const group of watchGroups.value) expandedGroups[group.id] = !isIndicatorGroup(group)
+    initializeGroupExpansion()
   }
 }
 
@@ -619,6 +727,30 @@ onMounted(() => {
           <div class="latest-readout"><span>LAST CLOSE</span><strong>{{ formatPrice(latestBar?.close) }}</strong><small :class="latestChange !== null && latestChange >= 0 ? 'positive-text' : 'negative-text'">{{ formatPercent(latestChange) }}</small></div>
         </section>
 
+        <section class="decision-now" :data-tone="synthesisTone">
+          <div class="decision-now-action">
+            <span class="section-kicker">DECISION NOW</span>
+            <small>最终行动</small>
+            <strong>{{ synthesisActionLabel }}</strong>
+            <p>{{ displaySynthesis.conflict_summary || primaryStrategyDecision?.reasons?.[0]?.detail || '等待确定性策略形成可执行结论。' }}</p>
+          </div>
+          <div class="decision-now-state">
+            <div><span>结构</span><strong :data-tone="trend.tone">{{ trend.label }}</strong><small>{{ trendMetric }}</small></div>
+            <div><span>变化</span><strong :data-tone="impulse.tone">{{ impulse.label }}</strong><small>{{ impulse.detail }}</small></div>
+            <div><span>Setup</span><strong>{{ primarySetupDirection }} · {{ primarySetupStage }}</strong><small>{{ primaryStrategyDecision ? (strategyNameLabels[primaryStrategyDecision.strategy.name] ?? primaryStrategyDecision.strategy.name) : '暂无可用策略' }}</small></div>
+          </div>
+          <div v-if="primaryStrategyDecision" class="decision-now-setup">
+            <template v-if="primaryStrategyDecision.setup_plan">
+              <div><span>触发条件</span><strong>{{ primaryStrategyDecision.setup_plan.confirmation_reference ?? 'price' }} {{ primaryStrategyDecision.setup_plan.confirmation_operator }} {{ formatPrice(primaryStrategyDecision.setup_plan.confirmation_price) }}</strong><small>距离 {{ formatPrice(primaryStrategyDecision.setup_plan.remaining_price) }} · {{ formatPercent(primaryStrategyDecision.setup_plan.remaining_percent) }} · {{ formatAtrDistance(primaryStrategyDecision.setup_plan.remaining_atr) }}</small></div>
+              <div><span>失效位</span><strong>{{ primaryStrategyDecision.setup_plan.invalidation_reference ?? 'price' }} {{ primaryStrategyDecision.setup_plan.invalidation_operator }} {{ formatPrice(primaryStrategyDecision.setup_plan.invalidation_price) }}</strong><small>距离 {{ formatPrice(primaryStrategyDecision.setup_plan.invalidation_distance_price) }} · {{ formatAtrDistance(primaryStrategyDecision.setup_plan.invalidation_distance_atr) }}</small></div>
+            </template>
+            <template v-else>
+              <div><span>触发条件</span><strong>{{ primaryStrategyDecision.confirmation_conditions?.[0] ?? '等待策略条件成立' }}</strong><small>条件型 Setup · 无价格距离</small></div>
+              <div><span>失效条件</span><strong>{{ primaryStrategyDecision.invalidation_conditions?.[0] ?? '等待策略给出失效条件' }}</strong><small>条件型 Setup · 不是数据缺失</small></div>
+            </template>
+          </div>
+        </section>
+
         <section class="chart-toolbar">
           <div class="range-tabs"><span class="toolbar-label">WINDOW</span><button v-for="item in ['3M', '6M', '1Y', 'ALL']" :key="item" type="button" :class="{ active: range === item }" @click="setRange(item)">{{ item }}</button></div>
           <div class="layer-tabs"><span class="toolbar-label">LAYERS</span><button v-for="layer in layerLabels" :key="layer.key" type="button" :class="{ active: layers[layer.key] }" :aria-label="layer.label" @click="setLayer(layer.key)"><i :data-layer="layer.key"></i>{{ layer.short }}</button></div>
@@ -644,9 +776,9 @@ onMounted(() => {
             <article class="insight-card read-card">
               <div class="insight-card-head"><div><span class="section-kicker">READ THE CHART</span><h2>当前事实</h2></div><span class="fact-lock">LOCKED</span></div>
               <div class="fact-stack">
-                <div class="fact-row"><span class="fact-icon" :data-tone="trend.tone">↗</span><div><small>TREND REGIME</small><strong>{{ trend.label }}</strong><p>{{ trend.detail }}</p></div></div>
-                <div class="fact-row"><span class="fact-icon" :data-tone="momentum.tone">◒</span><div><small>MOMENTUM</small><strong>{{ momentum.label }}</strong><p>{{ momentum.detail }}</p></div></div>
-                <div class="fact-row"><span class="fact-icon" :data-tone="relativeState.tone">⇄</span><div><small>RELATIVE STRENGTH</small><strong>{{ relativeState.label }}</strong><p>{{ relativeState.detail }}</p></div></div>
+                <div class="fact-row"><span class="fact-icon" :data-tone="trend.tone">↗</span><div><small>TREND REGIME</small><strong>{{ trend.label }}</strong><p>{{ trend.detail }}</p><em>{{ trendMetric }}</em></div></div>
+                <div class="fact-row"><span class="fact-icon" :data-tone="momentum.tone">◒</span><div><small>MOMENTUM</small><strong>{{ momentum.label }}</strong><p>{{ momentum.detail }}</p><em>{{ momentumMetric }}</em></div></div>
+                <div class="fact-row"><span class="fact-icon" :data-tone="relativeState.tone">⇄</span><div><small>RELATIVE STRENGTH</small><strong>{{ relativeState.label }}</strong><p>{{ relativeState.detail }}</p><em>{{ relativeMetric }}</em></div></div>
               </div>
             </article>
 
@@ -656,7 +788,7 @@ onMounted(() => {
                 <div><span>DETERMINISTIC SYNTHESIS</span><strong>{{ synthesisLabel }}</strong></div>
                 <b>{{ synthesisActionLabel }}</b>
               </div>
-              <p class="synthesis-summary">{{ deterministicSynthesis.conflict_summary || '策略会读取同一份冻结日 K，独立输出方向、风险和确认条件。' }}</p>
+              <p class="synthesis-summary">{{ displaySynthesis.conflict_summary || '策略会读取同一份冻结日 K，独立输出方向、风险和确认条件。' }}</p>
               <div v-if="symbolStrategyDecisions.length" class="strategy-decision-list">
                 <div v-for="decision in symbolStrategyDecisions" :key="decision.decision_id" class="strategy-decision-row" :class="{ active: activeStrategy === decision.strategy.name }" :data-status="decision.status" :data-tone="decision.stance === 'bullish' ? 'positive' : decision.stance === 'bearish' ? 'negative' : 'neutral'" role="button" tabindex="0" @click="selectStrategy(decision.strategy.name)" @keydown.enter.prevent="selectStrategy(decision.strategy.name)" @keydown.space.prevent="selectStrategy(decision.strategy.name)">
                   <div class="strategy-decision-head"><span><i></i><strong>{{ strategyNameLabels[decision.strategy.name] ?? decision.strategy.name }}</strong></span><b>{{ strategyActionLabels[decision.action] ?? decision.action }}</b></div>
@@ -666,10 +798,14 @@ onMounted(() => {
               </div>
               <div v-if="activeStrategyDecision" class="strategy-detail">
                 <div class="strategy-detail-head"><span>SELECTED STRATEGY</span><strong>{{ strategyNameLabels[activeStrategyDecision.strategy.name] ?? activeStrategyDecision.strategy.name }}</strong></div>
-                <div class="strategy-detail-progress"><b>{{ activeStrategyDecision.setup_progress.stage }}</b><span>确认距 {{ formatAtrDistance(activeStrategyDecision.setup_progress.confirmation_distance_atr) }}</span><span>失效距 {{ formatAtrDistance(activeStrategyDecision.setup_progress.invalidation_distance_atr) }}</span></div>
+                <template v-if="activeStrategyDecision.setup_plan">
+                  <div class="strategy-detail-progress"><b>{{ activeStrategyDecision.setup_plan.stage }}</b><span>确认 {{ activeStrategyDecision.setup_plan.confirmation_operator }} {{ formatPrice(activeStrategyDecision.setup_plan.confirmation_price) }}</span><span>当前距离 {{ formatPrice(activeStrategyDecision.setup_plan.remaining_price) }} · {{ formatPercent(activeStrategyDecision.setup_plan.remaining_percent) }} · {{ formatAtrDistance(activeStrategyDecision.setup_plan.remaining_atr) }}</span></div>
+                  <p><em>触发条件</em>{{ activeStrategyDecision.setup_plan.confirmation_reference ?? 'price' }} {{ activeStrategyDecision.setup_plan.confirmation_operator }} {{ formatPrice(activeStrategyDecision.setup_plan.confirmation_price) }}</p>
+                  <p><em>失效位</em>{{ activeStrategyDecision.setup_plan.invalidation_reference ?? 'price' }} {{ activeStrategyDecision.setup_plan.invalidation_operator }} {{ formatPrice(activeStrategyDecision.setup_plan.invalidation_price) }} · 距离 {{ formatAtrDistance(activeStrategyDecision.setup_plan.invalidation_distance_atr) }}</p>
+                </template>
+                <div v-else class="strategy-detail-progress"><b>{{ activeStrategyDecision.setup_progress.stage }}</b><span>确认距 {{ formatAtrDistance(activeStrategyDecision.setup_progress.confirmation_distance_atr) }}</span><span>失效距 {{ formatAtrDistance(activeStrategyDecision.setup_progress.invalidation_distance_atr) }}</span></div>
                 <p>{{ activeStrategyDecision.risks[0] ?? '当前没有额外风险说明。' }}</p>
-                <p><em>确认</em>{{ activeStrategyDecision.confirmation_conditions[0] ?? '暂无确认条件。' }}</p>
-                <p><em>失效</em>{{ activeStrategyDecision.invalidation_conditions[0] ?? '暂无失效条件。' }}</p>
+                <template v-if="!activeStrategyDecision.setup_plan"><p><em>确认</em>{{ activeStrategyDecision.confirmation_conditions[0] ?? '暂无确认条件。' }}</p><p><em>失效</em>{{ activeStrategyDecision.invalidation_conditions[0] ?? '暂无失效条件。' }}</p></template>
                 <small>HORIZON {{ activeStrategyDecision.horizon.value }} {{ activeStrategyDecision.horizon.unit }} · {{ activeStrategyDecision.evidence_refs.length }} EVIDENCE REFS</small>
               </div>
               <div v-if="!symbolStrategyDecisions.length" class="strategy-placeholder"><span class="placeholder-mark">—</span><div><strong>策略暂不可用</strong><small>LOCAL DEMO 或数据尚未通过策略质量 Gate</small></div></div>
@@ -678,7 +814,7 @@ onMounted(() => {
             <article class="insight-card ai-card">
               <div class="insight-card-head"><div><span class="section-kicker">AI ARBITRATION</span><h2>AI 决策</h2></div><span class="not-run">ON DEMAND</span></div>
               <p>AI 只读取当前个股的冻结 Daily Decision Dataset、图表投影和确定性策略结果。</p>
-              <RemoteDecisionPanel ref="instrumentRemotePanel" intent-type="instrument_arbitration" :source="instrumentAiSource" title="确认个股 AI 仲裁" label="主动发起 AI 仲裁" :disabled="instrumentAiDisabled" preflight-on-mount />
+              <RemoteDecisionPanel ref="instrumentRemotePanel" intent-type="instrument_arbitration" :source="instrumentAiSource" title="确认个股 AI 仲裁" label="主动发起 AI 仲裁" :disabled="instrumentAiDisabled" collapse-history preflight-on-mount />
             </article>
           </aside>
         </section>

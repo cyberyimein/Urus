@@ -24,7 +24,15 @@ Urus 负责 Universe、市场数据、日线证据、期权结构、确定性策
 
 **Strategy Decision**：由确定性策略根据冻结证据产生的结构化结果，包含 stance、action、horizon、原因、风险、确认条件、失效条件和证据引用。它不是原始指标，也不是模型观点。
 
-**Deterministic Synthesis**：对同一数据集内策略结果进行规则化汇总的只读结果。它不改变任何单一策略结果，也不声称概率或收益保证。
+**Symbol Setup Projection**：从 Strategy Decision v2 的机器可读 `setup_plan` 按标的投影 primary setup。它按方向、阶段、确认距离、策略分数和策略名确定稳定顺序，并直接保留触发价、当前距离与失效位；不能从展示文案或 `visual_anchors` 反推。
+
+**Deterministic Synthesis**：对同一数据集内策略结果进行规则化汇总的只读结果。数据集级结果保留横截面总览，同时必须提供按标的独立计算的 `symbol_summaries`；个股和观察组只能消费自身范围内的合成结果，不能把其他标的的相反方向当作本标的策略冲突。它不改变任何单一策略结果，也不声称概率或收益保证。
+
+**Group Decision Phase**：Observation Group 的当前强弱状态与边际变化组合。`state` 表达当前 level，`impulse` 表达相对前一交易日的 `improving`、`deteriorating` 或 `stable`；强势但恶化、弱势但改善时，动作降为 `watch`，避免把滞后的绝对状态直接当作新增优先级。
+
+**Sample Support**：组级结论的样本支持事实，包含有效成员数、请求成员数、覆盖率、证据强度和排名资格。单标的组以及少于 4 个有效成员的组为低证据，动作最高为 `watch`，不得成为领先主题。
+
+**Cross-sectional Group Ranking**：在同一 Observation Run 内，对具备 Sample Support 排名资格的组进行波动调整和截面 mid-rank 标准化。排名以风险调整后的相对收益、MA20/MA50 广度和领涨分散度为因子；缺失因子不填零，少于 5 个合格组时排名不可用。
 
 **Option Evidence**：在同一次 Observation Run 中按配置标的和到期日采集的期权快照及链路计算结果，包含 Option Spot、IV、Expected Move、DEX、GEX、Gamma Wall、Gamma Profile 和 Max Pain。
 
@@ -69,6 +77,7 @@ Frozen evidence + active Workflow Binding ──> Remote Decision Run
 - 期权属于 Observation Run 的收市后证据，不创建独立的事实运行链；前端在个股工作区内展示它。
 - Regular-Close Alignment 只有在官方收盘价可用时才生成正式标记。Option Spot fallback 只能作为参考位置。
 - 远程 AI 只能读取冻结的 Dataset、Chart Projection、Group Snapshot 或 Observation Run 投影，不能读取未声明范围的数据源。
+- Observation Report 中同一个 Strategy Decision 即使属于多个重叠观察组，也只能进入一次机会/风险泳道；报告用 `group_ids` 保留其全部组归属。`bearish` 只进入风险泳道，不能被 `confirmed` 状态误归入机会泳道。
 - 数据源不可用时保留失败原因和质量状态；不要用历史快照、缓存或模型输出补齐当前事实。
 
 ## 当前代码边界
@@ -80,6 +89,7 @@ Frozen evidence + active Workflow Binding ──> Remote Decision Run
 | 日线证据 | `backend/app/decision_harness/market_evidence.py`、`backend/app/repositories/daily_evidence.py` |
 | 期权分析 | `backend/app/services/options_collection.py`、`backend/app/analytics/options.py`、`backend/app/analytics/options_volatility.py` |
 | 收市观察 | `backend/app/services/observation.py`、`backend/app/decision_harness/group_observation.py`、`backend/app/decision_harness/observation_report.py` |
+| Setup、组阶段与排名 | `backend/app/decision_harness/setup_projection.py`、`backend/app/decision_harness/group_phase.py`、`backend/app/decision_harness/group_ranking.py` |
 | 远程决策 | `backend/app/decision_harness/remote_workflow.py`、`backend/app/services/remote_decision_supervisor.py`、`backend/app/integrations/anomalo_workflow.py` |
 | 页面 | `frontend/src/views/InstrumentDecisionView.vue`、`frontend/src/views/GroupObservationView.vue`、`frontend/src/views/ObservationRunView.vue` |
 

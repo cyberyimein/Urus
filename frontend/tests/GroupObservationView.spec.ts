@@ -23,7 +23,7 @@ const group = {
 } as ObservationGroup
 
 const snapshot = {
-  schema_version: 'urus.group_daily_snapshot.v3',
+  schema_version: 'urus.group_daily_snapshot.v4',
   feature_version: 'technical_v5',
   dataset_id: 'dataset-1',
   indicator_snapshot_ids: ['indicator-1', 'indicator-2'],
@@ -136,6 +136,53 @@ describe('GroupObservationView', () => {
       trigger_mode: 'manual',
     }))
     expect(wrapper.text()).toContain('Observation Run succeeded')
+  })
+
+  it('renders level, impulse, setup and sample evidence from the group decision', async () => {
+    const v4Snapshot = {
+      ...snapshot,
+      schema_version: 'urus.group_daily_snapshot.v4',
+      group_decision: {
+        ...snapshot.group_decision,
+        level: 'strong',
+        impulse: 'improving',
+        setup: 'near_confirmation',
+        action: 'watch',
+        sample_support: {
+          kind: 'small',
+          valid_symbol_count: 2,
+          requested_symbol_count: 3,
+          coverage: 0.6667,
+          rank_eligible: false,
+        },
+        evidence_strength: 'low',
+        rank_eligible: false,
+      },
+    } as GroupDailySnapshot
+    vi.spyOn(api, 'listObservationGroups').mockResolvedValue([group])
+    vi.spyOn(api, 'getObservationGroup').mockResolvedValue({ group, latest_snapshot: v4Snapshot })
+
+    await router.push('/groups/semiconductors')
+    await router.isReady()
+    const wrapper = mount(GroupObservationView, {
+      global: {
+        plugins: [router],
+        stubs: {
+          AppShell: true,
+          RouterLink: { template: '<a><slot /></a>' },
+        },
+      },
+    })
+    await flushPromises()
+
+    const text = wrapper.text()
+    expect(text).toContain('强势')
+    expect(text).toContain('边际改善')
+    expect(text).toContain('接近确认')
+    expect(text).toContain('小样本')
+    expect(text).toContain('2 / 3')
+    expect(text).toContain('证据强度')
+    expect(text).toContain('低')
   })
 
   it('separates indicator recommendation from theme groups and hides the persisted self-selection group', async () => {

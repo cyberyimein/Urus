@@ -34,6 +34,7 @@ interface LevelMarker {
 }
 
 const selectedExpiration = ref('')
+const detailsExpanded = ref(true)
 
 const liveOptions = computed<OptionsAnalysis | null>(() => {
   const value = props.options
@@ -115,6 +116,18 @@ const alignmentTone = computed(() => {
   if (!alignmentReady.value) return 'unavailable'
   return alignmentFlags.value.length ? 'flagged' : 'clear'
 })
+const canCollapseStructure = computed(() => alignmentReady.value && alignmentFlags.value.length === 0)
+
+watch(canCollapseStructure, (collapse) => {
+  detailsExpanded.value = !collapse
+}, { immediate: true })
+
+watch(
+  [() => props.symbol, () => currentExpiry.value?.expiration],
+  () => {
+    detailsExpanded.value = !canCollapseStructure.value
+  },
+)
 
 const alignmentLabel = computed(() => {
   if (!props.alignment) return '无回看结果'
@@ -322,6 +335,10 @@ function signedCompact(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return '不可用'
   return `${value >= 0 ? '+' : ''}${new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 2 }).format(value)}`
 }
+
+function toggleStructure() {
+  detailsExpanded.value = !detailsExpanded.value
+}
 </script>
 
 <template>
@@ -367,6 +384,15 @@ function signedCompact(value: number | null | undefined): string {
           </button>
         </div>
 
+        <div v-if="canCollapseStructure && !detailsExpanded" class="instrument-options-compact-summary">
+          <div><span>POST-CLOSE CHECK</span><strong>{{ alignmentLabel }}</strong><small>{{ alignmentDetail }}</small></div>
+          <div><span>最近价位</span><strong>{{ nearestLevelLabel }}</strong><small>{{ comparisonDistanceLabel }} {{ nearestLevelDistance }}</small></div>
+          <div><span>到期日</span><strong>{{ currentExpiry?.expiration ?? '不可用' }}</strong><small>{{ currentExpiry?.days_to_expiry ?? '—' }} DTE</small></div>
+          <button class="instrument-options-expand" type="button" @click="toggleStructure">展开期权结构</button>
+        </div>
+
+        <div v-if="detailsExpanded" class="instrument-options-expanded">
+          <button v-if="canCollapseStructure" class="instrument-options-collapse" type="button" @click="toggleStructure">收起期权结构</button>
         <div class="instrument-options-decision-grid">
           <div class="instrument-options-decision-price">
             <span>{{ comparisonPriceLabel }}</span>
@@ -445,6 +471,7 @@ function signedCompact(value: number | null | undefined): string {
         <div v-if="alignmentFlags.length" class="instrument-options-flag-row">
           <span class="instrument-options-label">MARKERS</span>
           <span v-for="flag in alignmentFlags" :key="flag" class="instrument-options-flag" :data-flag="flag">{{ flagLabel(flag) }}</span>
+        </div>
         </div>
       </div>
 

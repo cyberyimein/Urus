@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from math import isfinite
+from math import isfinite, sqrt
 from typing import Any
 
 from app.decision_harness.contracts import content_sha256
+from app.decision_harness.group_ranking import rank_observation_groups
 
 
-REPORT_SCHEMA = "urus.observation_report.v1"
+REPORT_SCHEMA = "urus.observation_report.v2"
 
 
 def build_observation_report(
@@ -24,6 +25,7 @@ def build_observation_report(
     leaders: list[dict[str, Any]] = []
     laggards: list[dict[str, Any]] = []
     conflicts: list[dict[str, Any]] = []
+    conflicts_by_symbol: dict[str, dict[str, Any]] = {}
     quality_issues: list[dict[str, Any]] = []
     opportunity_lanes: dict[str, list[dict[str, Any]]] = {
         "confirmed": [],
@@ -31,9 +33,17 @@ def build_observation_report(
         "forming": [],
     }
     risk_lanes: dict[str, list[dict[str, Any]]] = {"invalidated": [], "bearish": []}
+    lane_indexes: dict[str, dict[str, dict[str, Any]]] = {
+        "opportunity.confirmed": {},
+        "opportunity.near_confirmation": {},
+        "opportunity.forming": {},
+        "risk.invalidated": {},
+        "risk.bearish": {},
+    }
     momentum_map: list[dict[str, Any]] = []
     breadth_delta: list[dict[str, Any]] = []
     state_transitions: list[dict[str, Any]] = []
+    theme_rows: list[dict[str, Any]] = []
 
     for source in snapshots:
         group_id = str(source.get("group_id") or "")
@@ -57,14 +67,17 @@ def build_observation_report(
         median_20d = _nested_number(features, "returns_percent", "20d", "median")
         relative_20d = _nested_number(features, "relative_strength", "median_excess_20d")
         breadth_ma20 = _nested_number(features, "breadth", "above_ma20")
-        rank_score = sum(
-            value
-            for value in (
-                median_20d,
-                relative_20d,
-                breadth_ma20 * 10 if breadth_ma20 is not None else None,
-            )
-            if value is not None
+        breadth_ma50 = _nested_number(features, "breadth", "above_ma50")
+        concentration = _number(features.get("leader_concentration"))
+        tracking_vol = _nested_number(
+            features, "volatility", "median_tracking_error_20d_annualized"
+        )
+        realized_vol = _nested_number(
+            features, "volatility", "median_realized_volatility_20d_annualized"
+        )
+        volatility = tracking_vol if tracking_vol is not None else realized_vol
+        expected_tracking_move = (
+            round(volatility * sqrt(20 / 252), 4) if volatility is not None else None
         )
         ranking = {
             "group_id": group_id,
@@ -72,14 +85,31 @@ def build_observation_report(
             "snapshot_id": source.get("snapshot_id"),
             "dataset_id": source.get("dataset_id"),
             "state": group_decision.get("state"),
+            "impulse": group_decision.get("impulse"),
+            "phase": group_decision.get("phase"),
             "stance": group_decision.get("stance"),
             "action": group_decision.get("action"),
             "median_20d": median_20d,
             "relative_20d": relative_20d,
             "breadth_ma20": breadth_ma20,
-            "technical_rank_score": round(rank_score, 4),
+            "breadth_ma50": breadth_ma50,
+            "diversification": 1 - concentration if concentration is not None else None,
+            "expected_tracking_move_20d": expected_tracking_move,
+            "volatility_basis": "tracking_error" if tracking_vol is not None else "realized_volatility_proxy" if realized_vol is not None else "unavailable",
+            "rank_eligible": group_decision.get("rank_eligible") is True,
         }
         rankings.append(ranking)
+        theme_rows.append(
+            {
+                **ranking,
+                "category": group_decision.get("category"),
+                "level": group_decision.get("level"),
+                "setup": group_decision.get("setup"),
+                "setup_participation": group_decision.get("setup_participation"),
+                "evidence_strength": group_decision.get("evidence_strength"),
+                "reasons": list(group_decision.get("reasons") or []),
+            }
+        )
 
         median_delta = _number(changes.get("median_20d_delta_percent"))
         relative_delta = _number(changes.get("relative_20d_delta_percent"))
@@ -169,16 +199,39 @@ def build_observation_report(
             stage = str(item["stage"])
             stance = str(item["stance"])
             distance = _number((decision.get("setup_progress") or {}).get("confirmation_distance_atr"))
-            if stage == "confirmed":
-                opportunity_lanes["confirmed"].append(item)
-            elif stage in {"armed", "watching"} and distance is not None and distance <= 1:
-                opportunity_lanes["near_confirmation"].append(item)
-            elif stage in {"forming", "armed", "watching"}:
-                opportunity_lanes["forming"].append(item)
+            if stance != "bearish":
+                if stage == "confirmed":
+                    _append_decision(
+                        opportunity_lanes["confirmed"],
+                        lane_indexes["opportunity.confirmed"],
+                        item,
+                    )
+                elif stage in {"near_confirmation", "armed", "watching"} and (
+                    distance is None or distance <= 1
+                ):
+                    _append_decision(
+                        opportunity_lanes["near_confirmation"],
+                        lane_indexes["opportunity.near_confirmation"],
+                        item,
+                    )
+                elif stage in {"forming", "near_confirmation", "armed", "watching"}:
+                    _append_decision(
+                        opportunity_lanes["forming"],
+                        lane_indexes["opportunity.forming"],
+                        item,
+                    )
             if stage == "invalidated":
-                risk_lanes["invalidated"].append(item)
+                _append_decision(
+                    risk_lanes["invalidated"],
+                    lane_indexes["risk.invalidated"],
+                    item,
+                )
             if stance == "bearish":
-                risk_lanes["bearish"].append(item)
+                _append_decision(
+                    risk_lanes["bearish"],
+                    lane_indexes["risk.bearish"],
+                    item,
+                )
 
         for symbol, decisions in decisions_by_symbol.items():
             stances = {
@@ -187,15 +240,30 @@ def build_observation_report(
                 if item.get("status") == "ok" and item.get("stance") in {"bullish", "bearish"}
             }
             if stances == {"bullish", "bearish"}:
-                conflicts.append(
-                    {
+                decision_ids = [
+                    item.get("decision_id") for item in decisions if item.get("decision_id")
+                ]
+                existing_conflict = conflicts_by_symbol.get(symbol)
+                if existing_conflict is None:
+                    conflict = {
                         "group_id": group_id,
                         "group_name": group_name,
+                        "group_ids": [group_id],
+                        "group_names": [group_name],
                         "symbol": symbol,
-                        "decision_ids": [item.get("decision_id") for item in decisions],
+                        "decision_ids": decision_ids,
                         "summary": "同一冻结数据上的确定性策略同时出现 bullish 与 bearish。",
                     }
-                )
+                    conflicts_by_symbol[symbol] = conflict
+                    conflicts.append(conflict)
+                else:
+                    if group_id not in existing_conflict["group_ids"]:
+                        existing_conflict["group_ids"].append(group_id)
+                    if group_name not in existing_conflict["group_names"]:
+                        existing_conflict["group_names"].append(group_name)
+                    for decision_id in decision_ids:
+                        if decision_id not in existing_conflict["decision_ids"]:
+                            existing_conflict["decision_ids"].append(decision_id)
 
         for warning in quality.get("warnings") or []:
             quality_issues.append(
@@ -207,7 +275,31 @@ def build_observation_report(
                 }
             )
 
-    rankings.sort(key=lambda item: item["technical_rank_score"], reverse=True)
+    ranked = rank_observation_groups(rankings)
+    ranking_available = any(_number(item.get("rank_normalized")) is not None for item in ranked)
+    if ranked:
+        rankings = sorted(
+            ranked,
+            key=lambda item: (
+                _number(item.get("rank_normalized")) is not None,
+                _number(item.get("rank_normalized"))
+                if _number(item.get("rank_normalized")) is not None
+                else -2,
+                str(item.get("group_id")),
+            ),
+            reverse=True,
+        )
+    else:
+        rankings = [
+            {
+                **item,
+                "ranking_status": "unavailable",
+                "ranking_model": "cross_sectional_risk_adjusted_v1",
+                "rank_normalized": None,
+                "technical_rank_score": None,
+            }
+            for item in sorted(rankings, key=lambda value: str(value.get("group_id")))
+        ]
     improving.sort(key=lambda item: item["change_score"], reverse=True)
     deteriorating.sort(key=lambda item: item["change_score"])
     leaders.sort(key=_anomaly_sort, reverse=True)
@@ -229,6 +321,14 @@ def build_observation_report(
             "strategy_conflict_count": len(conflicts),
         },
         "group_rankings": rankings,
+        "ranking_status": "available" if ranking_available else "unavailable",
+        "leading_themes": [item for item in theme_rows if item.get("category") == "leader"],
+        "deteriorating_themes": [
+            item for item in theme_rows if item.get("category") == "deteriorating"
+        ],
+        "reversal_themes": [
+            item for item in theme_rows if item.get("category") == "reversal_watch"
+        ],
         "improving_groups": improving,
         "deteriorating_groups": deteriorating,
         "anomalies": {"leaders": leaders[:12], "laggards": laggards[:12]},
@@ -285,6 +385,8 @@ def _decision_item(
     return {
         "group_id": group_id,
         "group_name": group_name,
+        "group_ids": [group_id],
+        "group_names": [group_name],
         "symbol": (decision.get("scope") or {}).get("symbol") or decision.get("symbol"),
         "strategy_name": strategy.get("name"),
         "strategy_version": strategy.get("version"),
@@ -295,9 +397,35 @@ def _decision_item(
         "action": decision.get("action") or "no_action",
         "score": _number(decision.get("score")),
         "confirmation_distance_atr": _number(progress.get("confirmation_distance_atr")),
+        "setup_plan": dict(decision.get("setup_plan") or {}),
         "dataset_id": source.get("dataset_id"),
         "snapshot_id": source.get("snapshot_id"),
     }
+
+
+def _append_decision(
+    lane: list[dict[str, Any]],
+    index: dict[str, dict[str, Any]],
+    item: dict[str, Any],
+) -> None:
+    """Index one logical Strategy Decision once while retaining group membership."""
+
+    decision_id = str(item.get("decision_id") or "")
+    identity = decision_id or "|".join(
+        str(item.get(key) or "")
+        for key in ("dataset_id", "symbol", "strategy_name", "strategy_version", "stage")
+    )
+    existing = index.get(identity)
+    if existing is None:
+        index[identity] = item
+        lane.append(item)
+        return
+    group_id = str(item.get("group_id") or "")
+    group_name = str(item.get("group_name") or "")
+    if group_id and group_id not in existing["group_ids"]:
+        existing["group_ids"].append(group_id)
+    if group_name and group_name not in existing["group_names"]:
+        existing["group_names"].append(group_name)
 
 
 def _anomaly_sort(item: dict[str, Any]) -> float:

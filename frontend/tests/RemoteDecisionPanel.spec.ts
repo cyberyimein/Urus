@@ -129,6 +129,77 @@ describe('RemoteDecisionPanel', () => {
     expect(wrapper.find('.remote-decision-run-summary').exists()).toBe(false)
   })
 
+  it('keeps history collapsed by default when requested and expands on demand', async () => {
+    const historicalRun = { ...run, local_run_id: 'run-collapsed-history-1', dataset_id: 'older-dataset', source: { ...run.source, dataset_id: 'older-dataset' } }
+    vi.spyOn(api, 'listRemoteDecisions').mockResolvedValue([historicalRun])
+    vi.spyOn(api, 'preflightRemoteDecision').mockResolvedValue({
+      enabled: true,
+      blockers: [],
+      warnings: [],
+      intent_type: 'instrument_arbitration',
+      source: { dataset_id: 'current-dataset', symbol: 'INTC' },
+      source_summary: {},
+      binding: null,
+      input_sha256: null,
+      preflight_fingerprint: null,
+    })
+
+    await router.push('/instruments/INTC?dataset=current-dataset')
+    await router.isReady()
+    const wrapper = mount(RemoteDecisionPanel, {
+      props: {
+        intentType: 'instrument_arbitration',
+        source: { dataset_id: 'current-dataset', symbol: 'INTC' },
+        preflightOnMount: true,
+        collapseHistory: true,
+      },
+      global: {
+        plugins: [router],
+        stubs: {
+          RemoteDecisionConfirmDialog: true,
+          RouterLink: { props: ['to'], template: '<a :data-to="JSON.stringify(to)"><slot /></a>' },
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.find('.remote-decision-history').exists()).toBe(false)
+    const historyToggle = wrapper.get('.remote-history-toggle')
+    expect(historyToggle.text()).toContain('查看历史（1）')
+
+    await historyToggle.trigger('click')
+    expect(wrapper.find('.remote-decision-history').exists()).toBe(true)
+    expect(wrapper.text()).toContain('DECISION HISTORY')
+    expect(wrapper.get('.remote-history-toggle').text()).toContain('收起历史')
+
+    await wrapper.get('.remote-history-toggle').trigger('click')
+    expect(wrapper.find('.remote-decision-history').exists()).toBe(false)
+  })
+
+  it('resets the collapsed history state when the evidence symbol changes', async () => {
+    const historicalIntc = { ...run, local_run_id: 'run-history-intc', dataset_id: 'older-dataset', source: { ...run.source, dataset_id: 'older-dataset' } }
+    const historicalAapl = { ...run, local_run_id: 'run-history-aapl', scope_id: 'AAPL', dataset_id: 'older-dataset', source: { ...run.source, symbol: 'AAPL', dataset_id: 'older-dataset' } }
+    const list = vi.spyOn(api, 'listRemoteDecisions').mockImplementation(async (query = {}) => query.scope_id === 'AAPL' ? [historicalAapl] : [historicalIntc])
+    vi.spyOn(api, 'preflightRemoteDecision').mockResolvedValue({ enabled: true, blockers: [], warnings: [], intent_type: 'instrument_arbitration', source: { dataset_id: 'current-dataset', symbol: 'INTC' }, source_summary: {}, binding: null, input_sha256: null, preflight_fingerprint: null })
+
+    await router.push('/instruments/INTC?dataset=current-dataset')
+    await router.isReady()
+    const wrapper = mount(RemoteDecisionPanel, {
+      props: { intentType: 'instrument_arbitration', source: { dataset_id: 'current-dataset', symbol: 'INTC' }, preflightOnMount: true, collapseHistory: true },
+      global: { plugins: [router], stubs: { RemoteDecisionConfirmDialog: true, RouterLink: { props: ['to'], template: '<a><slot /></a>' } } },
+    })
+    await flushPromises()
+    await wrapper.get('.remote-history-toggle').trigger('click')
+    expect(wrapper.find('.remote-decision-history').exists()).toBe(true)
+
+    await wrapper.setProps({ source: { dataset_id: 'current-dataset', symbol: 'AAPL' } })
+    await flushPromises()
+
+    expect(list).toHaveBeenCalled()
+    expect(wrapper.find('.remote-decision-history').exists()).toBe(false)
+    expect(wrapper.get('.remote-history-toggle').text()).toContain('查看历史（1）')
+  })
+
   it('restores a cross-section scan summary instead of a generic result label', async () => {
     const scanSummary = '策略横向扫描完成：已筛出 3 个值得关注的卡片。'
     const scanRun = {
