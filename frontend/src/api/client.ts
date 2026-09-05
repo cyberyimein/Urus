@@ -1,4 +1,5 @@
 import type {
+  DatabaseHealthResponse,
   HealthResponse,
   ObservationOptionsResponse,
   VersionResponse,
@@ -79,6 +80,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   health: () => request<HealthResponse>('/health'),
+  databaseHealth: () => request<DatabaseHealthResponse>('/health/database'),
   version: () => request<VersionResponse>('/version'),
   getUniverse: () => request<UniverseResponse>('/settings/universe'),
   createUniverseCapacityPlan: (requestBody: UniverseUpdate) =>

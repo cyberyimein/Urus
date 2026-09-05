@@ -43,6 +43,7 @@ from app.models import (  # noqa: F401 - register ORM tables
 from app.repositories.runtime_settings import RuntimeSettingsRepository, apply_payload
 from app.repositories.universe import InstrumentUniverseRepository
 from app.integrations.anomalo_workflow import FakeWorkflowAdapter, HttpAnomaloWorkflowAdapter
+from app.services.database_health import DatabaseHealthMonitor
 from app.services.remote_decision_supervisor import RemoteDecisionSupervisor
 
 logger = logging.getLogger(__name__)
@@ -82,6 +83,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.engine = engine
     app.state.session_factory = session_factory
+    app.state.database_health_monitor = DatabaseHealthMonitor(
+        settings.database_url,
+        status_path=settings.database_health_path or None,
+        interval_hours=settings.database_health_interval_hours,
+    )
     if settings.anomalo_workflow_fake_adapter or settings.app_env == "test":
         workflow_adapter = FakeWorkflowAdapter()
     elif settings.anomalo_workflow_enabled and settings.anomalo_base_url and settings.anomalo_workflow_token:

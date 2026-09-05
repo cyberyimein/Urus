@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     app_host: str = "127.0.0.1"
     app_port: int = 8000
     database_url: str = "sqlite:///./urus.db"
+    # Full SQLite integrity checks are expensive enough to keep out of the
+    # regular liveness endpoint. The sidecar is independent from the DB so a
+    # corrupt file can still expose its last check result to the UI.
+    database_health_path: str = ""
+    database_health_interval_hours: float = 24.0
     # Optional deployed Urus instance used as the source of truth for the
     # local observation Universe. Leave empty in production to use its own
     # active Universe; local workstations can point at the deployed API root.

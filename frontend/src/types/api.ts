@@ -8,6 +8,18 @@ export interface HealthResponse {
   database: string
 }
 
+export interface DatabaseHealthResponse {
+  schema_version: string
+  status: 'ok' | 'error' | 'unsupported' | string
+  checked_at: string
+  next_check_at: string
+  integrity_check: string | null
+  foreign_key_violations: number | null
+  duration_ms: number | null
+  database_size_bytes: number | null
+  message: string | null
+}
+
 export interface VersionResponse {
   app_name: string
   app_version: string
