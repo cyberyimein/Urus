@@ -79,6 +79,7 @@ class Settings(BaseSettings):
     moomoo_capacity_snapshot_ttl_seconds: float = 300.0
     moomoo_history_request_interval_seconds: float = 0.55
     moomoo_snapshot_request_interval_seconds: float = 0.55
+    moomoo_trading_calendar_request_interval_seconds: float = 1.05
     # One host-wide lock serializes the personal collector across workflow
     # subprocesses. The lock file also remembers provider pacing timestamps.
     moomoo_collection_lock_path: str = "data/moomoo_collection.lock"
@@ -109,9 +110,11 @@ class Settings(BaseSettings):
     capital_flow_cache_days: int = 30
     capital_flow_projection_days: int = 5
     market_timezone: str = "America/New_York"
-    # Exchange-calendars identifier used by the in-process scheduler. XNYS
-    # covers the NYSE/Nasdaq US equity session and its holiday/early-close
-    # rules; deployments can override this for another supported exchange.
+    # Exchange-calendars identifier used for session open/close timestamps by
+    # the in-process scheduler. XNYS covers the NYSE/Nasdaq US equity session
+    # and its holiday/early-close rules; deployments can override this for
+    # another supported exchange. When Moomoo is enabled, its trading-days API
+    # remains authoritative for session membership.
     market_calendar: str = "XNYS"
     fred_enabled: bool = False
     fred_base_url: str = "https://fred.stlouisfed.org/graph/fredgraph.csv"

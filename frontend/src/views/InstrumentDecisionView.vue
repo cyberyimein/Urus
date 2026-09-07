@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import { api } from '@/api/client'
 import AppShell from '@/components/AppShell.vue'
 import DecisionChartWorkspace from '@/components/decision/DecisionChartWorkspace.vue'
+import OpportunityViewPanel from '@/components/decision/OpportunityViewPanel.vue'
 import RemoteDecisionPanel from '@/components/decision/RemoteDecisionPanel.vue'
 import InstrumentOptionsEvidence from '@/components/InstrumentOptionsEvidence.vue'
 import type {
@@ -52,6 +53,10 @@ const optionsError = ref('')
 const optionsPayload = ref<OptionsData | null>(null)
 const optionsAlignment = ref<PostCloseOptionAlignment | null>(null)
 const optionsSourceRun = ref<{ run_type: string; cutoff_time: string | null } | null>(null)
+let evidenceRequestGeneration = 0
+let evidenceController: AbortController | null = null
+let frozenEvidence: DailyEvidenceResponse | null = null
+let optionsRequestGeneration = 0
 const layers = reactive<Record<LayerKey, boolean>>({
   ma20: true,
   ma50: true,
@@ -365,8 +370,14 @@ function chooseSymbol(symbol: string) {
   symbolDraft.value = normalized
   cursorIndex.value = null
   activeStrategy.value = null
-  router.replace({ name: 'instrument-decision', params: { symbol: normalized } }).catch(() => undefined)
-  void loadEvidence().then(() => loadOptionsEvidence())
+  // Keep the frozen Dataset/run context when moving between symbols. The
+  // route watcher below is the single loading entry point, so this navigation
+  // cannot accidentally fall back to POST /daily-evidence/datasets.
+  router.replace({
+    name: 'instrument-decision',
+    params: { symbol: normalized },
+    query: { ...route.query },
+  }).catch(() => undefined)
 }
 
 function submitSymbol() {
@@ -374,43 +385,61 @@ function submitSymbol() {
 }
 
 async function loadEvidence() {
+  const requestGeneration = ++evidenceRequestGeneration
+  evidenceController?.abort()
+  const controller = new AbortController()
+  evidenceController = controller
+  const requestSymbol = selectedSymbol.value
+  const requestDatasetId = historicalDatasetId.value
+  if (frozenEvidence?.dataset.dataset_id !== requestDatasetId) frozenEvidence = null
   loading.value = true
   error.value = ''
   demoReason.value = ''
-  const datasetId = historicalDatasetId.value
+  // Do not leave the previous instrument's evidence visible while a route
+  // change is loading. Late responses are rejected by the generation checks.
+  dataset.value = null
+  projection.value = null
+  strategyDecisions.value = []
+  deterministicSynthesis.value = {}
   try {
-    if (datasetId) {
+    if (requestDatasetId) {
+      // A frozen chart already contains all symbols. Reuse this one dataset
+      // while navigating within it, avoiding repeated large chart allocations.
       const [storedDataset, storedChart, storedStrategies] = await Promise.all([
-        api.getDailyDataset(datasetId),
-        api.getDailyChart(datasetId),
-        api.getDailyStrategies(datasetId),
+        frozenEvidence ? Promise.resolve(frozenEvidence.dataset) : api.getDailyDataset(requestDatasetId, controller.signal),
+        frozenEvidence ? Promise.resolve(frozenEvidence.chart) : api.getDailyChart(requestDatasetId, controller.signal),
+        api.getDailyStrategies(requestDatasetId, controller.signal),
       ])
-      if (storedDataset.dataset_id !== datasetId || storedChart.dataset_id !== datasetId || storedStrategies.dataset_id !== datasetId) {
+      if (requestGeneration !== evidenceRequestGeneration || requestSymbol !== selectedSymbol.value || requestDatasetId !== historicalDatasetId.value) return
+      if (storedDataset.dataset_id !== requestDatasetId || storedChart.dataset_id !== requestDatasetId || storedStrategies.dataset_id !== requestDatasetId) {
         throw new Error('冻结证据的 dataset_id 不一致，已拒绝加载。')
       }
-      const chartBars = storedChart.instruments?.[selectedSymbol.value]?.price?.bars ?? []
-      if (!chartBars.length) throw new Error(`冻结 dataset 中没有 ${selectedSymbol.value} 的日 K`)
-      applyResponse({
+      const chartBars = storedChart.instruments?.[requestSymbol]?.price?.bars ?? []
+      if (!chartBars.length) throw new Error(`冻结 dataset 中没有 ${requestSymbol} 的日 K`)
+      frozenEvidence = {
         dataset: storedDataset,
         chart: storedChart,
         strategy_decisions: storedStrategies.strategy_decisions,
         deterministic_synthesis: storedStrategies.deterministic_synthesis,
-      })
+      }
+      applyResponse(frozenEvidence)
     } else {
       const response = await api.createDailyDataset({
         scope_type: 'instrument',
-        scope_id: selectedSymbol.value,
-        symbols: [selectedSymbol.value],
+        scope_id: requestSymbol,
+        symbols: [requestSymbol],
         benchmark_symbols: ['QQQ'],
         scope_version: 1,
       })
-      const chartBars = response.chart?.instruments?.[selectedSymbol.value]?.price?.bars ?? []
+      if (requestGeneration !== evidenceRequestGeneration || requestSymbol !== selectedSymbol.value || requestDatasetId !== historicalDatasetId.value) return
+      const chartBars = response.chart?.instruments?.[requestSymbol]?.price?.bars ?? []
       if (!chartBars.length) throw new Error('后端尚未返回可绘制的完整日 K')
       applyResponse(response)
     }
   } catch (reason) {
+    if (requestGeneration !== evidenceRequestGeneration || requestSymbol !== selectedSymbol.value || requestDatasetId !== historicalDatasetId.value) return
     const message = reason instanceof Error ? reason.message : 'Daily Evidence 请求失败。'
-    if (datasetId) {
+    if (requestDatasetId) {
       error.value = `冻结证据加载失败：${message}`
       dataset.value = null
       projection.value = null
@@ -421,11 +450,14 @@ async function loadEvidence() {
       applyResponse(buildDemoResponse(selectedSymbol.value))
     }
   } finally {
-    loading.value = false
+    if (requestGeneration === evidenceRequestGeneration && requestSymbol === selectedSymbol.value && requestDatasetId === historicalDatasetId.value) loading.value = false
   }
 }
 
 async function loadOptionsEvidence(targetTradingDate = dataset.value?.trading_date ?? null): Promise<void> {
+  const requestGeneration = ++optionsRequestGeneration
+  const requestSymbol = selectedSymbol.value
+  const requestEvidenceGeneration = evidenceRequestGeneration
   optionsLoading.value = true
   optionsError.value = ''
   optionsPayload.value = null
@@ -437,7 +469,8 @@ async function loadOptionsEvidence(targetTradingDate = dataset.value?.trading_da
       optionsError.value = '当前股票证据没有锁定交易日，未展示期权快照。'
       return
     }
-    const response = await api.getObservationOptions(targetDate, selectedSymbol.value)
+    const response = await api.getObservationOptions(targetDate, requestSymbol)
+    if (requestGeneration !== optionsRequestGeneration || requestEvidenceGeneration !== evidenceRequestGeneration || requestSymbol !== selectedSymbol.value) return
     optionsPayload.value = response.options
     optionsAlignment.value = response.alignment
     if (response.run_id) {
@@ -448,12 +481,13 @@ async function loadOptionsEvidence(targetTradingDate = dataset.value?.trading_da
     }
     if (!response.available && response.message) optionsError.value = response.message
   } catch (reason) {
+    if (requestGeneration !== optionsRequestGeneration || requestEvidenceGeneration !== evidenceRequestGeneration || requestSymbol !== selectedSymbol.value) return
     optionsError.value = reason instanceof Error ? reason.message : '期权快照读取失败。'
     optionsPayload.value = null
     optionsAlignment.value = null
     optionsSourceRun.value = null
   } finally {
-    optionsLoading.value = false
+    if (requestGeneration === optionsRequestGeneration && requestEvidenceGeneration === evidenceRequestGeneration && requestSymbol === selectedSymbol.value) optionsLoading.value = false
   }
 }
 
@@ -628,10 +662,41 @@ async function loadWatchGroups() {
   }
 }
 
+onBeforeUnmount(() => {
+  evidenceRequestGeneration += 1
+  optionsRequestGeneration += 1
+  evidenceController?.abort()
+  frozenEvidence = null
+})
+
 onMounted(() => {
   void loadWatchGroups()
-  void loadEvidence().then(() => loadOptionsEvidence())
 })
+
+watch(
+  () => [
+    String(route.params.symbol ?? ''),
+    typeof route.query.dataset === 'string' ? route.query.dataset : '',
+    typeof route.query.run === 'string' ? route.query.run : '',
+  ],
+  ([routeSymbol]) => {
+    const normalized = String(routeSymbol ?? '').trim().toUpperCase()
+    if (normalized && normalized !== selectedSymbol.value) {
+      selectedSymbol.value = normalized
+      symbolDraft.value = normalized
+    }
+    cursorIndex.value = null
+    activeStrategy.value = null
+    const evidenceLoad = loadEvidence()
+    const loadGeneration = evidenceRequestGeneration
+    void evidenceLoad.then(() => {
+      if (loadGeneration === evidenceRequestGeneration && !evidenceController?.signal.aborted) {
+        return loadOptionsEvidence()
+      }
+    })
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
@@ -750,6 +815,12 @@ onMounted(() => {
             </template>
           </div>
         </section>
+
+        <OpportunityViewPanel
+          :dataset-id="dataset?.dataset_id ?? null"
+          :symbol="selectedSymbol"
+          :disabled="loading || Boolean(demoReason)"
+        />
 
         <section class="chart-toolbar">
           <div class="range-tabs"><span class="toolbar-label">WINDOW</span><button v-for="item in ['3M', '6M', '1Y', 'ALL']" :key="item" type="button" :class="{ active: range === item }" @click="setRange(item)">{{ item }}</button></div>

@@ -78,5 +78,5 @@ DATABASE_FILE=backend/urus.db
 
 - 没有登录认证，只适合可信 LAN；公网部署必须增加认证、访问控制和密钥管理。
 - SQLite 只支持一个 Urus backend 写入实例。
-- 调度器按 `exchange-calendars` 过滤周末、节假日和提前收市。
+- 启用 Moomoo 时，调度器按 Moomoo US trading-days API 过滤交易日，并按 `exchange-calendars` 计算开收市与提前收市；未启用时使用本地日历。
 - 系统是研究与决策辅助，不包含下单、仓位限制和自动风控。

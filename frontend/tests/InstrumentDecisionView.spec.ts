@@ -1,4 +1,4 @@
-import { flushPromises, mount } from '@vue/test-utils'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { api } from '@/api/client'
@@ -6,6 +6,7 @@ import InstrumentDecisionView from '@/views/InstrumentDecisionView.vue'
 import { router } from '@/router'
 import type { ObservationGroup } from '@/types/api'
 
+enableAutoUnmount(afterEach)
 afterEach(() => vi.restoreAllMocks())
 
 describe('InstrumentDecisionView', () => {
@@ -179,11 +180,24 @@ describe('InstrumentDecisionView', () => {
     await flushPromises()
 
     expect(create).not.toHaveBeenCalled()
-    expect(getDataset).toHaveBeenCalledWith('frozen-1')
-    expect(getChart).toHaveBeenCalledWith('frozen-1')
-    expect(getStrategies).toHaveBeenCalledWith('frozen-1')
+    expect(getDataset).toHaveBeenCalledWith('frozen-1', expect.any(AbortSignal))
+    expect(getChart).toHaveBeenCalledWith('frozen-1', expect.any(AbortSignal))
+    expect(getStrategies).toHaveBeenCalledWith('frozen-1', expect.any(AbortSignal))
     expect(wrapper.find('.demo-banner').exists()).toBe(false)
     expect(wrapper.find('.connection-state').text()).toContain('EVIDENCE API')
+
+    // A new route context for the same immutable dataset reuses the large
+    // chart payload, while strategy results are still refreshed.
+    const firstSignal = getChart.mock.calls[0]?.[1]
+    await router.push('/instruments/INTC?dataset=frozen-1&run=run-2')
+    await flushPromises()
+    expect(getChart).toHaveBeenCalledTimes(1)
+    expect(getDataset).toHaveBeenCalledTimes(1)
+    expect(getStrategies).toHaveBeenCalledTimes(2)
+    expect(firstSignal?.aborted).toBe(true)
+    const activeSignal = getStrategies.mock.calls[1]?.[1]
+    wrapper.unmount()
+    expect(activeSignal?.aborted).toBe(true)
   })
 
   it('renders the backend setup plan values instead of recomputing setup distances in the browser', async () => {

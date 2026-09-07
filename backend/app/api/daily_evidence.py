@@ -1,17 +1,22 @@
 from __future__ import annotations
 
+import asyncio
+import threading
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db, get_settings
 from app.core.config import Settings
 from app.core.errors import AppError
+from app.core.time import utc_now
 from app.decision_harness.market_evidence import DailyMarketEvidenceService
 from app.integrations.moomoo import OpenDMarketAdapter
 from app.services.history_quota import HistoryAdmission
 from app.services.market_data_collection import MoomooCollectionCoordinator
+from app.services.opportunity_views import DailyOpportunityViewService
+from app.services.trading_calendar import build_moomoo_calendar
 from app.schemas.daily_evidence import (
     DailyDatasetCreateRequest,
     DailyEvidenceResponse,
@@ -35,8 +40,8 @@ def create_daily_dataset(
     adapter = None
     history_admission = None
     collection_coordinator = None
+    calendar_source = None
     try:
-        service = DailyMarketEvidenceService(db, settings)
         if settings.moomoo_enabled:
             collection_coordinator = MoomooCollectionCoordinator(settings)
             history_admission = HistoryAdmission(
@@ -53,13 +58,22 @@ def create_daily_dataset(
                 rate_limiter=collection_coordinator,
                 history_request_interval_seconds=settings.moomoo_history_request_interval_seconds,
                 snapshot_request_interval_seconds=settings.moomoo_snapshot_request_interval_seconds,
+                trading_calendar_request_interval_seconds=(
+                    settings.moomoo_trading_calendar_request_interval_seconds
+                ),
             )
+            calendar_source = build_moomoo_calendar(adapter, settings.market_calendar)
+            history_admission.bind_calendar_source(calendar_source)
             history_admission.bind_quota_reader(adapter.quota_snapshot)
             history_admission.prepare_symbols(
                 [*payload.symbols, *payload.benchmark_symbols],
                 now=payload.cutoff_time,
             )
-        result = service.freeze(
+        result = DailyMarketEvidenceService(
+            db,
+            settings,
+            calendar_source=calendar_source,
+        ).freeze(
             scope_type=payload.scope_type,
             scope_id=payload.scope_id.upper() if payload.scope_type == "instrument" else payload.scope_id,
             symbols=payload.symbols,
@@ -104,6 +118,62 @@ def get_daily_chart_projection(
     payload = DailyMarketEvidenceService(db, settings).get_chart(dataset_id)
     if payload is None:
         raise AppError("找不到 Decision Chart Projection", code="daily_chart_not_found", status_code=404)
+    return payload
+
+
+@router.get(
+    "/datasets/{dataset_id}/opportunity-view",
+    response_model=dict[str, object],
+)
+async def get_daily_opportunity_view(
+    request: Request,
+    dataset_id: str,
+    symbol: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, object]:
+    cancel_event = threading.Event()
+    service = DailyOpportunityViewService(db, settings)
+
+    def _read_view() -> dict[str, object] | None:
+        return service.get_dataset_opportunity_view(
+            dataset_id,
+            viewed_at=utc_now(),
+            symbol=symbol,
+            cancel_event=cancel_event,
+        )
+
+    task = asyncio.create_task(asyncio.to_thread(_read_view))
+    disconnected = False
+    try:
+        while not task.done():
+            if request is not None and await request.is_disconnected():
+                disconnected = True
+                cancel_event.set()
+                # Let the coordinator observe the cancellation and terminate
+                # its child before the request-scoped DB session is closed.
+                try:
+                    await asyncio.shield(task)
+                except Exception:
+                    pass
+                raise AppError(
+                    "机会视图请求已断开",
+                    code="daily_opportunity_view_cancelled",
+                    status_code=499,
+                )
+            await asyncio.sleep(0.05)
+        payload = await task
+    except ValueError as exc:
+        raise AppError(
+            str(exc),
+            code="daily_dataset_symbol_invalid",
+            status_code=422,
+        ) from exc
+    finally:
+        if disconnected or not task.done():
+            cancel_event.set()
+    if payload is None:
+        raise AppError("找不到 Daily Decision Dataset", code="daily_dataset_not_found", status_code=404)
     return payload
 
 

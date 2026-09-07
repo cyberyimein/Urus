@@ -274,13 +274,18 @@ class ObservationGroupSyncService:
 class ObservationRunService:
     """Freeze every selected observation group and derive one immutable run."""
 
-    def __init__(self, session, settings) -> None:
+    def __init__(self, session, settings, *, calendar_source: Any | None = None) -> None:
         self.session = session
         self.settings = settings
+        self.calendar_source = calendar_source
         self.groups = ObservationGroupRepository(session)
         self.repository = ObservationRepository(session)
         self.universe_revisions = ObservationUniverseRevisionRepository(session)
-        self.daily = DailyMarketEvidenceService(session, settings)
+        self.daily = DailyMarketEvidenceService(
+            session,
+            settings,
+            calendar_source=calendar_source,
+        )
         self.options = OptionsCollectionService()
 
     def create_run(
@@ -293,13 +298,21 @@ class ObservationRunService:
         universe_sync: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         cutoff = as_utc(request.cutoff_time or utc_now())
-        latest_completed = latest_completed_session_date(cutoff, self.settings.market_calendar)
+        latest_completed = latest_completed_session_date(
+            cutoff,
+            self.settings.market_calendar,
+            calendar_source=self.calendar_source,
+        )
         trading_date = request.trading_date or latest_completed
         if trading_date > latest_completed:
             raise ValueError(
                 f"{trading_date.isoformat()} 尚未完成收市；当前最后完整交易日为 {latest_completed.isoformat()}"
             )
-        if not is_trading_session_date(trading_date, self.settings.market_calendar):
+        if not is_trading_session_date(
+            trading_date,
+            self.settings.market_calendar,
+            calendar_source=self.calendar_source,
+        ):
             raise ValueError(f"{trading_date.isoformat()} 不是 {self.settings.market_calendar} 的交易日")
 
         selected_ids = request.group_ids or [item.group_id for item in self.groups.list_active()]

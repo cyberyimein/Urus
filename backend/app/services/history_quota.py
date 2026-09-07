@@ -120,9 +120,16 @@ def normalize_quota_payload(value: object) -> dict[str, object]:
 class HistoryCapacityService:
     """Plan history collection and project one durable state per symbol."""
 
-    def __init__(self, session: Session, settings: Settings):
+    def __init__(
+        self,
+        session: Session,
+        settings: Settings,
+        *,
+        calendar_source: Any | None = None,
+    ):
         self.session = session
         self.settings = settings
+        self.calendar_source = calendar_source
         self.provider = HISTORY_PROVIDER
         self.reserve_ratio = max(
             0.0, float(getattr(settings, "moomoo_history_quota_reserve_ratio", 0.20))
@@ -519,7 +526,11 @@ class HistoryCapacityService:
         try:
             from app.services.capital_flow import latest_completed_session_date
 
-            return latest_completed_session_date(now, self.settings.market_calendar)
+            return latest_completed_session_date(
+                now,
+                self.settings.market_calendar,
+                calendar_source=self.calendar_source,
+            )
         except Exception:
             return now.date()
 
@@ -568,9 +579,14 @@ class HistoryAdmission:
         universe_version_id: str | None = None,
         run_id: str | None = None,
         rate_limiter: Any | None = None,
+        calendar_source: Any | None = None,
     ) -> None:
         del run_id
-        self.service = HistoryCapacityService(session, settings)
+        self.service = HistoryCapacityService(
+            session,
+            settings,
+            calendar_source=calendar_source,
+        )
         self.quota_reader = quota_reader
         self.universe_version_id = universe_version_id
         self.coordinator = rate_limiter
@@ -579,6 +595,9 @@ class HistoryAdmission:
 
     def bind_quota_reader(self, reader: QuotaReader) -> None:
         self.quota_reader = reader
+
+    def bind_calendar_source(self, calendar_source: Any) -> None:
+        self.service.calendar_source = calendar_source
 
     def prepare_symbols(
         self, symbols: Iterable[str], *, now: datetime | None = None

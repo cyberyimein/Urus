@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from scripts.schedule_market_data_collection import collect, due_slots, slot_key
@@ -95,4 +95,27 @@ def test_post_close_slot_syncs_universe_and_creates_observation(monkeypatch) -> 
                 "universe_source_url": "https://deployed.example/api",
             },
         ),
+    ]
+
+
+def test_collect_can_pin_the_provider_completed_trading_date(monkeypatch) -> None:
+    payloads: list[dict | None] = []
+
+    def fake_request(url: str, *, method: str = "GET", payload=None, timeout: float = 10.0):
+        del method, timeout
+        if url.endswith("/observation/groups/sync"):
+            return {"universe_revision_id": "revision-1"}
+        payloads.append(payload)
+        return {"run_id": "observation-1", "status": "succeeded"}
+
+    monkeypatch.setattr("scripts.schedule_market_data_collection.request_json", fake_request)
+
+    collect("http://urus.test/api", timeout=30, trading_date=date(2026, 8, 7))
+
+    assert payloads == [
+        {
+            "trigger_mode": "scheduled",
+            "trading_date": "2026-08-07",
+            "universe_revision_id": "revision-1",
+        }
     ]

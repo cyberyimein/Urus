@@ -13,7 +13,10 @@ Observation Run
     └─ OptionsCollectionService → option metadata/chain/snapshot
 ```
 
-调度器只在美股 session 完成后提交一次 `post_close_observation`。它不直接调用 OpenD，也不拆分出额外采集进程。用户通过 API 触发补采时仍使用相同的服务、锁和限频。
+调度器只在美股 session 完成后提交一次 `post_close_observation`。启用 Moomoo 时，它会单独读取一次缓存化的 US trading-days 日历；股票/期权行情仍由 Observation Run 通过相同的服务、锁和限频采集，调度器不拆分出额外采集进程。
+
+交易日历接口对应 Moomoo `request_trading_days(market=US)`；实现入口是
+`backend/app/services/trading_calendar.py` 和 `backend/app/integrations/moomoo.py`。
 
 ## 2. 日线额度
 
@@ -115,6 +118,7 @@ MOOMOO_HISTORY_QUOTA_RESERVE_ABSOLUTE
 MOOMOO_CAPACITY_SNAPSHOT_TTL_SECONDS
 MOOMOO_HISTORY_REQUEST_INTERVAL_SECONDS
 MOOMOO_SNAPSHOT_REQUEST_INTERVAL_SECONDS
+MOOMOO_TRADING_CALENDAR_REQUEST_INTERVAL_SECONDS
 MOOMOO_COLLECTION_LOCK_PATH
 OPTIONS_TARGET_SYMBOLS
 OPTIONS_WATCHLIST_SYMBOLS

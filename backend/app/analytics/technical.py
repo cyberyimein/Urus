@@ -938,6 +938,8 @@ def _calculate_volume_effort_result(
     result: dict[str, object] = {
         "available": False,
         "quality_status": "unavailable",
+        "model_fidelity": "daily_ohlcv_proxy",
+        "volume_measure": "daily_share_volume",
         "source": source,
         "as_of": as_of,
         "sample_count": 0,
@@ -953,6 +955,8 @@ def _calculate_volume_effort_result(
         "combination": "unavailable",
         "signal": "unavailable",
         "signal_strength": "unavailable",
+        "model_fidelity": "daily_ohlcv_proxy",
+        "volume_measure": "daily_share_volume",
         "thresholds": {
             "volume_surge_ratio": VOLUME_SURGE_RATIO,
             "volume_dry_ratio": VOLUME_DRY_RATIO,

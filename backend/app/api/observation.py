@@ -27,6 +27,7 @@ from app.services.observation import ObservationGroupSyncService, ObservationRun
 from app.services.history_quota import HistoryAdmission
 from app.services.market_data_collection import MoomooCollectionCoordinator
 from app.services.options_collection import OptionsCollectionService
+from app.services.trading_calendar import build_moomoo_calendar
 from app.repositories.universe import InstrumentUniverseRepository
 
 
@@ -68,6 +69,9 @@ def _market_adapter(
         rate_limiter=rate_limiter,
         history_request_interval_seconds=settings.moomoo_history_request_interval_seconds,
         snapshot_request_interval_seconds=settings.moomoo_snapshot_request_interval_seconds,
+        trading_calendar_request_interval_seconds=(
+            settings.moomoo_trading_calendar_request_interval_seconds
+        ),
     )
 
 
@@ -161,17 +165,26 @@ def create_observation_run(
     )
     adapter = None
     options_adapter = None
+    calendar_source = None
     try:
         adapter = _market_adapter(
             settings,
             history_admission=history_admission,
             rate_limiter=collection_coordinator,
         )
+        if adapter is not None:
+            calendar_source = build_moomoo_calendar(adapter, settings.market_calendar)
+            if history_admission is not None:
+                history_admission.bind_calendar_source(calendar_source)
         options_adapter = OptionsCollectionService.build_adapter(
             settings,
             rate_limiter=collection_coordinator,
         )
-        result = ObservationRunService(db, settings).create_run(
+        result = ObservationRunService(
+            db,
+            settings,
+            calendar_source=calendar_source,
+        ).create_run(
             payload,
             bar_source=adapter,
             options_source=options_adapter,

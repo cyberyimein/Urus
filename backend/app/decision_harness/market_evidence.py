@@ -31,7 +31,7 @@ from app.services.capital_flow import (
 class DailyMarketEvidenceService:
     """Freeze daily bars, indicators, quality and chart data behind one Interface."""
 
-    def __init__(self, session, settings: Settings):
+    def __init__(self, session, settings: Settings, *, calendar_source: Any | None = None):
         self.session = session
         self.settings = settings
         self.repository = DailyEvidenceRepository(session)
@@ -39,6 +39,7 @@ class DailyMarketEvidenceService:
         self.strategy_registry = StrategyRegistry()
         self.market_timezone = settings.market_timezone
         self.calendar_name = settings.market_calendar
+        self.calendar_source = calendar_source
         self.minimum_history_bars = max(20, int(getattr(settings, "daily_min_history_bars", 260)))
 
     def freeze(
@@ -71,13 +72,21 @@ class DailyMarketEvidenceService:
         auxiliary = list(dict.fromkeys(normalise_symbol(item) for item in auxiliary_symbols))
         primary_symbols = list(dict.fromkeys(requested_symbols + benchmarks))
         all_symbols = list(dict.fromkeys(primary_symbols + auxiliary))
-        latest_completed = latest_completed_session_date(cutoff, self.calendar_name)
+        latest_completed = latest_completed_session_date(
+            cutoff,
+            self.calendar_name,
+            calendar_source=self.calendar_source,
+        )
         target_date = trading_date or latest_completed
         if target_date > latest_completed:
             raise ValueError(
                 f"{target_date.isoformat()} 尚未完成收市；当前最后完整交易日为 {latest_completed.isoformat()}"
             )
-        if not is_trading_session_date(target_date, self.calendar_name):
+        if not is_trading_session_date(
+            target_date,
+            self.calendar_name,
+            calendar_source=self.calendar_source,
+        ):
             raise ValueError(f"{target_date.isoformat()} 不是 {self.calendar_name} 的交易日")
 
         collection = {"status": "not_requested", "fetched_symbols": [], "warnings": []}
@@ -533,7 +542,14 @@ class DailyMarketEvidenceService:
             warnings.append(f"最后日 K 为 {bars[-1]['date']}，早于目标交易日的数据缺失。")
             status = "stale" if status == "ok" else status
         dates = [date.fromisoformat(str(item["date"])) for item in bars]
-        expected_dates = set(trading_session_dates(dates[0], min(dates[-1], target_date), self.calendar_name))
+        expected_dates = set(
+            trading_session_dates(
+                dates[0],
+                min(dates[-1], target_date),
+                self.calendar_name,
+                calendar_source=self.calendar_source,
+            )
+        )
         actual_dates = set(dates)
         unexpected_dates = sorted(actual_dates - expected_dates)
         if unexpected_dates:

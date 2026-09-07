@@ -33,6 +33,7 @@ import type {
   RemoteDecisionRun,
   RemoteDecisionSource,
 } from '@/types/remoteDecision'
+import type { DailyOpportunityViewResponse } from '@/types/opportunityView'
 
 // Local Vite serves `/api` through the dev proxy, which keeps browser requests
 // same-origin and avoids loopback cross-port restrictions. Deployments can
@@ -62,7 +63,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
         ...(init?.headers ?? {}),
       },
     })
-  } catch {
+  } catch (error) {
+    if (init?.signal?.aborted) throw error
     throw new ApiError('无法连接后端，请确认 FastAPI 已启动。', 0, 'network_error')
   }
 
@@ -113,12 +115,17 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(requestBody),
     }),
-  getDailyDataset: (datasetId: string) =>
-    request<DailyDecisionDataset>(`/daily-evidence/datasets/${encodeURIComponent(datasetId)}`),
-  getDailyChart: (datasetId: string) =>
-    request<DecisionChartProjection>(`/daily-evidence/datasets/${encodeURIComponent(datasetId)}/chart`),
-  getDailyStrategies: (datasetId: string) =>
-    request<StrategyBundleResponse>(`/daily-evidence/datasets/${encodeURIComponent(datasetId)}/strategies`),
+  getDailyDataset: (datasetId: string, signal?: AbortSignal) =>
+    request<DailyDecisionDataset>(`/daily-evidence/datasets/${encodeURIComponent(datasetId)}`, { signal }),
+  getDailyChart: (datasetId: string, signal?: AbortSignal) =>
+    request<DecisionChartProjection>(`/daily-evidence/datasets/${encodeURIComponent(datasetId)}/chart`, { signal }),
+  getDailyStrategies: (datasetId: string, signal?: AbortSignal) =>
+    request<StrategyBundleResponse>(`/daily-evidence/datasets/${encodeURIComponent(datasetId)}/strategies`, { signal }),
+  getDailyOpportunityView: (datasetId: string, symbol?: string, signal?: AbortSignal) =>
+    request<DailyOpportunityViewResponse>(
+      `/daily-evidence/datasets/${encodeURIComponent(datasetId)}/opportunity-view${symbol ? `?symbol=${encodeURIComponent(symbol.trim().toUpperCase())}` : ''}`,
+      { signal },
+    ),
   listObservationGroups: () => request<ObservationGroup[]>('/observation/groups'),
   syncObservationGroups: () => request<ObservationGroupSync>('/observation/groups/sync', {
     method: 'POST',

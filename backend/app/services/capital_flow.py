@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from functools import lru_cache
 from typing import Any, Protocol
 
 from app.repositories.capital_flows import CapitalFlowRepository
 from app.analytics.capital_flow import extract_capital_flow_signal
+from app.services.trading_calendar import calendar_dates
 
 
 CAPITAL_FLOW_PROVIDER = "moomoo_openapi"
@@ -24,52 +25,125 @@ def _calendar(name: str) -> Any:
     return xcals.get_calendar(name)
 
 
-def latest_completed_session_date(cutoff_time: datetime, calendar_name: str) -> date:
+def _session_dates(calendar: Any, start_date: date, end_date: date) -> list[date]:
+    if start_date > end_date:
+        return []
+    return calendar_dates(
+        calendar.sessions_in_range(start_date.isoformat(), end_date.isoformat())
+    )
+
+
+def _session_close_utc(calendar: Any, session_date: date) -> datetime:
+    session_label: Any = session_date
+    if hasattr(calendar, "date_to_session"):
+        session_label = calendar.date_to_session(session_date, direction="none")
+    close = calendar.session_close(session_label)
+    if close is None:
+        raise ValueError(f"{session_date.isoformat()} 缺少交易日收市时间")
+    if hasattr(close, "to_pydatetime"):
+        close = close.to_pydatetime()
+    if not isinstance(close, datetime):
+        raise TypeError(f"无法解析 {session_date.isoformat()} 的收市时间：{close!r}")
+    if close.tzinfo is None:
+        close = close.replace(tzinfo=UTC)
+    return close.astimezone(UTC)
+
+
+def _calendar_instance(calendar_name: str, calendar_source: Any | None) -> Any:
+    return calendar_source if calendar_source is not None else _calendar(calendar_name)
+
+
+def latest_completed_session_date(
+    cutoff_time: datetime,
+    calendar_name: str,
+    *,
+    calendar_source: Any | None = None,
+) -> date:
     """Return the latest exchange session whose official close is not in the future."""
 
     cutoff_utc = cutoff_time.astimezone(UTC)
-    calendar = _calendar(calendar_name)
-    candidate = calendar.date_to_session(cutoff_utc.date(), direction="previous")
-    close_at = calendar.session_close(candidate).to_pydatetime()
-    if close_at.tzinfo is None:
-        close_at = close_at.replace(tzinfo=UTC)
-    if close_at.astimezone(UTC) > cutoff_utc:
-        candidate = calendar.previous_session(candidate)
-    return candidate.date()
+    calendar = _calendar_instance(calendar_name, calendar_source)
+    if hasattr(calendar, "date_to_session"):
+        candidate = calendar.date_to_session(cutoff_utc.date(), direction="previous")
+        candidate_date = calendar_dates([candidate])[0]
+    else:
+        sessions = _session_dates(
+            calendar,
+            cutoff_utc.date() - timedelta(days=370),
+            cutoff_utc.date(),
+        )
+        if not sessions:
+            raise ValueError(f"{cutoff_utc.date().isoformat()} 之前没有可用交易日")
+        candidate_date = sessions[-1]
+
+    if _session_close_utc(calendar, candidate_date) > cutoff_utc:
+        previous = _session_dates(
+            calendar,
+            candidate_date - timedelta(days=370),
+            candidate_date - timedelta(days=1),
+        )
+        if not previous:
+            raise ValueError(f"{candidate_date.isoformat()} 之前没有可用交易日")
+        candidate_date = previous[-1]
+    return candidate_date
 
 
-def is_trading_session_date(target_date: date, calendar_name: str) -> bool:
+def is_trading_session_date(
+    target_date: date,
+    calendar_name: str,
+    *,
+    calendar_source: Any | None = None,
+) -> bool:
     """Return whether ``target_date`` is an official exchange session."""
 
-    calendar = _calendar(calendar_name)
+    calendar = _calendar_instance(calendar_name, calendar_source)
+    if hasattr(calendar, "is_session"):
+        try:
+            return bool(calendar.is_session(target_date))
+        except Exception:
+            return False
     try:
         session = calendar.date_to_session(target_date, direction="none")
     except Exception:
         return False
-    return session.date() == target_date
+    return calendar_dates([session])[0] == target_date
 
 
-def trading_session_dates(start_date: date, end_date: date, calendar_name: str) -> list[date]:
+def trading_session_dates(
+    start_date: date,
+    end_date: date,
+    calendar_name: str,
+    *,
+    calendar_source: Any | None = None,
+) -> list[date]:
     """Return official exchange sessions in an inclusive date range."""
 
     if start_date > end_date:
         return []
-    calendar = _calendar(calendar_name)
-    sessions = calendar.sessions_in_range(start_date.isoformat(), end_date.isoformat())
-    return [session.date() for session in sessions]
+    calendar = _calendar_instance(calendar_name, calendar_source)
+    return _session_dates(calendar, start_date, end_date)
 
 
 def completed_session_dates(
-    cutoff_time: datetime, calendar_name: str, *, count: int
+    cutoff_time: datetime,
+    calendar_name: str,
+    *,
+    count: int,
+    calendar_source: Any | None = None,
 ) -> list[date]:
-    calendar = _calendar(calendar_name)
-    latest = latest_completed_session_date(cutoff_time, calendar_name)
-    session = calendar.date_to_session(latest)
-    dates = [session.date()]
-    for _ in range(max(1, count) - 1):
-        session = calendar.previous_session(session)
-        dates.append(session.date())
-    return list(reversed(dates))
+    latest = latest_completed_session_date(
+        cutoff_time,
+        calendar_name,
+        calendar_source=calendar_source,
+    )
+    lookback_days = max(370, max(1, count) * 3)
+    dates = trading_session_dates(
+        latest - timedelta(days=lookback_days),
+        latest,
+        calendar_name,
+        calendar_source=calendar_source,
+    )
+    return dates[-max(1, count) :]
 
 
 class CapitalFlowService:
@@ -84,6 +158,7 @@ class CapitalFlowService:
         calendar_name: str,
         cache_days: int = 30,
         projection_days: int = 5,
+        calendar_source: Any | None = None,
     ) -> None:
         self.repository = repository
         self.source = source
@@ -91,9 +166,14 @@ class CapitalFlowService:
         self.calendar_name = calendar_name
         self.cache_days = max(5, cache_days)
         self.projection_days = max(1, min(projection_days, 5))
+        self.calendar_source = calendar_source
 
     def collect(self, cutoff_time: datetime) -> dict[str, Any]:
-        target_date = latest_completed_session_date(cutoff_time, self.calendar_name)
+        target_date = latest_completed_session_date(
+            cutoff_time,
+            self.calendar_name,
+            calendar_source=self.calendar_source,
+        )
         result = self._collect_dates([target_date])
         return {
             **result,
@@ -108,7 +188,10 @@ class CapitalFlowService:
 
     def backfill(self, cutoff_time: datetime, *, days: int = 5) -> dict[str, Any]:
         session_dates = completed_session_dates(
-            cutoff_time, self.calendar_name, count=max(1, days)
+            cutoff_time,
+            self.calendar_name,
+            count=max(1, days),
+            calendar_source=self.calendar_source,
         )
         result = self._collect_dates(session_dates)
         return {

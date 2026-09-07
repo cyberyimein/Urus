@@ -64,7 +64,7 @@ npm run dev
 
 ## 收市观察任务
 
-常驻调度器使用东京时区的美股交易日历，在收市后同步 Universe、创建 Observation Run，并在同一运行中完成股票日线与期权快照：
+常驻调度器使用东京时区运行；启用 Moomoo OpenD 时，交易日资格由 Moomoo 的 US trading-days API 决定，收市时刻继续由本地交易所日历提供。任务会在收市后同步 Universe、创建 Observation Run，并在同一运行中完成股票日线与期权快照：
 
 ```bash
 cd backend
@@ -82,7 +82,7 @@ uv run python scripts/schedule_market_data_collection.py \
   --once post_close_observation
 ```
 
-脚本按交易所节假日和提前收市规则计算实际时点，并用状态文件防止同一时点重复执行。股票日线和期权请求共享 `MoomooCollectionCoordinator` 的主机级锁与限频器。
+脚本按交易日历和提前收市规则计算实际时点，并用状态文件防止同一时点重复执行。股票日线和期权请求共享 `MoomooCollectionCoordinator` 的主机级锁与限频器；日历查询本身使用缓存和独立限频，不会长期占用采集锁。
 
 ## API
 
@@ -106,6 +106,7 @@ API 前缀为 `/api`，完整 schema 以运行中的 OpenAPI 为准：
 - `MOOMOO_ENABLED`、`MOOMOO_HOST`、`MOOMOO_PORT`：OpenD 连接。
 - `OPTIONS_TARGET_SYMBOLS`、`OPTIONS_WATCHLIST_SYMBOLS`：期权队列；期权数据按收市观察任务串行采集。
 - `MOOMOO_HISTORY_*`、`MOOMOO_*INTERVAL_SECONDS`：日线额度和请求间隔控制。
+- `MOOMOO_TRADING_CALENDAR_REQUEST_INTERVAL_SECONDS`：Moomoo 交易日历请求间隔，默认 `1.05` 秒。
 - `OBSERVATION_UNIVERSE_SOURCE_URL`：可选的上游 Universe 地址；默认 fail-closed。
 - `SCHEDULED_POST_CLOSE_ENABLED`：收市后常驻任务开关，也可通过 `/api/settings` 修改。
 - `ANOMALO_WORKFLOW_*`：可选的远程 AI Workflow 凭据和超时。Token 只放环境/Secret Store，不进入数据库或前端。

@@ -39,6 +39,7 @@ def project_symbol_setups(
                 "decision_id": decision.get("decision_id"),
                 "strategy_name": strategy.get("name"),
                 "strategy_version": strategy.get("version"),
+                "rule_variant": strategy.get("rule_variant", "default"),
                 "direction": plan.get("direction") or decision.get("stance"),
                 "stage": plan.get("stage") or progress.get("stage"),
                 "confirmation_distance_atr": _number(
@@ -57,6 +58,7 @@ def project_symbol_setups(
             "candidate_count": len(ordered),
             "primary_setup": ordered[0] if ordered else None,
             "alternatives": ordered[1:],
+            "risk_projection": _risk_projection(ordered),
         }
     return result
 
@@ -108,6 +110,47 @@ def _setup_order(item: dict[str, Any]) -> tuple[Any, ...]:
         str(item.get("strategy_name") or ""),
         str(item.get("decision_id") or ""),
     )
+
+
+def _risk_projection(candidates: list[dict[str, Any]]) -> dict[str, Any]:
+    """Expose every directional risk independently of primary setup ordering."""
+
+    risk_items = [
+        {
+            "decision_id": item.get("decision_id"),
+            "direction": item.get("direction"),
+            "strategy_name": item.get("strategy_name"),
+            "strategy_version": item.get("strategy_version"),
+            "rule_variant": item.get("rule_variant"),
+            "invalidation_distance_atr": (
+                item.get("setup_plan", {}).get("invalidation_distance_atr")
+                if isinstance(item.get("setup_plan"), dict)
+                else None
+            ),
+        }
+        for item in candidates
+    ]
+    bearish = [item for item in risk_items if item["direction"] == "bearish"]
+    bullish = [item for item in risk_items if item["direction"] == "bullish"]
+    ordered = sorted(
+        risk_items,
+        key=lambda item: (
+            item["invalidation_distance_atr"]
+            if isinstance(item["invalidation_distance_atr"], (int, float))
+            else float("-inf"),
+            str(item["decision_id"] or ""),
+        ),
+        reverse=True,
+    )
+    return {
+        "candidate_count": len(risk_items),
+        "bullish_count": len(bullish),
+        "bearish_count": len(bearish),
+        "highest_invalidation_distance_atr": (
+            ordered[0]["invalidation_distance_atr"] if ordered else None
+        ),
+        "candidates": ordered,
+    }
 
 
 def _remaining_distance(

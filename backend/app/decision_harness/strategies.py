@@ -60,6 +60,18 @@ class StrategyAdapter:
     rule_set: str = ""
 
     @property
+    def dependency_sha256(self) -> str:
+        try:
+            dependency_source = {
+                "technical_indicators": getsource(calculate_technical_indicators),
+                "setup_plan": getsource(build_setup_plan),
+                "setup_projection": getsource(project_symbol_setups),
+            }
+        except (OSError, TypeError):
+            dependency_source = "unavailable"
+        return content_sha256(dependency_source)
+
+    @property
     def implementation_sha256(self) -> str:
         try:
             implementation_source = {
@@ -74,7 +86,9 @@ class StrategyAdapter:
             {
                 "name": self.name,
                 "version": self.version,
+                "rule_variant": getattr(self, "rule_variant", "default"),
                 "rule_set": self.rule_set,
+                "dependency_sha256": self.dependency_sha256,
                 "implementation_source": implementation_source,
             }
         )
@@ -156,6 +170,8 @@ class StrategyAdapter:
         strategy = {
             "name": self.name,
             "version": self.version,
+            "rule_variant": getattr(self, "rule_variant", "default"),
+            "dependency_sha256": self.dependency_sha256,
             "implementation_sha256": self.implementation_sha256,
         }
         decision: dict[str, Any] = {
@@ -328,10 +344,14 @@ class TrendMomentumStrategy(StrategyAdapter):
 
 class MeanReversionStrategy(StrategyAdapter):
     name = "mean_reversion_v1"
+    version = "1.1.0"
     minimum_bars = 20
+    rule_variant = "reviewed_reentry_v1"
+    require_machine_confirmation = True
     rule_set = (
         "Bollinger 20/2 location, RSI14 extreme and slope, distance from MA20, "
-        "ATR context, and reversal confirmation; do not buy oversold alone."
+        "ATR context, reversal confirmation, and explicit band re-entry with RSI "
+        "direction; do not buy oversold alone."
     )
 
     def _evaluate(self, context: StrategyContext) -> dict[str, Any]:
@@ -393,7 +413,61 @@ class MeanReversionStrategy(StrategyAdapter):
         score = _bounded_score(score)
         stance, action = _stance_action(score)
         atr = _metric_value(context.indicators, "atr14")
-        stage = _stage_for_score(score)
+        machine_confirmed = True
+        if self.require_machine_confirmation:
+            previous_indicators = (
+                calculate_technical_indicators(context.bars[:-1], source="daily_bars")
+                if len(context.bars) > self.minimum_bars
+                else {}
+            )
+            previous_bollinger = _mapping(previous_indicators.get("bollinger_20_2"))
+            previous_position = _number(previous_bollinger.get("position_ratio"))
+            previous_rsi = _number(_mapping(previous_indicators.get("rsi14")).get("value"))
+            bullish_reentry = (
+                previous_position is not None
+                and previous_position <= 0
+                and position is not None
+                and 0 < position < 1
+                and rsi_value is not None
+                and previous_rsi is not None
+                and rsi_value > previous_rsi
+            )
+            bearish_reentry = (
+                previous_position is not None
+                and previous_position >= 1
+                and position is not None
+                and 0 < position < 1
+                and rsi_value is not None
+                and previous_rsi is not None
+                and rsi_value < previous_rsi
+            )
+            machine_confirmed = bullish_reentry or bearish_reentry
+            reasons.append(
+                _reason(
+                    "band_reentry_confirmed" if machine_confirmed else "band_reentry_pending",
+                    "价格重新回到布林带内侧并有 RSI 方向确认。"
+                    if machine_confirmed
+                    else "尚未满足价格重新回到布林带内侧的机器确认。",
+                )
+            )
+        stage = (
+            "confirmed"
+            if self.require_machine_confirmation and machine_confirmed and abs(score) >= 25
+            else "armed"
+            if self.require_machine_confirmation and abs(score) >= 25
+            else _stage_for_score(score)
+        )
+        if self.require_machine_confirmation and not machine_confirmed:
+            action = "watch" if action in {"prioritize", "avoid"} else action
+        stop = (
+            lower - 0.5 * atr
+            if self.require_machine_confirmation and score >= 0 and lower is not None and atr is not None
+            else upper + 0.5 * atr
+            if self.require_machine_confirmation and score < 0 and upper is not None and atr is not None
+            else lower
+            if score >= 0
+            else upper
+        )
         anchors = [
             _series_anchor(
                 context,
@@ -432,7 +506,7 @@ class MeanReversionStrategy(StrategyAdapter):
                 stage=stage,
                 as_of=context.as_of,
                 confirmation_distance_atr=_distance_atr(close, middle, atr),
-                invalidation_distance_atr=_distance_atr(close, lower if score >= 0 else upper, atr),
+                invalidation_distance_atr=_distance_atr(close, stop, atr),
                 bars_in_stage=1,
             ),
             reasons=reasons or [_reason("no_extreme", "价格和动量没有形成足够的偏离。" )],
@@ -441,7 +515,11 @@ class MeanReversionStrategy(StrategyAdapter):
                 "跌破下轨且放量时，均值回归假设失效风险上升。",
             ],
             confirmation_conditions=["价格重新收回布林带内侧。", "RSI14 方向与价格修复同步。"],
-            invalidation_conditions=["继续沿趋势方向扩张并伴随放量。", "价格远离中轨后未出现反转确认。"],
+            invalidation_conditions=(
+                ["继续沿趋势方向扩张并伴随放量。", "价格突破结构 stop。"]
+                if self.require_machine_confirmation
+                else ["继续沿趋势方向扩张并伴随放量。", "价格远离中轨后未出现反转确认。"]
+            ),
             visual_anchors=anchors,
             setup_plan=_directional_price_setup(
                 context=context,
@@ -449,11 +527,24 @@ class MeanReversionStrategy(StrategyAdapter):
                 stage=stage,
                 trigger=middle,
                 trigger_reference="bollinger_middle_20",
-                invalidation=lower if score >= 0 else upper,
+                invalidation=stop,
                 invalidation_reference="bollinger_outer_band_20_2",
                 atr=atr,
             ),
         )
+
+
+class MeanReversionBaselineStrategy(MeanReversionStrategy):
+    """The pre-review rule set, kept separate from the reviewed variant."""
+
+    name = "mean_reversion_v1_baseline"
+    version = "1.0.0"
+    rule_variant = "baseline_v1"
+    require_machine_confirmation = False
+    rule_set = (
+        "Bollinger 20/2 location, RSI14 extreme and slope, distance from MA20, "
+        "ATR context, and reversal confirmation; do not buy oversold alone."
+    )
 
 
 class QualityLeftSideReversalStrategy(StrategyAdapter):
@@ -718,6 +809,8 @@ class BreakoutVolumeStrategy(StrategyAdapter):
         prior20_low = min(_number(item.get("low")) or 0 for item in bars[-21:-1])
         prior60_high = max(_number(item.get("high")) or 0 for item in bars[-61:-1])
         prior60_low = min(_number(item.get("low")) or 0 for item in bars[-61:-1])
+        previous_prior20_high = max(_number(item.get("high")) or 0 for item in bars[-22:-2])
+        previous_prior20_low = min(_number(item.get("low")) or 0 for item in bars[-22:-2])
         volume = _mapping(context.indicators.get("volume_effort_result"))
         volume_ratio = _number(volume.get("volume_ratio_20d"))
         close_location = _number(volume.get("close_location_ratio"))
@@ -740,8 +833,16 @@ class BreakoutVolumeStrategy(StrategyAdapter):
             reasons.append(_reason("breakdown_20d", "收盘跌破前 20 个交易日低点。"))
         if volume_ratio is not None:
             if volume_ratio >= 1.5:
-                score += 18 if score >= 0 else -18
-                reasons.append(_reason("volume_expansion", f"成交量达到 20 日均量 {volume_ratio:.2f} 倍。"))
+                if score > 0:
+                    score += 18
+                    reasons.append(
+                        _reason("volume_expansion", f"成交量达到 20 日均量 {volume_ratio:.2f} 倍。")
+                    )
+                elif score < 0:
+                    score -= 18
+                    reasons.append(
+                        _reason("volume_expansion", f"成交量达到 20 日均量 {volume_ratio:.2f} 倍。")
+                    )
             elif volume_ratio < 0.8:
                 score = round(score * 0.75)
                 reasons.append(_reason("low_volume_break", "价格突破/跌破但成交量没有充分参与。"))
@@ -754,8 +855,18 @@ class BreakoutVolumeStrategy(StrategyAdapter):
                 reasons.append(_reason("close_near_low", "跌破日收盘位于日内低位附近。"))
         if range_atr_ratio is not None and range_atr_ratio >= 1.5:
             score += 8 if score > 0 else -8 if score < 0 else 0
-        failed_bullish = previous_close is not None and previous_close > prior20_high and close is not None and close <= prior20_high
-        failed_bearish = previous_close is not None and previous_close < prior20_low and close is not None and close >= prior20_low
+        failed_bullish = (
+            previous_close is not None
+            and previous_close > previous_prior20_high
+            and close is not None
+            and close <= previous_prior20_high
+        )
+        failed_bearish = (
+            previous_close is not None
+            and previous_close < previous_prior20_low
+            and close is not None
+            and close >= previous_prior20_low
+        )
         if failed_bullish:
             score -= 25
             reasons.append(_reason("failed_bullish_breakout", "价格重新跌回 20 日突破位下方。"))
@@ -952,6 +1063,8 @@ class StrategyRegistry:
                 {
                     "name": adapter.name,
                     "version": adapter.version,
+                    "rule_variant": getattr(adapter, "rule_variant", "default"),
+                    "dependency_sha256": adapter.dependency_sha256,
                     "implementation_sha256": adapter.implementation_sha256,
                 }
                 for adapter in self.adapters
@@ -1070,6 +1183,8 @@ def deterministic_synthesis(
         identity = (
             str(strategy["name"]),
             str(strategy["version"]),
+            str(strategy.get("rule_variant", "default")),
+            str(strategy.get("dependency_sha256", "unknown")),
             str(strategy["implementation_sha256"]),
         )
         if identity in seen_strategies:
@@ -1079,7 +1194,9 @@ def deterministic_synthesis(
             {
                 "name": identity[0],
                 "version": identity[1],
-                "implementation_sha256": identity[2],
+                "rule_variant": identity[2],
+                "dependency_sha256": identity[3],
+                "implementation_sha256": identity[4],
             }
         )
 
@@ -1136,7 +1253,13 @@ def _decision_consensus(decisions: list[dict[str, Any]]) -> dict[str, Any]:
         consensus_state = "no_signal"
 
     if consensus_state == "aligned":
-        suggested_action = "prioritize" if bullish else "avoid"
+        if bullish:
+            aligned_actions = {str(item.get("action")) for item in bullish}
+            suggested_action = "prioritize" if aligned_actions == {"prioritize"} else "watch"
+        elif bearish:
+            suggested_action = "avoid"
+        else:
+            suggested_action = "watch"
     elif consensus_state in {"conflicted", "mixed"}:
         suggested_action = "watch"
     else:
@@ -1249,14 +1372,16 @@ def _setup_progress(
     as_of: str | None,
     confirmation_distance_atr: float | None,
     invalidation_distance_atr: float | None,
-    bars_in_stage: int,
+    bars_in_stage: int | None,
 ) -> dict[str, Any]:
     return {
         "stage": stage,
-        "stage_since": as_of,
+        # The strategy adapter has no prior persisted state.  Reporting the
+        # current observation as the stage start would invent lifecycle age.
+        "stage_since": None,
         "confirmation_distance_atr": _rounded(confirmation_distance_atr),
         "invalidation_distance_atr": _rounded(invalidation_distance_atr),
-        "bars_in_stage": bars_in_stage,
+        "bars_in_stage": None,
         "changed_from_previous_stage": None,
     }
 

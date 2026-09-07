@@ -20,11 +20,13 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_DIR))
 
 from app.core.config import Settings  # noqa: E402
+from app.integrations.moomoo import OpenDMarketAdapter  # noqa: E402
 from app.integrations.moomoo_intraday_options import MoomooIntradayOptionsAdapter  # noqa: E402
 from app.intraday_options.collector import IntradayOptionCaptureService  # noqa: E402
 from app.intraday_options.maintenance import create_daily_backup  # noqa: E402
 from app.intraday_options.storage import IntradayOptionStore  # noqa: E402
 from app.services.market_data_collection import MoomooCollectionCoordinator  # noqa: E402
+from app.services.trading_calendar import build_moomoo_calendar  # noqa: E402
 
 
 ANCHORS = {
@@ -43,12 +45,62 @@ def exchange_calendar(name: str) -> Any:
     return xcals.get_calendar(name)
 
 
+def build_runtime_calendar(
+    settings: Settings,
+) -> tuple[Any, OpenDMarketAdapter | None]:
+    """Use Moomoo dates while retaining local session timestamps."""
+
+    exchange = exchange_calendar(settings.market_calendar)
+    if not settings.moomoo_enabled:
+        return exchange, None
+
+    adapter: OpenDMarketAdapter | None = None
+    try:
+        # This context is kept alive only for cached calendar reads. The
+        # collection coordinator is intentionally reserved for each capture
+        # so the long-running scheduler cannot hold its host-wide lock.
+        adapter = OpenDMarketAdapter(
+            settings.moomoo_host,
+            settings.moomoo_port,
+            market_timezone=settings.market_timezone,
+            sdk_home=Path(settings.moomoo_sdk_home),
+            market_symbols=[
+                item.strip()
+                for item in settings.moomoo_market_symbols.split(",")
+                if item.strip()
+            ],
+            history_request_interval_seconds=settings.moomoo_history_request_interval_seconds,
+            snapshot_request_interval_seconds=settings.moomoo_snapshot_request_interval_seconds,
+            trading_calendar_request_interval_seconds=(
+                settings.moomoo_trading_calendar_request_interval_seconds
+            ),
+        )
+        calendar = build_moomoo_calendar(adapter, settings.market_calendar)
+        market_today = datetime.now(ZoneInfo(settings.market_timezone)).date()
+        calendar.prefetch(market_today - timedelta(days=3), market_today + timedelta(days=3))
+        return calendar, adapter
+    except Exception:
+        if adapter is not None:
+            adapter.close()
+        raise
+
+
 def session_bounds(calendar: Any, market_date: date) -> tuple[datetime, datetime] | None:
     if not calendar.is_session(market_date):
         return None
-    row = calendar.schedule.loc[market_date.isoformat()]
-    opened = row["open"].to_pydatetime()
-    closed = row["close"].to_pydatetime()
+    if hasattr(calendar, "session_open"):
+        opened = calendar.session_open(market_date)
+        closed = calendar.session_close(market_date)
+    else:
+        row = calendar.schedule.loc[market_date.isoformat()]
+        opened = row["open"]
+        closed = row["close"]
+    if opened is None or closed is None:
+        return None
+    if hasattr(opened, "to_pydatetime"):
+        opened = opened.to_pydatetime()
+    if hasattr(closed, "to_pydatetime"):
+        closed = closed.to_pydatetime()
     if opened.tzinfo is None:
         opened = opened.replace(tzinfo=UTC)
     if closed.tzinfo is None:
@@ -237,7 +289,7 @@ def main(argv: list[str] | None = None) -> int:
         settings.intraday_options_raw_payload_dir,
     )
     market_timezone = ZoneInfo(settings.market_timezone)
-    calendar = exchange_calendar(settings.market_calendar)
+    calendar_adapter: OpenDMarketAdapter | None = None
     try:
         if args.once:
             now = datetime.now(market_timezone)
@@ -245,10 +297,12 @@ def main(argv: list[str] | None = None) -> int:
                 settings, store, scheduled_at=now, tier=args.once, now=now
             )
             return 0 if status in {"succeeded", "partial"} else 1
+        calendar, calendar_adapter = build_runtime_calendar(settings)
         logger.info(
-            "盘中期权采集已启动 symbols=%s database=%s",
+            "盘中期权采集已启动 symbols=%s database=%s calendar=%s",
             settings.intraday_options_symbol_list,
             settings.intraday_options_database_url,
+            "moomoo_openapi" if calendar_adapter is not None else settings.market_calendar,
         )
         completed_slots: set[tuple[str, str]] = set()
         retry_after: dict[tuple[str, str], float] = {}
@@ -295,6 +349,8 @@ def main(argv: list[str] | None = None) -> int:
         logger.info("盘中期权采集已停止")
         return 0
     finally:
+        if calendar_adapter is not None:
+            calendar_adapter.close()
         store.close()
 
 

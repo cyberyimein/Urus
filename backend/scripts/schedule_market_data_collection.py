@@ -40,6 +40,8 @@ sys.path.insert(0, str(BACKEND_DIR))
 os.chdir(BACKEND_DIR)
 
 from app.core.config import Settings  # noqa: E402
+from app.integrations.moomoo import OpenDMarketAdapter  # noqa: E402
+from app.services.trading_calendar import build_moomoo_calendar  # noqa: E402
 
 
 logger = logging.getLogger("urus.scheduled_collection")
@@ -63,11 +65,14 @@ def _session_close(calendar: Any, market_date: date) -> datetime | None:
 
     if not calendar.is_session(market_date):
         return None
-    row = calendar.schedule.loc[market_date.isoformat()]
-    close = row.get("close")
+    if hasattr(calendar, "session_close"):
+        close = calendar.session_close(market_date)
+    else:
+        row = calendar.schedule.loc[market_date.isoformat()]
+        close = row.get("close")
     if close is None or str(close) == "NaT":
         return None
-    close_at = close.to_pydatetime()
+    close_at = close.to_pydatetime() if hasattr(close, "to_pydatetime") else close
     if close_at.tzinfo is None:
         close_at = close_at.replace(tzinfo=UTC)
     return close_at.astimezone(UTC)
@@ -259,6 +264,7 @@ def collection_enabled(schedule: dict[str, dict[str, Any]]) -> bool:
 def collect(
     base_url: str,
     timeout: float,
+    trading_date: date | None = None,
 ) -> dict[str, Any]:
     logger.info("开始盘后确定性观察：同步 Universe 并冻结 Observation Run")
     universe_sync = request_json(
@@ -268,6 +274,8 @@ def collect(
         timeout=min(timeout, 60.0),
     )
     run_payload: dict[str, Any] = {"trigger_mode": "scheduled"}
+    if trading_date is not None:
+        run_payload["trading_date"] = trading_date.isoformat()
     if universe_sync.get("universe_revision_id"):
         run_payload["universe_revision_id"] = universe_sync["universe_revision_id"]
     if universe_sync.get("universe_freshness"):
@@ -322,6 +330,45 @@ def slot_completed(
     completed: dict[str, Any], scheduled_at: datetime, run_type: str
 ) -> bool:
     return slot_key(scheduled_at, run_type) in completed
+
+
+def build_runtime_calendar(
+    settings: Settings,
+) -> tuple[Any, OpenDMarketAdapter | None]:
+    """Build the scheduler calendar and keep its provider context alive."""
+
+    exchange = exchange_calendar(settings.market_calendar)
+    if not settings.moomoo_enabled:
+        return exchange, None
+
+    adapter: OpenDMarketAdapter | None = None
+    try:
+        # The scheduler keeps this context alive for calendar-cache reads. Do
+        # not attach the host-wide coordinator here: an adapter using it holds
+        # the collection lock for its whole lifetime, which would block the
+        # backend request that performs the actual scheduled collection.
+        adapter = OpenDMarketAdapter(
+            settings.moomoo_host,
+            settings.moomoo_port,
+            market_timezone=settings.market_timezone,
+            sdk_home=Path(settings.moomoo_sdk_home),
+            market_symbols=[
+                item.strip() for item in settings.moomoo_market_symbols.split(",") if item.strip()
+            ],
+            history_request_interval_seconds=settings.moomoo_history_request_interval_seconds,
+            snapshot_request_interval_seconds=settings.moomoo_snapshot_request_interval_seconds,
+            trading_calendar_request_interval_seconds=(
+                settings.moomoo_trading_calendar_request_interval_seconds
+            ),
+        )
+        calendar = build_moomoo_calendar(adapter, settings.market_calendar)
+        market_today = datetime.now(ZoneInfo(settings.market_timezone)).date()
+        calendar.prefetch(market_today - timedelta(days=3), market_today + timedelta(days=3))
+        return calendar, adapter
+    except Exception:
+        if adapter is not None:
+            adapter.close()
+        raise
 
 
 def due_slots(
@@ -395,10 +442,13 @@ def main(argv: list[str] | None = None) -> int:
     completed = state["completed"]
     retry_after: dict[str, float] = {}
     market_timezone = ZoneInfo(settings.market_timezone)
-    calendar = exchange_calendar(settings.market_calendar)
+    calendar_adapter: OpenDMarketAdapter | None = None
+    calendar: Any
+    calendar, calendar_adapter = build_runtime_calendar(settings)
     logger.info(
-        "调度器已启动 timezone=Asia/Tokyo market_timezone=%s calendar=%s slots=05:30/post_close_observation",
+        "调度器已启动 timezone=Asia/Tokyo market_timezone=%s calendar_source=%s session_calendar=%s slots=05:30/post_close_observation",
         settings.market_timezone,
+        getattr(calendar, "source_name", settings.market_calendar),
         settings.market_calendar,
     )
     try:
@@ -436,7 +486,11 @@ def main(argv: list[str] | None = None) -> int:
                         }
                         save_state(state)
                         continue
-                    result = collect(base_url, args.request_timeout)
+                    result = collect(
+                        base_url,
+                        args.request_timeout,
+                        trading_date=scheduled_at.astimezone(market_timezone).date(),
+                    )
                 except Exception:
                     retry_after[key] = time.monotonic() + args.retry_seconds
                     logger.exception("采集失败 label=%s slot=%s；稍后重试", label, run_type)
@@ -454,6 +508,8 @@ def main(argv: list[str] | None = None) -> int:
         logger.info("调度器已停止；由本脚本启动的 backend 将继续运行")
         return 0
     finally:
+        if calendar_adapter is not None:
+            calendar_adapter.close()
         instance_lock.close()
 
 

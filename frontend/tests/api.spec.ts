@@ -5,6 +5,21 @@ import { api, ApiError } from '@/api/client'
 afterEach(() => vi.unstubAllGlobals())
 
 describe('api client', () => {
+  it('limits opportunity requests to the selected symbol and supports cancellation', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ views: [] })))
+    vi.stubGlobal('fetch', fetchMock)
+    const controller = new AbortController()
+    await api.getDailyOpportunityView('dataset-1', ' orcl ', controller.signal)
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/daily-evidence/datasets/dataset-1/opportunity-view?symbol=ORCL',
+      expect.objectContaining({ signal: controller.signal }),
+    )
+    const abort = new DOMException('Request cancelled', 'AbortError')
+    controller.abort()
+    fetchMock.mockRejectedValue(abort)
+    await expect(api.getDailyOpportunityView('dataset-1', 'ORCL', controller.signal)).rejects.toBe(abort)
+  })
+
   it('does not reuse a stale observation response', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ status: 'ok', environment: 'test', database: 'ok' }), {

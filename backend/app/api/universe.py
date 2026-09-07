@@ -9,6 +9,7 @@ from app.core.errors import AppError
 from app.integrations.moomoo import OpenDMarketAdapter
 from app.repositories.universe import InstrumentUniverseRepository, derive_scopes
 from app.services.history_quota import HistoryCapacityService
+from app.services.trading_calendar import build_moomoo_calendar
 from app.schemas.universe import (
     HistoryCollectionProjectionResponse,
     UniverseImpactResponse,
@@ -31,20 +32,29 @@ def _capacity_plan(
 ) -> dict[str, object]:
     adapter = None
     reader = None
-    if settings.moomoo_enabled:
-        adapter = OpenDMarketAdapter(
-            settings.moomoo_host,
-            settings.moomoo_port,
-            market_timezone=settings.market_timezone,
-            history_days=max(settings.moomoo_history_days, settings.daily_min_history_bars),
-            sdk_home=Path(settings.moomoo_sdk_home),
-            market_symbols=[item.strip() for item in settings.moomoo_market_symbols.split(",") if item.strip()],
-            history_request_interval_seconds=settings.moomoo_history_request_interval_seconds,
-            snapshot_request_interval_seconds=settings.moomoo_snapshot_request_interval_seconds,
-        )
-        reader = adapter.quota_snapshot
+    calendar_source = None
     try:
-        service = HistoryCapacityService(db, settings)
+        if settings.moomoo_enabled:
+            adapter = OpenDMarketAdapter(
+                settings.moomoo_host,
+                settings.moomoo_port,
+                market_timezone=settings.market_timezone,
+                history_days=max(settings.moomoo_history_days, settings.daily_min_history_bars),
+                sdk_home=Path(settings.moomoo_sdk_home),
+                market_symbols=[item.strip() for item in settings.moomoo_market_symbols.split(",") if item.strip()],
+                history_request_interval_seconds=settings.moomoo_history_request_interval_seconds,
+                snapshot_request_interval_seconds=settings.moomoo_snapshot_request_interval_seconds,
+                trading_calendar_request_interval_seconds=(
+                    settings.moomoo_trading_calendar_request_interval_seconds
+                ),
+            )
+            reader = adapter.quota_snapshot
+            calendar_source = build_moomoo_calendar(adapter, settings.market_calendar)
+        service = HistoryCapacityService(
+            db,
+            settings,
+            calendar_source=calendar_source,
+        )
         plan = service.build_plan(
             items,
             universe_version_id=universe_version_id,

@@ -66,12 +66,12 @@ ObservationRunService
 
 `backend/scripts/schedule_market_data_collection.py` 只维护一个 `post_close_observation` slot。它负责：
 
-- 按 `exchange-calendars` 排除周末、假日并处理提前收市；
+- 启用 Moomoo OpenD 时按其 US trading-days API 判定交易日，并用 `exchange-calendars` 提供开收市和提前收市时刻；未启用时回退到本地日历；
 - 启动或连接后端；
 - 先同步观察组，再提交一个 Observation Run；
 - 记录完成状态并在受控窗口内重试失败 slot。
 
-调度器不执行 AI、不直接调用 Moomoo、不拆分股票和期权任务，也不创建第二个采集生命周期。
+调度器不执行 AI、不直接调用股票/期权行情接口、不拆分股票和期权任务，也不创建第二个采集生命周期；仅在启用 Moomoo 时读取其交易日历接口。
 
 ## 4. 日线证据合同
 

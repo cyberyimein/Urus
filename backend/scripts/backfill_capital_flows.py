@@ -19,6 +19,7 @@ from app.core.database import create_database  # noqa: E402
 from app.integrations.moomoo import OpenDMarketAdapter  # noqa: E402
 from app.repositories.capital_flows import CapitalFlowRepository  # noqa: E402
 from app.services.capital_flow import CapitalFlowService  # noqa: E402
+from app.services.trading_calendar import build_moomoo_calendar  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -51,8 +52,12 @@ def main() -> None:
         history_days=settings.moomoo_history_days,
         sdk_home=Path(settings.moomoo_sdk_home),
         market_symbols=symbols,
+        trading_calendar_request_interval_seconds=(
+            settings.moomoo_trading_calendar_request_interval_seconds
+        ),
     )
     try:
+        calendar_source = build_moomoo_calendar(adapter, settings.market_calendar)
         with session_factory() as session:
             service = CapitalFlowService(
                 CapitalFlowRepository(session),
@@ -61,6 +66,7 @@ def main() -> None:
                 calendar_name=settings.market_calendar,
                 cache_days=settings.capital_flow_cache_days,
                 projection_days=settings.capital_flow_projection_days,
+                calendar_source=calendar_source,
             )
             result = service.backfill(datetime.now(UTC), days=days)
             print(json.dumps(result, ensure_ascii=False, indent=2))

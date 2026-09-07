@@ -74,6 +74,8 @@ class MoomooAdapter(Protocol):
 
     def capital_flow_day(self, symbol: str, trading_date: date) -> dict[str, Any]: ...
 
+    def trading_days(self, start: date, end: date) -> list[dict[str, Any]]: ...
+
     def options_placeholder(self, symbol: str) -> dict[str, object]: ...
 
 
@@ -217,6 +219,7 @@ class OpenDMarketAdapter:
         rate_limiter: Any | None = None,
         history_request_interval_seconds: float = 0.55,
         snapshot_request_interval_seconds: float = 0.55,
+        trading_calendar_request_interval_seconds: float = 1.05,
         monotonic_clock: Any = monotonic,
         sleeper: Any = sleep,
     ) -> None:
@@ -238,10 +241,17 @@ class OpenDMarketAdapter:
         # calls. Keep a small margin even when deployment settings are lower.
         self.history_request_interval_seconds = max(0.51, float(history_request_interval_seconds))
         self.snapshot_request_interval_seconds = max(0.51, float(snapshot_request_interval_seconds))
+        # Moomoo documents a 30 requests / 30 seconds limit for the trading
+        # calendar endpoint. Calendar reads are cached by the caller, but keep
+        # a provider-safe interval here as well for process restarts.
+        self.trading_calendar_request_interval_seconds = max(
+            1.01, float(trading_calendar_request_interval_seconds)
+        )
         self._monotonic_clock = monotonic_clock
         self._sleeper = sleeper
         self._last_history_request_at: float | None = None
         self._last_snapshot_request_at: float | None = None
+        self._last_trading_calendar_request_at: float | None = None
         # Keep one immutable-in-run snapshot projection so repeated reads do
         # not consume another OpenD frequency slot.
         self._snapshot_cache: dict[str, dict[str, Any]] = {}
@@ -251,6 +261,44 @@ class OpenDMarketAdapter:
         """Expose the read-only quota probe for Capacity Planning."""
 
         return self._quota_snapshot()
+
+    def trading_days(self, start: date, end: date) -> list[dict[str, Any]]:
+        """Return Moomoo's US trading-date calendar for an inclusive range."""
+
+        if start > end:
+            return []
+        sdk = self._ensure_sdk()
+        market_enum = getattr(sdk, "TradeDateMarket", None)
+        market = getattr(market_enum, "US", "US")
+        self._pace(
+            "_last_trading_calendar_request_at",
+            self.trading_calendar_request_interval_seconds,
+            rate_class="moomoo_trading_calendar",
+        )
+        rows = _iter_rows(
+            self._call(
+                "request_trading_days",
+                market=market,
+                start=start.isoformat(),
+                end=end.isoformat(),
+            )
+        )
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            raw_date = _value(row, ["time", "date", "trading_date", "trade_date"])
+            result.append(
+                {
+                    "time": str(raw_date)[:10],
+                    "trade_date_type": str(
+                        _value(
+                            row,
+                            ["trade_date_type", "trading_day_type", "tradeDateType"],
+                            default="WHOLE",
+                        )
+                    ),
+                }
+            )
+        return result
 
     def close(self) -> None:
         if self._quote_ctx is None:

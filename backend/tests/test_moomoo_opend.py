@@ -10,6 +10,9 @@ from app.integrations.moomoo import OpenDMarketAdapter
 class FakeSdk:
     RET_OK = 0
 
+    class TradeDateMarket:
+        US = "US"
+
     class KLType:
         K_DAY = "K_DAY"
 
@@ -26,6 +29,14 @@ class FakeQuoteContext:
         self.snapshot_calls: list[list[str]] = []
         self.history_kwargs: dict[str, object] = {}
         self.capital_flow_calls: list[dict[str, object]] = []
+        self.trading_days_calls: list[dict[str, object]] = []
+
+    def request_trading_days(self, **kwargs):
+        self.trading_days_calls.append(kwargs)
+        return 0, [
+            {"time": "2026-08-03", "trade_date_type": "WHOLE"},
+            {"time": "2026-08-04", "trade_date_type": "WHOLE"},
+        ]
 
     def get_market_snapshot(self, codes: list[str]):
         self.snapshot_calls.append(codes)
@@ -155,6 +166,28 @@ def test_opend_adapter_normalises_one_daily_capital_flow_row() -> None:
     assert result["quality_status"] == "ok"
     assert quote_context.capital_flow_calls == [
         {"code": "US.SOXX", "period_type": "DAY", "start": "2026-07-29", "end": "2026-07-29"}
+    ]
+
+
+def test_opend_adapter_reads_us_trading_days() -> None:
+    quote_context = FakeQuoteContext()
+    adapter = OpenDMarketAdapter(
+        "test",
+        11111,
+        sdk=FakeSdk(),
+        quote_context=quote_context,
+        trading_calendar_request_interval_seconds=0,
+    )
+
+    result = adapter.trading_days(date(2026, 8, 3), date(2026, 8, 4))
+    adapter.close()
+
+    assert result == [
+        {"time": "2026-08-03", "trade_date_type": "WHOLE"},
+        {"time": "2026-08-04", "trade_date_type": "WHOLE"},
+    ]
+    assert quote_context.trading_days_calls == [
+        {"market": "US", "start": "2026-08-03", "end": "2026-08-04"}
     ]
 
 
