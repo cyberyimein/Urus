@@ -30,7 +30,6 @@ REMOTE_STORAGE_ROOT="${REMOTE_STORAGE_ROOT:-/Users/mithridates/data/urus}"
 REMOTE_ENV_FILE="${REMOTE_ENV_FILE:-$REMOTE_STORAGE_ROOT/deploy/urus.env}"
 REMOTE_CONTAINER_CLI="${REMOTE_CONTAINER_CLI:-/opt/homebrew/bin/container}"
 CONTAINER_NAME="${CONTAINER_NAME:-urus-moomoo}"
-OLD_CONTAINER_NAME="${OLD_CONTAINER_NAME:-urus-v3-current-20260907}"
 CONTAINER_NETWORK="${CONTAINER_NETWORK:-urus-internal}"
 CONTAINER_CPUS="${CONTAINER_CPUS:-4}"
 CONTAINER_MEMORY="${CONTAINER_MEMORY:-2G}"
@@ -44,11 +43,11 @@ scp "$URUS_IMAGE_ARCHIVE" "$REMOTE:$remote_archive"
 ssh "$REMOTE" "bash -s" -- \
     "$REMOTE_CONTAINER_CLI" "$remote_archive" "$URUS_IMAGE_REF" \
     "$REMOTE_ENV_FILE" "$remote_config" "$REMOTE_STORAGE_ROOT" \
-    "$CONTAINER_NAME" "$OLD_CONTAINER_NAME" "$CONTAINER_NETWORK" \
+    "$CONTAINER_NAME" "$CONTAINER_NETWORK" \
     "$CONTAINER_CPUS" "$CONTAINER_MEMORY" <<'REMOTE_SCRIPT'
 set -Eeuo pipefail
 container_cli="$1"; archive="$2"; image_ref="$3"; env_file="$4"; config="$5"; data_root="$6"
-container_name="$7"; old_container="$8"; network="$9"; cpus="${10}"; memory="${11}"
+container_name="$7"; network="$8"; cpus="${9}"; memory="${10}"
 
 [[ -f "$env_file" ]] || { echo "private Urus env file is missing: $env_file" >&2; exit 1; }
 set -a
@@ -172,10 +171,9 @@ if [[ "$healthy" != "1" ]]; then
     exit 1
 fi
 
-# The new planner is now the default Urus workload. Stop the legacy container
-# after replacement is alive; keep its definition for rollback.
-"$container_cli" stop "$old_container" >/dev/null 2>&1 || true
-echo "started $container_name; stopped legacy $old_container"
+# The planner is an independent sidecar. The Urus API/planner container keeps
+# running beside it and owns no collection schedule in this deployment.
+echo "started $container_name; existing Urus container was left running"
 "$container_cli" list
 REMOTE_SCRIPT
 

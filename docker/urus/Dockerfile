@@ -33,9 +33,9 @@ RUN uv sync --frozen --no-install-project
 COPY backend/alembic.ini ./
 COPY backend/alembic ./alembic
 COPY backend/app ./app
-COPY backend/scripts ./scripts
+COPY backend/scripts/start_urus_api_container.py ./scripts/start_urus_api_container.py
 COPY --from=frontend /src/frontend/dist ./frontend_dist
 
 EXPOSE 8000
 
-CMD ["uv", "run", "python", "scripts/start_urus_container.py"]
+CMD ["uv", "run", "python", "scripts/start_urus_api_container.py"]
