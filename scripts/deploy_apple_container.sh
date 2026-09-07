@@ -3,8 +3,8 @@ set -Eeuo pipefail
 
 usage() {
     cat <<'EOF'
-Copy a saved Urus Apple container image to a Mac mini and run API/UI + scheduler
-inside one supervised container.
+Copy a saved Urus Apple container image to a Mac mini and run the API/UI
+inside one supervised container. Collection scheduling runs in urus-moomoo.
 
 Usage:
   REMOTE=macmini scripts/deploy_apple_container.sh artifacts/container-images/urus-<tag>-linux-arm64.env
@@ -28,7 +28,6 @@ Environment:
   APP_PORT                Default: 8000
   CONTAINER_CPUS          Default: 4
   CONTAINER_MEMORY        Default: 2G
-  ALLOW_MARKET_HOURS_DEPLOY  Default: 0; set to 1 only for an urgent daytime restart
 EOF
 }
 
@@ -86,47 +85,12 @@ fi
 remote_archive="$REMOTE_DIR/$(basename "$archive_path")"
 remote_database_upload="-"
 
-# A container replacement interrupts the five-minute intraday collector. The
-# old option chain cannot be reconstructed after expiry, so refuse a daytime
-# deployment by default whenever the supplied runtime config enables it. This
-# check runs before any SSH/scp transfer; an operator may opt in explicitly
-# for an emergency patch and accept the resulting capture gap.
-intraday_enabled="${INTRADAY_OPTIONS_ENABLED:-false}"
-if [[ -n "${ENV_FILE:-}" ]]; then
-    [[ -f "$ENV_FILE" ]] || fail "ENV_FILE does not exist: $ENV_FILE"
-    if grep -Eiq '^[[:space:]]*INTRADAY_OPTIONS_ENABLED[[:space:]]*=[[:space:]]*(1|true|yes|on)[[:space:]]*$' "$ENV_FILE"; then
-        intraday_enabled="true"
-    fi
-fi
-market_hour_deploy="${ALLOW_MARKET_HOURS_DEPLOY:-0}"
-market_weekday="$(TZ=America/New_York date +%u)"
-market_hm="$(TZ=America/New_York date +%H%M)"
-if [[ "$intraday_enabled" =~ ^(1|true|yes|on)$ ]] \
-    && [[ "$market_weekday" -le 5 ]] \
-    && (( 10#$market_hm >= 925 && 10#$market_hm < 1605 )) \
-    && [[ ! "$market_hour_deploy" =~ ^(1|true|yes|on)$ ]]; then
-    fail "intraday collector is enabled and US market hours are active; deploy before 09:25 ET or after 16:05 ET (set ALLOW_MARKET_HOURS_DEPLOY=1 only for an emergency)"
-fi
-if [[ "$intraday_enabled" =~ ^(1|true|yes|on)$ ]] \
-    && [[ "$market_weekday" -le 5 ]] \
-    && (( 10#$market_hm >= 925 && 10#$market_hm < 1605 )) \
-    && [[ "$market_hour_deploy" =~ ^(1|true|yes|on)$ ]]; then
-    echo "warning: forcing a market-hours deployment; one or more intraday captures may be missed" >&2
-fi
-
 require_command ssh
 require_command scp
 ssh_args=(-p "$SSH_PORT")
 scp_args=(-P "$SSH_PORT")
-if [[ -z "${ENV_FILE:-}" ]] \
-    && ssh "${ssh_args[@]}" "$ssh_target" \
-        "test -f $(shell_quote "$REMOTE_ENV_FILE") && grep -Eiq '^[[:space:]]*INTRADAY_OPTIONS_ENABLED[[:space:]]*=[[:space:]]*(1|true|yes|on)[[:space:]]*$' $(shell_quote "$REMOTE_ENV_FILE")"; then
-    intraday_enabled="true"
-    if [[ "$market_weekday" -le 5 ]] \
-        && (( 10#$market_hm >= 925 && 10#$market_hm < 1605 )) \
-        && [[ ! "$market_hour_deploy" =~ ^(1|true|yes|on)$ ]]; then
-        fail "remote intraday collector is enabled and US market hours are active; deploy before 09:25 ET or after 16:05 ET"
-    fi
+if [[ -n "${ENV_FILE:-}" ]]; then
+    [[ -f "$ENV_FILE" ]] || fail "ENV_FILE does not exist: $ENV_FILE"
 fi
 ssh "${ssh_args[@]}" "$ssh_target" "mkdir -p $(shell_quote "$REMOTE_DIR") $(shell_quote "$REMOTE_DATA_DIR") $(shell_quote "$REMOTE_BACKUP_DIR")"
 scp "${scp_args[@]}" "$archive_path" "$ssh_target:$remote_archive"
