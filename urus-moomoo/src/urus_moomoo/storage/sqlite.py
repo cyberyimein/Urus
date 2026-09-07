@@ -7,7 +7,7 @@ import sqlite3
 from typing import Any
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class CollectorStore:
@@ -38,6 +38,10 @@ class CollectorStore:
             CREATE TABLE IF NOT EXISTS quota_snapshots (
                 snapshot_id TEXT PRIMARY KEY, captured_at TEXT NOT NULL, payload_json TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS scheduler_runs (
+                task_name TEXT NOT NULL, scheduled_at TEXT NOT NULL, completed_at TEXT NOT NULL,
+                PRIMARY KEY(task_name, scheduled_at)
+            );
             """
         )
         self.connection.execute("INSERT OR REPLACE INTO collector_meta(key, value) VALUES('schema_version', ?)", (str(SCHEMA_VERSION),))
@@ -47,10 +51,27 @@ class CollectorStore:
         self.connection.execute("INSERT OR REPLACE INTO raw_captures VALUES (?, ?, ?, ?, ?)", (capture_id, schema_version, kind, datetime.now(UTC).isoformat(), json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)))
         self.connection.commit()
 
-    def write_daily_bars(self, bars: list[dict[str, Any]]) -> None:
+    def write_daily_bars(self, bars: list[dict[str, Any]], *, symbol: str | None = None) -> None:
         for bar in bars:
-            symbol, bar_date = str(bar["symbol"]).upper(), str(bar.get("date", bar.get("bar_date")))[:10]
-            self.connection.execute("INSERT OR REPLACE INTO daily_bars VALUES (?, ?, ?)", (symbol, bar_date, json.dumps(bar, ensure_ascii=False, sort_keys=True, default=str)))
+            row_symbol = str(bar.get("symbol") or symbol or "").upper()
+            bar_date = str(bar.get("date", bar.get("bar_date", bar.get("time_key", ""))))[:10]
+            if not row_symbol or not bar_date:
+                continue
+            self.connection.execute("INSERT OR REPLACE INTO daily_bars VALUES (?, ?, ?)", (row_symbol, bar_date, json.dumps(bar, ensure_ascii=False, sort_keys=True, default=str)))
+        self.connection.commit()
+
+    def scheduler_completed(self, task_name: str, scheduled_at: datetime) -> bool:
+        row = self.connection.execute(
+            "SELECT 1 FROM scheduler_runs WHERE task_name = ? AND scheduled_at = ?",
+            (task_name, scheduled_at.isoformat()),
+        ).fetchone()
+        return row is not None
+
+    def mark_scheduler_completed(self, task_name: str, scheduled_at: datetime) -> None:
+        self.connection.execute(
+            "INSERT OR IGNORE INTO scheduler_runs VALUES (?, ?, ?)",
+            (task_name, scheduled_at.isoformat(), datetime.now(UTC).isoformat()),
+        )
         self.connection.commit()
 
     def write_quota_snapshot(self, snapshot_id: str, payload: dict[str, Any]) -> None:

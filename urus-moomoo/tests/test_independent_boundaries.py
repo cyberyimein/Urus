@@ -9,6 +9,7 @@ from urus_moomoo.services.calendar import MoomooTradingCalendar
 from urus_moomoo.services.pacing import CollectionCoordinator
 from urus_moomoo.services.quota import HistoryAdmission, HistoryCapacityService
 from urus_moomoo.services.scheduler import CollectorScheduler
+from urus_moomoo.runtime import CollectorRuntime
 from urus_moomoo.config import CollectionTask
 from urus_moomoo.storage.sqlite import CollectorStore, SCHEMA_VERSION
 
@@ -84,7 +85,7 @@ def test_sqlite_storage_and_contract_boundary(tmp_path: Path):
         quota.capture(lambda: {"available": True, "used": 1, "remain": 2, "total": 3})
         assert store.latest_quota_snapshot() is not None
         assert store.read_raw("capture-1")["kind"] == "daily"
-    assert SCHEMA_VERSION == 1
+    assert SCHEMA_VERSION == 2
 
 
 def test_source_boundary_has_no_urus_application_imports():
@@ -110,10 +111,89 @@ def test_scheduler_runs_without_backend_health_or_route(tmp_path: Path):
     session = date(2026, 7, 6)
     source = _ProviderCalendar([{"time": session}])
     calendar = MoomooTradingCalendar(source, _SessionCalendar({session}))
-    tasks = [CollectionTask(name="daily-capture", enabled=True, schedule="14:00", symbols=("AAA",))]
+    tasks = [
+        CollectionTask(
+            name="synthetic-daily",
+            enabled=True,
+            schedule="14:00",
+            symbols=("TEST_ASSET",),
+        )
+    ]
     calls: list[str] = []
-    scheduler = CollectorScheduler(tasks, timezone="UTC", calendar=calendar, runner=lambda task, _: calls.append(task.name))
+    store = CollectorStore(tmp_path / "runs.sqlite")
+    scheduler = CollectorScheduler(
+        tasks,
+        timezone="UTC",
+        calendar=calendar,
+        runner=lambda task, _: calls.append(task.name),
+        store=store,
+    )
 
-    assert scheduler.run_once(datetime(2026, 7, 6, 14, 1, tzinfo=UTC)) == ["daily-capture"]
+    assert scheduler.run_once(datetime(2026, 7, 6, 14, 1, tzinfo=UTC)) == ["synthetic-daily"]
     assert scheduler.run_once(datetime(2026, 7, 6, 14, 2, tzinfo=UTC)) == []
-    assert calls == ["daily-capture"]
+    restarted = CollectorScheduler(
+        tasks,
+        timezone="UTC",
+        calendar=calendar,
+        runner=lambda task, _: calls.append(task.name),
+        store=store,
+    )
+    assert restarted.run_once(datetime(2026, 7, 6, 14, 3, tzinfo=UTC)) == []
+    assert calls == ["synthetic-daily"]
+    store.close()
+
+
+def test_post_close_schedule_uses_calendar_close_and_local_delay(tmp_path: Path):
+    session = date(2026, 7, 6)
+    source = _ProviderCalendar([{"time": session}])
+    calendar = MoomooTradingCalendar(source, _SessionCalendar({session}))
+    task = CollectionTask(
+        name="synthetic-close",
+        enabled=True,
+        schedule="post-close",
+        symbols=("TEST_ASSET",),
+        delay_seconds=120,
+    )
+    scheduler = CollectorScheduler(
+        [task], timezone="UTC", calendar=calendar, runner=lambda *_: None,
+        store=CollectorStore(tmp_path / "close.sqlite"), catch_up_seconds=600,
+    )
+    assert scheduler.due(datetime(2026, 7, 6, 21, 1, tzinfo=UTC)) == []
+    assert [
+        item.task.name
+        for item in scheduler.due(datetime(2026, 7, 6, 21, 2, tzinfo=UTC))
+    ] == ["synthetic-close"]
+
+
+class _RuntimeProvider:
+    def __init__(self):
+        self.calls = []
+
+    def quota_snapshot(self):
+        return {"available": True, "history": {"used": 0, "remain": 10}}
+
+    def instrument_cards(self, symbols):
+        self.calls.append(("instrument_cards", symbols))
+        return {"instruments": []}
+
+    def capital_flow_day(self, symbol, trading_date):
+        self.calls.append(("capital_flow_day", symbol, trading_date))
+        return {"symbol": symbol}
+
+
+def test_runtime_dispatches_explicit_operations(tmp_path: Path):
+    from urus_moomoo.config import CollectorConfig
+
+    tasks = (
+        CollectionTask("synthetic-market", True, "12:34", ("TEST_ASSET",)),
+        CollectionTask("synthetic-flow", True, "12:35", ("TEST_ASSET",), "capital_flow_day"),
+    )
+    config = CollectorConfig(timezone="UTC", output_dir=tmp_path, tasks=tasks)
+    provider = _RuntimeProvider()
+    runtime = CollectorRuntime(provider, config)
+    try:
+        runtime.collect_task(tasks[0], datetime(2026, 7, 6, 12, 34, tzinfo=UTC))
+        runtime.collect_task(tasks[1], datetime(2026, 7, 6, 12, 35, tzinfo=UTC))
+    finally:
+        runtime.close()
+    assert [call[0] for call in provider.calls] == ["instrument_cards", "capital_flow_day"]

@@ -100,10 +100,8 @@ class MoomooIntradayOptionsAdapter(MoomooOptionsAdapter):
             if remain is None:
                 raise RuntimeError("quota response has no remaining-history count")
             total = used + remain if used is not None else None
-            # This collector is intentionally higher priority than Urus's
-            # broad daily-history universe. Its three index ETFs take any
-            # required new slots first; the normal capacity planner applies
-            # its reserve to whatever remains afterwards.
+            # Existing quota-window symbols cost no new slot. New symbols are
+            # admitted only while OpenD reports remaining capacity.
             slots_left = remain
             reported_window = detail_symbols(details)
             requested_symbols = {code.removeprefix("US.") for code in codes}

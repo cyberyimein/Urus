@@ -7,6 +7,15 @@ import tomllib
 from typing import Any
 
 
+ALLOWED_OPERATIONS = {
+    "instrument_cards",
+    "capital_flow_day",
+    "options_snapshot",
+    "capture_intraday",
+    "capture_session_close",
+}
+
+
 @dataclass(frozen=True)
 class CollectionTask:
     """One deployment-owned collection task loaded from a local TOML file."""
@@ -15,6 +24,9 @@ class CollectionTask:
     enabled: bool
     schedule: str
     symbols: tuple[str, ...]
+    operation: str = "instrument_cards"
+    delay_seconds: float = 0.0
+    params: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -27,6 +39,11 @@ class CollectorConfig:
     sqlite_path: Path | None = None
     opend_host: str | None = None
     opend_port: int | None = None
+    market_timezone: str = "America/New_York"
+    exchange_calendar: str = "XNYS"
+    poll_seconds: float = 30.0
+    catch_up_seconds: float = 3600.0
+    options: dict[str, Any] | None = None
 
 
 def default_config_path() -> Path:
@@ -70,6 +87,15 @@ def _parse_config(raw: dict[str, Any], config_path: Path) -> CollectorConfig:
         sqlite_path=_optional_path(runtime.get("sqlite_path")),
         opend_host=_optional_text(runtime.get("opend_host")),
         opend_port=_optional_int(runtime.get("opend_port")),
+        market_timezone=str(runtime.get("market_timezone", "America/New_York")),
+        exchange_calendar=str(runtime.get("exchange_calendar", "XNYS")),
+        poll_seconds=max(0.1, float(runtime.get("poll_seconds", 30.0))),
+        catch_up_seconds=max(0.0, float(runtime.get("catch_up_seconds", 3600.0))),
+        options=(
+            dict(runtime.get("options", {}))
+            if isinstance(runtime.get("options", {}), dict)
+            else None
+        ),
     )
 
 
@@ -102,11 +128,20 @@ def _parse_task(value: object, index: int, config_path: Path) -> CollectionTask:
     normalized = tuple(dict.fromkeys(str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()))
     if not normalized:
         raise ValueError(f"{config_path}: tasks[{index}].symbols must contain text")
+    operation = str(value.get("operation", "instrument_cards")).strip()
+    if operation not in ALLOWED_OPERATIONS:
+        raise ValueError(
+            f"{config_path}: tasks[{index}].operation must be one of "
+            f"{', '.join(sorted(ALLOWED_OPERATIONS))}"
+        )
     return CollectionTask(
         name=name,
         enabled=bool(value.get("enabled", True)),
         schedule=schedule,
         symbols=normalized,
+        operation=operation,
+        delay_seconds=max(0.0, float(value.get("delay_seconds", 0.0))),
+        params=dict(value.get("params", {})) if isinstance(value.get("params", {}), dict) else None,
     )
 
 

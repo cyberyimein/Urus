@@ -56,3 +56,23 @@ symbols = ["BBB"]
 def test_load_config_keeps_task_definitions_local(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match="task configuration"):
         load_config(tmp_path / "missing.local.toml")
+
+
+def test_load_config_rejects_unknown_operation(tmp_path: Path) -> None:
+    path = tmp_path / "tasks.toml"
+    path.write_text(
+        """
+[runtime]
+timezone = "UTC"
+
+[[tasks]]
+name = "synthetic"
+schedule = "12:34"
+operation = "unknown"
+symbols = ["TEST_ASSET"]
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="operation"):
+        load_config(path)

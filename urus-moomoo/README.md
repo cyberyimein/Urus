@@ -28,7 +28,7 @@
 - `services/scheduler.py`：由本服务自身驱动的定时/收市后任务和盘中期权任务边界；
 - `storage/sqlite.py` 与 `contracts.py`：原始数据 SQLite 落盘和带 schema version 的消费者契约。
 
-启动前必须提供被忽略的本地任务配置；缺失配置会直接失败。可用 `urus-moomoo validate --config <local.toml>` 校验，连接 OpenD 后用 `urus-moomoo run-once --config <local.toml>` 执行一次启用任务。真实任务、标的、字段、时间段和 OpenD 地址不进入 Git。
+启动前必须提供被忽略的本地任务配置；缺失配置会直接失败。可用 `urus-moomoo validate --config <local.toml>` 校验，连接 OpenD 后用 `urus-moomoo run-once --config <local.toml>` 执行一次启用任务，或用 `urus-moomoo schedule --config <local.toml>` 启动独立调度器。调度器用 Moomoo 交易日判断是否开市，用 exchange calendar 计算收市时间；任务的 operation、标的、时刻、收市后延迟和采集参数只来自本地配置。
 
 ## 尚未迁移
 
@@ -36,6 +36,6 @@
 
 - backend 的 ORM/业务数据库模型、canonical daily-bars 重算和旧 API 响应适配；
 - 现有 intraday raw backup/maintenance 的压缩归档与跨日恢复；
-- 生产部署文件、健康探针和多进程 scheduler 状态的持久化运维包装。
+- 生产部署文件与健康探针。
 
-这些未迁移项不影响本轮包级 provider、容量准入、调度和 SQLite 契约测试。
+这些未迁移项不影响独立采集进程运行；单进程调度完成记录已落入本服务自己的 SQLite，重启不会重复执行已完成时槽。
