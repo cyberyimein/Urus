@@ -1,0 +1,20 @@
+[project]
+name = "urus-moomoo"
+version = "0.1.0"
+description = "Standalone Moomoo/OpenD collection runtime for Urus-compatible data contracts"
+requires-python = ">=3.11"
+dependencies = [
+  "exchange-calendars>=4.5,<5.0",
+  "futu-api>=10.8.6808,<11.0",
+  "pydantic>=2.6,<3.0",
+]
+
+[project.scripts]
+urus-moomoo = "urus_moomoo.cli:main"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

@@ -23,5 +23,13 @@ frontend/.vite/
 .playwright-cli/
 *.log
 
+# urus-moomoo operational task definitions and runtime state stay local.
+urus-moomoo/.env
+urus-moomoo/config/*.local.toml
+urus-moomoo/config/*.local.yaml
+urus-moomoo/config/*.local.json
+urus-moomoo/data/
+urus-moomoo/logs/
+
 # Internal strategy working notes; keep them out of public history.
 strategy-discussion.md
