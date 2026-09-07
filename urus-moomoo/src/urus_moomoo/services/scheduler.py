@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, time as datetime_time, timedelta
 import time
-from typing import Callable, Iterable
+from typing import Any, Callable, Iterable
 from zoneinfo import ZoneInfo
 
 from urus_moomoo.config import CollectionTask
@@ -18,6 +18,16 @@ def _schedule_time(value: str) -> tuple[int, int] | None:
         if 0 <= hour <= 23 and 0 <= minute <= 59:
             return hour, minute
     return None
+
+
+def _as_timezone(value: Any, timezone: ZoneInfo) -> datetime:
+    if hasattr(value, "to_pydatetime"):
+        value = value.to_pydatetime()
+    if not isinstance(value, datetime):
+        raise TypeError(f"calendar returned a non-datetime session time: {value!r}")
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone)
+    return value.astimezone(timezone)
 
 
 @dataclass(frozen=True)
@@ -39,9 +49,11 @@ class CollectorScheduler:
         clock: Callable[[], datetime] | None = None,
         store: CollectorStore | None = None,
         catch_up_seconds: float = 3600.0,
+        market_timezone: str | None = None,
     ) -> None:
         self.tasks = tuple(tasks)
         self.timezone = ZoneInfo(timezone)
+        self.market_timezone = ZoneInfo(market_timezone or timezone)
         self.calendar = calendar
         self.runner = runner
         self.clock = clock or (lambda: datetime.now(self.timezone))
@@ -52,23 +64,24 @@ class CollectorScheduler:
     def due(self, now: datetime | None = None) -> list[DueTask]:
         current = (now or self.clock()).astimezone(self.timezone)
         result: list[DueTask] = []
-        start_date = (current - self.catch_up).date()
+        market_date = current.astimezone(self.market_timezone).date()
+        start_date = (current - self.catch_up).astimezone(self.market_timezone).date()
         day = start_date
-        while day <= current.date():
+        while day <= market_date:
             if self.calendar.is_session(day):
                 for task in self.tasks:
                     if not task.enabled:
                         continue
-                    scheduled_at = self._task_time(task, day)
-                    if scheduled_at is None or not (
-                        timedelta(0) <= current - scheduled_at <= self.catch_up
-                    ):
-                        continue
-                    if self.store and self.store.scheduler_completed(task.name, scheduled_at):
-                        continue
-                    if (task.name, scheduled_at.isoformat()) in self.completed:
-                        continue
-                    result.append(DueTask(task, scheduled_at))
+                    for scheduled_at, scheduled_task in self._task_times(task, day):
+                        if scheduled_at is None or not (
+                            timedelta(0) <= current - scheduled_at <= self.catch_up
+                        ):
+                            continue
+                        if self.store and self.store.scheduler_completed(task.name, scheduled_at):
+                            continue
+                        if (task.name, scheduled_at.isoformat()) in self.completed:
+                            continue
+                        result.append(DueTask(scheduled_task, scheduled_at))
             day += timedelta(days=1)
         return result
 
@@ -81,6 +94,39 @@ class CollectorScheduler:
             self.completed.add((due.task.name, due.scheduled_at.isoformat()))
             ran.append(due.task.name)
         return ran
+
+    def _task_times(
+        self, task: CollectionTask, session_date
+    ) -> list[tuple[datetime | None, CollectionTask]]:
+        params = dict(task.params or {})
+        if task.schedule.strip().lower() == "intraday":
+            opened = self.calendar.session_open(session_date)
+            closed = self.calendar.session_close(session_date)
+            if opened is None or closed is None:
+                return []
+            interval = max(1.0, float(params.get("interval_seconds", 300)))
+            start_margin = max(0.0, float(params.get("start_margin_seconds", 300)))
+            end_margin = max(0.0, float(params.get("end_margin_seconds", 300)))
+            cursor = _as_timezone(opened, self.timezone) + timedelta(seconds=start_margin)
+            final = _as_timezone(closed, self.timezone) - timedelta(seconds=end_margin)
+            anchors = {str(value) for value in params.get("anchor_times", [])}
+            fast_band = params.get("fast_band_percent")
+            structure_band = params.get("structure_band_percent")
+            result: list[tuple[datetime | None, CollectionTask]] = []
+            while cursor <= final:
+                key = cursor.strftime("%H:%M")
+                tier = "structure" if key in anchors else "fast"
+                capture_params = dict(params)
+                capture_params["capture_tier"] = tier
+                if tier == "structure" and structure_band is not None:
+                    capture_params["band_percent"] = structure_band
+                elif tier == "fast" and fast_band is not None:
+                    capture_params["band_percent"] = fast_band
+                result.append((cursor, replace(task, params=capture_params)))
+                cursor += timedelta(seconds=interval)
+            return result
+        scheduled = self._task_time(task, session_date)
+        return [(scheduled, task)]
 
     def _task_time(self, task: CollectionTask, session_date) -> datetime | None:
         if task.schedule.strip().lower() in {"after-close", "post-close"}:

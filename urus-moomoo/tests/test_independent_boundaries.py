@@ -165,6 +165,40 @@ def test_post_close_schedule_uses_calendar_close_and_local_delay(tmp_path: Path)
     ] == ["synthetic-close"]
 
 
+def test_intraday_schedule_uses_session_bounds_and_private_parameters(tmp_path: Path):
+    session = date(2026, 7, 6)
+    source = _ProviderCalendar([{"time": session}])
+    calendar = MoomooTradingCalendar(source, _SessionCalendar({session}))
+    task = CollectionTask(
+        name="synthetic-intraday",
+        enabled=True,
+        schedule="intraday",
+        symbols=("TEST_ASSET",),
+        operation="capture_intraday",
+        params={
+            "interval_seconds": 300,
+            "start_margin_seconds": 300,
+            "end_margin_seconds": 300,
+            "anchor_times": ["14:35"],
+            "fast_band_percent": 3,
+            "structure_band_percent": 10,
+        },
+    )
+    scheduler = CollectorScheduler(
+        [task],
+        timezone="UTC",
+        market_timezone="UTC",
+        calendar=calendar,
+        runner=lambda *_: None,
+        store=CollectorStore(tmp_path / "intraday.sqlite"),
+        catch_up_seconds=600,
+    )
+    due = scheduler.due(datetime(2026, 7, 6, 14, 36, tzinfo=UTC))
+    assert len(due) == 1
+    assert due[0].task.params["capture_tier"] == "structure"
+    assert due[0].task.params["band_percent"] == 10
+
+
 class _RuntimeProvider:
     def __init__(self):
         self.calls = []

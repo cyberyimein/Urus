@@ -67,6 +67,7 @@ def main(argv: list[str] | None = None) -> int:
                     runner=runtime.collect_task,
                     store=runtime.store,
                     catch_up_seconds=config.catch_up_seconds,
+                    market_timezone=config.market_timezone,
                 ).run_forever(poll_seconds=config.poll_seconds)
         finally:
             runtime.close()
