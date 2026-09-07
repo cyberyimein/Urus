@@ -19,14 +19,14 @@ output_dir = "data"
 name = "daily"
 enabled = true
 schedule = "after-close"
-symbols = [" spy ", "SPY", "QQQ"]
+symbols = [" aaa ", "AAA", "BBB"]
 """,
         encoding="utf-8",
     )
 
     config = load_config(path)
 
-    assert config.tasks[0].symbols == ("SPY", "QQQ")
+    assert config.tasks[0].symbols == ("AAA", "BBB")
 
 
 def test_load_config_rejects_duplicate_tasks(tmp_path: Path) -> None:
@@ -39,12 +39,12 @@ timezone = "America/New_York"
 [[tasks]]
 name = "same"
 schedule = "first"
-symbols = ["SPY"]
+symbols = ["AAA"]
 
 [[tasks]]
 name = "same"
 schedule = "second"
-symbols = ["QQQ"]
+symbols = ["BBB"]
 """,
         encoding="utf-8",
     )

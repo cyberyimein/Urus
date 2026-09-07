@@ -22,6 +22,11 @@ class CollectorConfig:
     timezone: str
     output_dir: Path
     tasks: tuple[CollectionTask, ...]
+    calendar_cache: Path | None = None
+    lock_path: Path | None = None
+    sqlite_path: Path | None = None
+    opend_host: str | None = None
+    opend_port: int | None = None
 
 
 def default_config_path() -> Path:
@@ -56,7 +61,34 @@ def _parse_config(raw: dict[str, Any], config_path: Path) -> CollectorConfig:
     names = [task.name for task in tasks]
     if len(names) != len(set(names)):
         raise ValueError(f"{config_path}: task names must be unique")
-    return CollectorConfig(timezone=timezone, output_dir=output_dir, tasks=tasks)
+    return CollectorConfig(
+        timezone=timezone,
+        output_dir=output_dir,
+        tasks=tasks,
+        calendar_cache=_optional_path(runtime.get("calendar_cache")),
+        lock_path=_optional_path(runtime.get("lock_path")),
+        sqlite_path=_optional_path(runtime.get("sqlite_path")),
+        opend_host=_optional_text(runtime.get("opend_host")),
+        opend_port=_optional_int(runtime.get("opend_port")),
+    )
+
+
+def _optional_path(value: object) -> Path | None:
+    text = str(value or "").strip()
+    return Path(text).expanduser() if text else None
+
+
+def _optional_text(value: object) -> str | None:
+    text = str(value or "").strip()
+    return text or None
+
+
+def _optional_int(value: object) -> int | None:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
 
 
 def _parse_task(value: object, index: int, config_path: Path) -> CollectionTask:
