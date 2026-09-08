@@ -199,6 +199,12 @@ class OpenDMarketAdapter:
         self._snapshot_cache: dict[str, dict[str, Any]] = {}
         self._history_cache: dict[str, list[dict[str, object]]] = {}
 
+    def reset_collection_run(self) -> None:
+        """Drop caches whose values are only valid within one task."""
+
+        self._snapshot_cache.clear()
+        self._history_cache.clear()
+
     def quota_snapshot(self) -> dict[str, object]:
         """Expose the read-only quota probe for Capacity Planning."""
 

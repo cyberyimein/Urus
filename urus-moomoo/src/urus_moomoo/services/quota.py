@@ -247,6 +247,12 @@ class HistoryAdmission:
         self.quota_reader = quota_reader
         self.scope: set[str] = set()
         self._admitted: set[str] = set()
+        self._runtime_new_symbols: set[str] = set()
+
+    def reset_run(self) -> None:
+        """Clear request-time state before starting the next collection task."""
+
+        self._admitted.clear()
 
     def prepare_symbols(self, symbols: Iterable[str]) -> None:
         self.scope = {normalize_symbol(item) for item in symbols if normalize_symbol(item)}
@@ -266,8 +272,18 @@ class HistoryAdmission:
         total = snapshot.get("total")
         reserve = self.service._reserve(total if isinstance(total, int) else None)
         window = set(snapshot.get("window_symbols", []))
-        if normalized not in window and (not isinstance(remain, int) or remain - (reserve or 0) <= 0):
+        locally_spent = len(self._runtime_new_symbols - window)
+        consumes_new_quota = normalized not in window and normalized not in self._runtime_new_symbols
+        if consumes_new_quota and (
+            not isinstance(remain, int)
+            or reserve is None
+            or remain - locally_spent <= reserve
+        ):
             return {"admitted": False, "access_state": "pending_quota", "reason_code": "history_quota_reserve", "symbol": normalized}
+        if consumes_new_quota:
+            # Quota detail can lag immediately after a history request. Keep
+            # new-symbol admission locally reserved until OpenD reports it.
+            self._runtime_new_symbols.add(normalized)
         self._admitted.add(normalized)
         self.service.mark_attempt(normalized, now=now)
         return {"admitted": True, "access_state": "admitted", "reason_code": None, "symbol": normalized}

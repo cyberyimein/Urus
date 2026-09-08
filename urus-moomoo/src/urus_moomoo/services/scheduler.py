@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime, time as datetime_time, timedelta
+import logging
 import time
 from typing import Any, Callable, Iterable
 from zoneinfo import ZoneInfo
@@ -9,6 +11,9 @@ from zoneinfo import ZoneInfo
 from urus_moomoo.config import CollectionTask
 from urus_moomoo.services.calendar import MoomooTradingCalendar
 from urus_moomoo.storage.sqlite import CollectorStore
+
+
+logger = logging.getLogger(__name__)
 
 
 def _schedule_time(value: str) -> tuple[int, int] | None:
@@ -45,7 +50,7 @@ class CollectorScheduler:
         *,
         timezone: str,
         calendar: MoomooTradingCalendar,
-        runner: Callable[[CollectionTask, datetime], None],
+        runner: Callable[[CollectionTask, datetime], Any],
         clock: Callable[[], datetime] | None = None,
         store: CollectorStore | None = None,
         catch_up_seconds: float = 3600.0,
@@ -88,7 +93,22 @@ class CollectorScheduler:
     def run_once(self, now: datetime | None = None) -> list[str]:
         ran: list[str] = []
         for due in self.due(now):
-            self.runner(due.task, due.scheduled_at)
+            try:
+                result = self.runner(due.task, due.scheduled_at)
+            except Exception:
+                logger.exception(
+                    "scheduled task failed: task=%s scheduled_at=%s",
+                    due.task.name,
+                    due.scheduled_at.isoformat(),
+                )
+                continue
+            if isinstance(result, Mapping) and result.get("completed") is False:
+                logger.warning(
+                    "scheduled task incomplete: task=%s scheduled_at=%s",
+                    due.task.name,
+                    due.scheduled_at.isoformat(),
+                )
+                continue
             if self.store:
                 self.store.mark_scheduler_completed(due.task.name, due.scheduled_at)
             self.completed.add((due.task.name, due.scheduled_at.isoformat()))
@@ -114,7 +134,7 @@ class CollectorScheduler:
             structure_band = params.get("structure_band_percent")
             result: list[tuple[datetime | None, CollectionTask]] = []
             while cursor <= final:
-                key = cursor.strftime("%H:%M")
+                key = cursor.astimezone(self.market_timezone).strftime("%H:%M")
                 tier = "structure" if key in anchors else "fast"
                 capture_params = dict(params)
                 capture_params["capture_tier"] = tier

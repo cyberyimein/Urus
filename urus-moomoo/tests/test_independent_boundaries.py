@@ -4,7 +4,9 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 import subprocess
 import sys
+from zoneinfo import ZoneInfo
 
+from urus_moomoo.integrations.moomoo import OpenDMarketAdapter
 from urus_moomoo.services.calendar import MoomooTradingCalendar
 from urus_moomoo.services.pacing import CollectionCoordinator
 from urus_moomoo.services.quota import HistoryAdmission, HistoryCapacityService
@@ -36,6 +38,42 @@ class _SessionCalendar:
 
     def session_close(self, value):
         return datetime(value.year, value.month, value.day, 21, tzinfo=UTC)
+
+
+class _NoopRateLimiter:
+    def acquire_rate_slot(self, *_args, **_kwargs):
+        return None
+
+
+class _AdapterSdk:
+    RET_OK = 0
+
+    class KLType:
+        K_DAY = "K_DAY"
+
+    class AuType:
+        QFQ = "QFQ"
+
+
+class _AdapterQuoteContext:
+    def __init__(self):
+        self.snapshot_calls = 0
+        self.history_calls = 0
+
+    def get_market_snapshot(self, _codes):
+        self.snapshot_calls += 1
+        return 0, [{"code": "US.AAA", "last_price": 100, "prev_close_price": 99}]
+
+    def request_history_kline(self, **_kwargs):
+        self.history_calls += 1
+        return 0, [{
+            "time_key": "2026-09-07",
+            "open": 99,
+            "high": 101,
+            "low": 98,
+            "close": 100,
+            "volume": 10,
+        }]
 
 
 def test_moomoo_calendar_is_cached_and_conflict_fails_closed():
@@ -75,6 +113,55 @@ def test_quota_reserve_and_request_time_admission_fail_closed():
     decision = admission.acquire("AAA")
     assert decision["admitted"] is False
     assert decision["reason_code"] == "history_quota_reserve"
+
+
+def test_quota_admission_locally_reserves_new_symbols_until_task_reset():
+    service = HistoryCapacityService(minimum_bar_count=2, reserve_absolute=10, reserve_ratio=0)
+    admission = HistoryAdmission(
+        service,
+        quota_reader=lambda: {
+            "available": True,
+            "used": 10,
+            "remain": 11,
+            "total": 21,
+        },
+    )
+    admission.prepare_symbols(["AAA", "BBB"])
+
+    assert admission.acquire("AAA")["admitted"] is True
+    second = admission.acquire("BBB")
+    assert second["admitted"] is False
+    assert second["reason_code"] == "history_quota_reserve"
+
+    admission.reset_run()
+    assert admission.acquire("AAA")["admitted"] is True
+    assert admission.acquire("BBB")["admitted"] is False
+
+
+def test_moomoo_run_cache_reset_forces_fresh_snapshot_and_history_requests():
+    context = _AdapterQuoteContext()
+    adapter = OpenDMarketAdapter(
+        host="unused",
+        port=0,
+        market_symbols=["AAA"],
+        history_days=20,
+        sdk=_AdapterSdk(),
+        quote_context=context,
+        rate_limiter=_NoopRateLimiter(),
+    )
+
+    adapter._collect_market_snapshot(["US.AAA"])
+    adapter._history_summary("US.AAA", previous_close=99, include_bars=True)
+    adapter._collect_market_snapshot(["US.AAA"])
+    adapter._history_summary("US.AAA", previous_close=99, include_bars=True)
+    assert context.snapshot_calls == 1
+    assert context.history_calls == 1
+
+    adapter.reset_collection_run()
+    adapter._collect_market_snapshot(["US.AAA"])
+    adapter._history_summary("US.AAA", previous_close=99, include_bars=True)
+    assert context.snapshot_calls == 2
+    assert context.history_calls == 2
 
 
 def test_sqlite_storage_and_contract_boundary(tmp_path: Path):
@@ -143,6 +230,51 @@ def test_scheduler_runs_without_backend_health_or_route(tmp_path: Path):
     store.close()
 
 
+def test_scheduler_retries_exceptions_and_incomplete_results(tmp_path: Path, caplog):
+    session = date(2026, 7, 6)
+    source = _ProviderCalendar([{"time": session}])
+    calendar = MoomooTradingCalendar(source, _SessionCalendar({session}))
+    tasks = [
+        CollectionTask("provider-error", True, "14:00", ("AAA",)),
+        CollectionTask("incomplete", True, "14:00", ("BBB",)),
+    ]
+    attempts = {task.name: 0 for task in tasks}
+
+    def runner(task, _scheduled_at):
+        attempts[task.name] += 1
+        if attempts[task.name] == 1 and task.name == "provider-error":
+            raise RuntimeError("temporary provider failure")
+        if attempts[task.name] == 1:
+            return {"completed": False}
+        return None
+
+    store = CollectorStore(tmp_path / "retry.sqlite")
+    scheduler = CollectorScheduler(
+        tasks,
+        timezone="UTC",
+        calendar=calendar,
+        runner=runner,
+        store=store,
+        catch_up_seconds=600,
+    )
+    scheduled_at = datetime(2026, 7, 6, 14, 0, tzinfo=UTC)
+    try:
+        assert scheduler.run_once(datetime(2026, 7, 6, 14, 1, tzinfo=UTC)) == []
+        assert attempts == {"provider-error": 1, "incomplete": 1}
+        assert not store.scheduler_completed("provider-error", scheduled_at)
+        assert not store.scheduler_completed("incomplete", scheduled_at)
+        assert "scheduled task failed" in caplog.text
+
+        assert scheduler.run_once(datetime(2026, 7, 6, 14, 2, tzinfo=UTC)) == [
+            "provider-error",
+            "incomplete",
+        ]
+        assert store.scheduler_completed("provider-error", scheduled_at)
+        assert store.scheduler_completed("incomplete", scheduled_at)
+    finally:
+        store.close()
+
+
 def test_post_close_schedule_uses_calendar_close_and_local_delay(tmp_path: Path):
     session = date(2026, 7, 6)
     source = _ProviderCalendar([{"time": session}])
@@ -199,9 +331,45 @@ def test_intraday_schedule_uses_session_bounds_and_private_parameters(tmp_path: 
     assert due[0].task.params["band_percent"] == 10
 
 
+def test_intraday_anchor_is_compared_in_market_timezone():
+    session = date(2026, 1, 6)
+    source = _ProviderCalendar([{"time": session}])
+    calendar = MoomooTradingCalendar(source, _SessionCalendar({session}))
+    task = CollectionTask(
+        name="tokyo-intraday",
+        enabled=True,
+        schedule="intraday",
+        symbols=("TEST_ASSET",),
+        operation="capture_intraday",
+        params={
+            "interval_seconds": 300,
+            "start_margin_seconds": 300,
+            "end_margin_seconds": 300,
+            "anchor_times": ["09:35"],
+        },
+    )
+    scheduler = CollectorScheduler(
+        [task],
+        timezone="Asia/Tokyo",
+        market_timezone="America/New_York",
+        calendar=calendar,
+        runner=lambda *_: None,
+    )
+
+    due = scheduler.due(datetime(2026, 1, 6, 23, 36, tzinfo=ZoneInfo("Asia/Tokyo")))
+    assert len(due) == 1
+    assert due[0].scheduled_at.tzinfo is not None
+    assert due[0].scheduled_at.astimezone(ZoneInfo("America/New_York")).strftime("%H:%M") == "09:35"
+    assert due[0].task.params["capture_tier"] == "structure"
+
+
 class _RuntimeProvider:
     def __init__(self):
         self.calls = []
+        self.reset_calls = 0
+
+    def reset_collection_run(self):
+        self.reset_calls += 1
 
     def quota_snapshot(self):
         return {"available": True, "history": {"used": 0, "remain": 10}}
@@ -231,3 +399,48 @@ def test_runtime_dispatches_explicit_operations(tmp_path: Path):
     finally:
         runtime.close()
     assert [call[0] for call in provider.calls] == ["instrument_cards", "capital_flow_day"]
+    assert provider.reset_calls == 2
+
+
+def test_runtime_maps_capture_quality_to_scheduler_completion(tmp_path: Path):
+    class _QualityProvider:
+        def capture_intraday(self, *, symbols, **_params):
+            return {"symbols": symbols, "quality_summary": {"complete": False}}
+
+        def capture_session_close(self, *, symbols, trading_date, **_params):
+            return {
+                "requested_symbols": symbols,
+                "trading_date": trading_date.isoformat(),
+                "complete": True,
+            }
+
+    tasks = (
+        CollectionTask(
+            "intraday-quality",
+            True,
+            "12:34",
+            ("AAA",),
+            "capture_intraday",
+            params={"capture_tier": "fast", "band_percent": 3},
+        ),
+        CollectionTask("session-close", True, "12:35", ("AAA",), "capture_session_close"),
+    )
+    from urus_moomoo.config import CollectorConfig
+
+    runtime = CollectorRuntime(
+        _QualityProvider(),
+        CollectorConfig(
+            timezone="UTC",
+            market_timezone="America/New_York",
+            output_dir=tmp_path,
+            tasks=tasks,
+        ),
+    )
+    try:
+        incomplete = runtime.collect_task(tasks[0], datetime(2026, 7, 6, 12, 34, tzinfo=UTC))
+        complete = runtime.collect_task(tasks[1], datetime(2026, 7, 6, 12, 35, tzinfo=UTC))
+    finally:
+        runtime.close()
+
+    assert incomplete["completed"] is False
+    assert complete["completed"] is True

@@ -50,6 +50,7 @@ class CollectorRuntime:
 
     def collect_task(self, task: CollectionTask, scheduled_at: datetime) -> dict[str, object]:
         with self.coordinator:
+            self._reset_collection_run()
             payload = self._collect(task, scheduled_at)
             contract = capture_contract(
                 kind=task.operation,
@@ -72,7 +73,27 @@ class CollectorRuntime:
                         [bar for bar in history["bars"] if isinstance(bar, dict)],
                         symbol=str(snapshot.get("symbol") or ""),
                     )
-            return {"scheduled_at": scheduled_at.isoformat(), "contract": contract}
+            return {
+                "scheduled_at": scheduled_at.isoformat(),
+                "contract": contract,
+                "completed": self._operation_completed(task.operation, payload),
+            }
+
+    def _reset_collection_run(self) -> None:
+        reset = getattr(self.provider, "reset_collection_run", None)
+        if callable(reset):
+            reset()
+        self.history_admission.reset_run()
+
+    @staticmethod
+    def _operation_completed(operation: str, payload: dict[str, object]) -> bool:
+        normalized = operation.strip()
+        if normalized == "capture_intraday":
+            summary = payload.get("quality_summary")
+            return bool(summary.get("complete")) if isinstance(summary, dict) else False
+        if normalized == "capture_session_close":
+            return bool(payload.get("complete"))
+        return True
 
     def _collect(self, task: CollectionTask, scheduled_at: datetime) -> dict[str, object]:
         operation = task.operation.strip()
