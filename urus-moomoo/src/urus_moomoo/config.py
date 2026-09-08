@@ -13,6 +13,7 @@ ALLOWED_OPERATIONS = {
     "options_snapshot",
     "capture_intraday",
     "capture_session_close",
+    "capture_eod_options",
 }
 
 

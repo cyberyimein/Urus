@@ -7,6 +7,7 @@ import sys
 from zoneinfo import ZoneInfo
 
 from urus_moomoo.integrations.moomoo import OpenDMarketAdapter
+from urus_moomoo.integrations.moomoo_intraday_options import MoomooIntradayOptionsAdapter
 from urus_moomoo.services.calendar import MoomooTradingCalendar
 from urus_moomoo.services.pacing import CollectionCoordinator
 from urus_moomoo.services.quota import HistoryAdmission, HistoryCapacityService
@@ -162,6 +163,116 @@ def test_moomoo_run_cache_reset_forces_fresh_snapshot_and_history_requests():
     adapter._history_summary("US.AAA", previous_close=99, include_bars=True)
     assert context.snapshot_calls == 2
     assert context.history_calls == 2
+
+
+def test_eoflora_eod_selects_every_actual_expiration_from_1_through_45_dte():
+    import pandas as pd
+
+    frame = pd.DataFrame(
+        [
+            {"strike_time": "2026-09-08", "option_expiry_date_distance": 0},
+            {"strike_time": "2026-09-09", "option_expiry_date_distance": 1},
+            {"strike_time": "2026-09-18", "option_expiry_date_distance": 10},
+            {"strike_time": "2026-10-23", "option_expiry_date_distance": 45},
+            {"strike_time": "2026-10-24", "option_expiry_date_distance": 46},
+        ]
+    )
+
+    selected = MoomooIntradayOptionsAdapter._select_intraday_expirations(
+        frame, "eod", max_dte=45
+    )
+
+    assert selected == [
+        ("2026-09-09", 1),
+        ("2026-09-18", 10),
+        ("2026-10-23", 45),
+    ]
+
+
+def test_eoflora_eod_contract_is_ready_only_with_complete_model_fields(monkeypatch):
+    adapter = object.__new__(MoomooIntradayOptionsAdapter)
+    captured: dict[str, object] = {}
+
+    def capture_intraday(**kwargs):
+        captured.update(kwargs)
+        def contracts(symbol):
+            return [
+                {
+                    "contract_code": f"US.{symbol}260909C00100000",
+                    "option_type": "CALL",
+                    "expiration": "2026-09-09",
+                    "strike": 100.0,
+                    "bid": 1.0,
+                    "ask": 1.1,
+                    "open_interest": 20,
+                    "implied_volatility": 20.0,
+                    "delta": 0.5,
+                    "gamma": 0.03,
+                    "volume": 2,
+                    "quote_time": "2026-09-08 16:59:59",
+                    "request_started_at": "2026-09-08T21:00:00+00:00",
+                    "received_at": "2026-09-08T21:00:01+00:00",
+                },
+                {
+                    "contract_code": f"US.{symbol}260909P00100000",
+                    "option_type": "PUT",
+                    "expiration": "2026-09-09",
+                    "strike": 100.0,
+                    "bid": 0.9,
+                    "ask": 1.0,
+                    "open_interest": 25,
+                    "implied_volatility": 21.0,
+                    "delta": -0.5,
+                    "gamma": 0.03,
+                    "volume": 3,
+                    "quote_time": "2026-09-08 16:59:59",
+                    "request_started_at": "2026-09-08T21:00:00+00:00",
+                    "received_at": "2026-09-08T21:00:01+00:00",
+                },
+            ]
+        requested = kwargs["symbols"]
+        return {
+            "schema_version": "moomoo-intraday-options-v2",
+            "provider": "moomoo_openapi",
+            "captured_at": "2026-09-08T21:00:01+00:00",
+            "trading_date": "2026-09-08",
+            "symbols": [
+                {
+                    "symbol": symbol,
+                    "expirations": [
+                        {"expiration": "2026-09-09", "contracts": contracts(symbol)}
+                    ],
+                }
+                for symbol in requested
+            ],
+            "underlying_bars": [
+                {"symbol": symbol, "bar_time": "2026-09-08 15:59:00", "close": 100.0}
+                for symbol in requested
+            ],
+            "quality_summary": {"complete": True},
+        }
+
+    monkeypatch.setattr(adapter, "capture_intraday", capture_intraday)
+
+    result = adapter.capture_eod_options(
+        symbols=["SPY", "QQQ", "IWM"], trading_date=date(2026, 9, 8)
+    )
+
+    assert captured["capture_tier"] == "eod"
+    assert captured["band_percent"] == 10.0
+    assert captured["max_dte"] == 45
+    assert result["schema_version"] == "urus.moomoo.eoflora-eod.v1"
+    assert result["dte_min"] == 1
+    assert result["dte_max"] == 45
+    assert "symbols" not in result
+    assert result["eoflora_option_rows"][0]["type"] == "call"
+    assert result["eoflora_option_rows"][0]["implied_volatility"] == 0.2
+    assert result["underlying_closes"] == {"SPY": 100.0, "QQQ": 100.0, "IWM": 100.0}
+    assert len(result["content_sha256"]) == 64
+    assert result["ready"] is True
+    assert result["complete"] is True
+    invalid = dict(result["eoflora_option_rows"][0], gamma=None)
+    assert adapter._valid_eoflora_row(invalid) is False
 
 
 def test_sqlite_storage_and_contract_boundary(tmp_path: Path):

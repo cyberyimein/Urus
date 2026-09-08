@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
+import hashlib
+import json
 import math
 from typing import Any
 
@@ -212,7 +214,9 @@ class MoomooIntradayOptionsAdapter(MoomooOptionsAdapter):
         return rows
 
     @staticmethod
-    def _select_intraday_expirations(frame: Any, capture_tier: str) -> list[tuple[str, int]]:
+    def _select_intraday_expirations(
+        frame: Any, capture_tier: str, *, max_dte: int = 45
+    ) -> list[tuple[str, int]]:
         eligible = frame[frame["option_expiry_date_distance"] >= 0].copy()
         if capture_tier == "fast":
             eligible = eligible.sort_values("option_expiry_date_distance").head(2)
@@ -220,6 +224,11 @@ class MoomooIntradayOptionsAdapter(MoomooOptionsAdapter):
             eligible = eligible[eligible["option_expiry_date_distance"] <= 7].sort_values(
                 "option_expiry_date_distance"
             )
+        elif capture_tier == "eod":
+            eligible = eligible[
+                (eligible["option_expiry_date_distance"] > 0)
+                & (eligible["option_expiry_date_distance"] <= max_dte)
+            ].sort_values("option_expiry_date_distance")
         else:
             raise ValueError(f"unsupported intraday capture tier: {capture_tier}")
         return [
@@ -318,10 +327,16 @@ class MoomooIntradayOptionsAdapter(MoomooOptionsAdapter):
         return results, codes
 
     def capture_intraday(
-        self, *, symbols: list[str], capture_tier: str, band_percent: float
+        self,
+        *,
+        symbols: list[str],
+        capture_tier: str,
+        band_percent: float,
+        trading_date: date | None = None,
+        max_dte: int = 45,
     ) -> dict[str, Any]:
-        if capture_tier not in {"fast", "structure"}:
-            raise ValueError("capture_tier must be fast or structure")
+        if capture_tier not in {"fast", "structure", "eod"}:
+            raise ValueError("capture_tier must be fast, structure, or eod")
         pd = _pandas()
         codes = [self._market_code(item) for item in symbols]
         context = self._context()
@@ -332,7 +347,8 @@ class MoomooIntradayOptionsAdapter(MoomooOptionsAdapter):
             underlying = pd.DataFrame(underlying)
         quotes = underlying.set_index("code").to_dict("index") if not underlying.empty else {}
         started_at = underlying_request_started_at
-        market_date = started_at.astimezone(self._market_timezone()).date().isoformat()
+        session_date = trading_date or started_at.astimezone(self._market_timezone()).date()
+        market_date = session_date.isoformat()
         bars: list[dict[str, object]] = []
         results: list[dict[str, object]] = []
         warnings = [
@@ -376,7 +392,9 @@ class MoomooIntradayOptionsAdapter(MoomooOptionsAdapter):
             raw_expiration_records[code] = self._json_safe(
                 expirations_frame.to_dict("records")
             )
-            selected = self._select_intraday_expirations(expirations_frame, capture_tier)
+            selected = self._select_intraday_expirations(
+                expirations_frame, capture_tier, max_dte=max_dte
+            )
             expiration_results: list[dict[str, object]] = []
             expiry_quality: list[dict[str, Any]] = []
             for group in self._expiration_groups(selected):
@@ -465,6 +483,7 @@ class MoomooIntradayOptionsAdapter(MoomooOptionsAdapter):
             "schema_version": "moomoo-intraday-options-v2",
             "provider": "moomoo_openapi",
             "captured_at": datetime.now(UTC).isoformat(),
+            "trading_date": market_date,
             "capture_tier": capture_tier,
             "request_band_percent": band_percent,
             "requested_symbols": requested_symbols,
@@ -498,6 +517,157 @@ class MoomooIntradayOptionsAdapter(MoomooOptionsAdapter):
             },
             "warnings": warnings,
         }
+
+    def capture_eod_options(
+        self,
+        *,
+        symbols: list[str],
+        trading_date: date,
+        band_percent: float = 10.0,
+        max_dte: int = 45,
+    ) -> dict[str, Any]:
+        """Collect the frozen Eoflora v1 EOD input without same-day 0DTE."""
+
+        if max_dte != 45 or not math.isclose(band_percent, 10.0):
+            raise ValueError("Eoflora EOD v1 requires max_dte=45 and band_percent=10")
+        payload = self.capture_intraday(
+            symbols=symbols,
+            capture_tier="eod",
+            band_percent=band_percent,
+            trading_date=trading_date,
+            max_dte=max_dte,
+        )
+        rows: list[dict[str, Any]] = []
+        invalid_contracts: list[str] = []
+        expiry_types: dict[tuple[str, str], set[str]] = {}
+        for symbol_payload in payload.get("symbols", []):
+            if not isinstance(symbol_payload, dict):
+                continue
+            symbol = str(symbol_payload.get("symbol") or "").upper()
+            for expiration_payload in symbol_payload.get("expirations", []):
+                if not isinstance(expiration_payload, dict):
+                    continue
+                expiration = str(expiration_payload.get("expiration") or "")
+                types = expiry_types.setdefault((symbol, expiration), set())
+                for contract in expiration_payload.get("contracts", []):
+                    if not isinstance(contract, dict):
+                        continue
+                    option_type = str(contract.get("option_type") or "").lower()
+                    types.add(option_type)
+                    raw_iv = self._number(contract.get("implied_volatility"))
+                    row = {
+                        "date": trading_date.isoformat(),
+                        "symbol": symbol,
+                        "expiration": expiration,
+                        "strike": contract.get("strike"),
+                        "type": option_type,
+                        "bid": contract.get("bid"),
+                        "ask": contract.get("ask"),
+                        "open_interest": contract.get("open_interest"),
+                        "implied_volatility": raw_iv / 100 if raw_iv is not None else None,
+                        "delta": contract.get("delta"),
+                        "gamma": contract.get("gamma"),
+                        "volume": contract.get("volume"),
+                        "contract_code": contract.get("contract_code"),
+                        "quote_time": contract.get("quote_time"),
+                        "request_started_at": contract.get("request_started_at"),
+                        "received_at": contract.get("received_at"),
+                    }
+                    rows.append(row)
+                    if not self._valid_eoflora_row(row):
+                        invalid_contracts.append(str(contract.get("contract_code") or ""))
+
+        underlying_closes: dict[str, float] = {}
+        for symbol in {item.upper().removeprefix("US.") for item in symbols}:
+            symbol_bars = [
+                item
+                for item in payload.get("underlying_bars", [])
+                if isinstance(item, dict) and str(item.get("symbol") or "").upper() == symbol
+            ]
+            if symbol_bars:
+                underlying_closes[symbol] = float(
+                    max(symbol_bars, key=lambda item: str(item.get("bar_time") or ""))["close"]
+                )
+
+        missing_two_sided = [
+            f"{symbol}:{expiration}"
+            for (symbol, expiration), types in expiry_types.items()
+            if types != {"call", "put"}
+        ]
+        requested_symbols = {item.upper().removeprefix("US.") for item in symbols}
+        required_symbols = {"SPY", "QQQ", "IWM"}
+        missing_required_symbols = sorted(required_symbols - requested_symbols)
+        quality = payload.get("quality_summary")
+        provider_complete = bool(quality.get("complete")) if isinstance(quality, dict) else False
+        complete = (
+            provider_complete
+            and bool(rows)
+            and not invalid_contracts
+            and not missing_two_sided
+            and not missing_required_symbols
+            and set(underlying_closes) == requested_symbols
+        )
+        content = {
+            "trading_date": trading_date.isoformat(),
+            "requested_symbols": sorted(requested_symbols),
+            "dte_range": [1, max_dte],
+            "strike_band_percent": band_percent,
+            "underlying_closes": underlying_closes,
+            "option_rows": rows,
+        }
+        content_sha256 = hashlib.sha256(
+            json.dumps(content, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        base_payload = dict(payload)
+        base_payload.pop("symbols", None)
+        return {
+            **base_payload,
+            "schema_version": "urus.moomoo.eoflora-eod.v1",
+            "collection_mode": "eoflora_eod",
+            "dte_min": 1,
+            "dte_max": max_dte,
+            "request_band_percent": band_percent,
+            "underlying_closes": underlying_closes,
+            "eoflora_option_rows": rows,
+            "content_sha256": content_sha256,
+            "quality_summary": {
+                **(quality if isinstance(quality, dict) else {}),
+                "invalid_contract_codes": invalid_contracts,
+                "missing_two_sided_expirations": missing_two_sided,
+                "missing_required_symbols": missing_required_symbols,
+            },
+            "ready": complete,
+            "complete": complete,
+        }
+
+    @staticmethod
+    def _valid_eoflora_row(row: dict[str, Any]) -> bool:
+        try:
+            strike = float(row["strike"])
+            bid = float(row["bid"])
+            ask = float(row["ask"])
+            open_interest = float(row["open_interest"])
+            implied_volatility = float(row["implied_volatility"])
+            delta = float(row["delta"])
+            gamma = float(row["gamma"])
+        except (KeyError, TypeError, ValueError):
+            return False
+        option_type = str(row.get("type") or "").lower()
+        return (
+            all(
+                math.isfinite(value)
+                for value in (strike, bid, ask, open_interest, implied_volatility, delta, gamma)
+            )
+            and strike > 0
+            and bid >= 0
+            and ask >= bid
+            and ask > 0
+            and open_interest >= 0
+            and implied_volatility > 0
+            and gamma >= 0
+            and abs(delta) <= 1
+            and ((option_type == "call" and delta >= 0) or (option_type == "put" and delta <= 0))
+        )
 
     def capture_session_close(self, *, symbols: list[str], trading_date: date) -> dict[str, Any]:
         """Refetch complete regular-session bars after close for labels and final revisions."""

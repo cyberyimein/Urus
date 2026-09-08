@@ -91,7 +91,7 @@ class CollectorRuntime:
         if normalized == "capture_intraday":
             summary = payload.get("quality_summary")
             return bool(summary.get("complete")) if isinstance(summary, dict) else False
-        if normalized == "capture_session_close":
+        if normalized in {"capture_session_close", "capture_eod_options"}:
             return bool(payload.get("complete"))
         return True
 
@@ -110,11 +110,11 @@ class CollectorRuntime:
             }
         elif operation == "capture_intraday":
             result = self.provider.capture_intraday(symbols=list(task.symbols), **params)
-        elif operation == "capture_session_close":
+        elif operation in {"capture_session_close", "capture_eod_options"}:
             trading_date = scheduled_at.astimezone(
                 ZoneInfo(self.config.market_timezone)
             ).date()
-            result = self.provider.capture_session_close(
+            result = getattr(self.provider, operation)(
                 symbols=list(task.symbols), trading_date=trading_date, **params
             )
         else:

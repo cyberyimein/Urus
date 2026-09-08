@@ -76,3 +76,30 @@ symbols = ["TEST_ASSET"]
 
     with pytest.raises(ValueError, match="operation"):
         load_config(path)
+
+
+def test_load_config_accepts_eoflora_eod_operation(tmp_path: Path) -> None:
+    path = tmp_path / "tasks.toml"
+    path.write_text(
+        """
+[runtime]
+timezone = "Asia/Tokyo"
+
+[[tasks]]
+name = "eoflora-eod"
+schedule = "post-close"
+operation = "capture_eod_options"
+delay_seconds = 3600
+symbols = ["SPY", "QQQ", "IWM"]
+[tasks.params]
+band_percent = 10
+max_dte = 45
+""",
+        encoding="utf-8",
+    )
+
+    task = load_config(path).tasks[0]
+
+    assert task.operation == "capture_eod_options"
+    assert task.delay_seconds == 3600
+    assert task.params == {"band_percent": 10, "max_dte": 45}

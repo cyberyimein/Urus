@@ -89,7 +89,12 @@ def _build_runtime(config) -> CollectorRuntime:
         )
         option_operations = {
             task.operation for task in config.tasks if task.enabled and task.operation != "instrument_cards"
-        } & {"options_snapshot", "capture_intraday", "capture_session_close"}
+        } & {
+            "options_snapshot",
+            "capture_intraday",
+            "capture_session_close",
+            "capture_eod_options",
+        }
         if not option_operations:
             return _Providers(market)
         settings = dict(config.options or {})
@@ -99,7 +104,8 @@ def _build_runtime(config) -> CollectorRuntime:
         ]
         adapter = (
             MoomooIntradayOptionsAdapter
-            if option_operations & {"capture_intraday", "capture_session_close"}
+            if option_operations
+            & {"capture_intraday", "capture_session_close", "capture_eod_options"}
             else MoomooOptionsAdapter
         )
         options = adapter(

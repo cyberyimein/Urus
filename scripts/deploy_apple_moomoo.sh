@@ -135,6 +135,17 @@ config.write_text(
             'operation = "capture_session_close"',
             "delay_seconds = 300",
             f"symbols = {json.dumps(intraday_symbols)}",
+            "",
+            "[[tasks]]",
+            'name = "options-eoflora-eod"',
+            "enabled = true",
+            'schedule = "post-close"',
+            'operation = "capture_eod_options"',
+            "delay_seconds = 3600",
+            f"symbols = {json.dumps(intraday_symbols)}",
+            "[tasks.params]",
+            "band_percent = 10",
+            "max_dte = 45",
         ]
     )
     + "\n",
