@@ -23,6 +23,13 @@ frontend/.vite/
 .playwright-cli/
 *.log
 
+# Local deployment worktrees and generated analysis/UI outputs.
+/.deploy-worktree-*/
+/output/
+
+# Runtime health snapshot.
+backend/urus.health.json
+
 # urus-moomoo operational task definitions and runtime state stay local.
 urus-moomoo/.env
 urus-moomoo/config/*.local.toml
