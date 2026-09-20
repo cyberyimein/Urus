@@ -44,7 +44,7 @@ describe('InstrumentDecisionView', () => {
         activated_at: '2026-08-21T00:00:00Z',
       } as ObservationGroup,
     ])
-    await router.push('/')
+    await router.push('/instruments/INTC')
     await router.isReady()
 
     const wrapper = mount(InstrumentDecisionView, {
@@ -118,7 +118,7 @@ describe('InstrumentDecisionView', () => {
         content_sha256: 'theme-hash', created_at: '2026-08-21T00:00:00Z', activated_at: '2026-08-21T00:00:00Z',
       } as ObservationGroup,
     ])
-    await router.push('/')
+    await router.push('/instruments/INTC')
     await router.isReady()
 
     const wrapper = mount(InstrumentDecisionView, {
@@ -318,8 +318,8 @@ describe('InstrumentDecisionView', () => {
     expect(detail.text()).toContain('98.00')
     expect(detail.text()).not.toContain('9.99 ATR')
     expect(detail.text()).not.toContain('8.88 ATR')
-    expect(detail.text()).not.toContain('legacy confirmation text')
-    expect(detail.text()).not.toContain('legacy invalidation text')
+    expect(detail.text()).toContain('legacy confirmation text')
+    expect(detail.text()).toContain('legacy invalidation text')
   })
 
   it('renders the selected stock option structure and post-close flags inside the stock page', async () => {
@@ -427,7 +427,7 @@ describe('InstrumentDecisionView', () => {
       message: null,
     })
 
-    await router.push('/')
+    await router.push('/instruments/INTC')
     await router.isReady()
     const wrapper = mount(InstrumentDecisionView, {
       global: {
@@ -472,7 +472,7 @@ describe('InstrumentDecisionView', () => {
       message: '没有找到 2026-08-21 对应的盘后观察期权快照。',
     })
 
-    await router.push('/')
+    await router.push('/instruments/INTC')
     await router.isReady()
     const wrapper = mount(InstrumentDecisionView, {
       global: {
@@ -665,7 +665,7 @@ describe('InstrumentDecisionView', () => {
     await flushPromises()
 
     const text = wrapper.text()
-    expect(text).toContain('最终行动')
+    expect(text).toContain('当前判断')
     expect(text).toContain('结构')
     expect(text).toContain('变化')
     expect(text).toContain('Setup')
@@ -674,6 +674,80 @@ describe('InstrumentDecisionView', () => {
     expect(text).toContain('102.50')
     expect(text).toContain('失效位')
     expect(text).toContain('98.00')
+  })
+
+  it('moves the complete strategy advice before the chart and preserves discovery context', async () => {
+    const datasetId = 'dataset-strategy-layout'
+    const scope = { scope_type: 'instrument', scope_id: 'AAA', scope_version: 1, symbols: ['AAA'], benchmark_symbols: ['QQQ'], trading_date: '2026-08-21' }
+    const dataset = {
+      schema_version: 'urus.daily_decision_dataset.v1', feature_version: 'technical_v5', dataset_id: datasetId,
+      trading_date: '2026-08-21', cutoff_time: '2026-08-22T05:30:00Z', market_timezone: 'America/New_York', bar_completion_policy: 'official_exchange_close_only_v1',
+      scope, bar_manifest: [{ symbol: 'AAA', bar_count: 260, start_date: '2025-08-20', end_date: '2026-08-21', input_bar_hash: 'bars', source: 'fixture', adjustment: 'QFQ', exchange: 'XNYS', source_revisions: [], quality_status: 'ok' }],
+      indicator_snapshot_ids: ['indicator-layout'], group_snapshot_ids: [], quality: { status: 'ok', symbols: { AAA: { status: 'ok', bar_count: 260, latest_bar_date: '2026-08-21', input_bar_hash: 'bars', warnings: [] } }, requested_symbol_count: 1, available_symbol_count: 1, errors: [], warnings: [] }, status: 'ok', content_sha256: 'dataset-layout-hash',
+    }
+    const chart = {
+      schema_version: 'urus.decision_chart_projection.v1', dataset_id: datasetId, scope, timezone: 'America/New_York',
+      instruments: { AAA: { symbol: 'AAA', price: { symbol: 'AAA', bars: [{ date: '2026-08-21', open: 100, high: 103, low: 97, close: 100, volume: 1000 }] }, series: [], indicator_snapshot_id: 'indicator-layout', quality: { status: 'ok', bar_count: 260, latest_bar_date: '2026-08-21', input_bar_hash: 'bars', warnings: [] } } },
+      overlays: [], state_segments: [], events: [], quality: dataset.quality, content_sha256: 'chart-layout-hash',
+    }
+    const makeStrategy = (name: string, status: string, stance: string, action: string, score: number | null, stage: string, support: string, opposition: string) => ({
+      schema_version: 'urus.strategy_decision.v1', decision_id: `${name}-decision`, dataset_id: datasetId, scope: { symbol: 'AAA' },
+      strategy: { name, version: '1.0', implementation_sha256: `implementation-${name}` }, status, stance, action, horizon: { value: 5, unit: 'trading_day' }, score, score_scale: [-100, 100], confidence: 0.8, confidence_type: 'deterministic',
+      setup_progress: { stage, stage_since: null, confirmation_distance_atr: null, invalidation_distance_atr: null, bars_in_stage: 1, changed_from_previous_stage: null },
+      setup_plan: name === 'trend_momentum_v1' ? { direction: 'bullish', stage: 'confirmed', confirmation_price: 102, confirmation_operator: '>=', confirmation_reference: 'close', observation_price: 100, remaining_price: 2, remaining_percent: 2, remaining_atr: 0.4, invalidation_price: 97, invalidation_operator: '<', invalidation_reference: 'close', invalidation_distance_price: 3, invalidation_distance_percent: 3, invalidation_distance_atr: 0.6 } : null,
+      reasons: [{ code: 'support', detail: support }], risks: opposition ? [opposition] : [], confirmation_conditions: [`确认 ${name}`], invalidation_conditions: [`失效 ${name}`], visual_anchors: [], evidence_refs: [], quality: { status: 'ok', bar_count: 260, latest_bar_date: '2026-08-21', input_bar_hash: 'bars', warnings: [] }, generated_at: '2026-08-21T00:00:00Z', content_sha256: `decision-${name}`,
+    })
+    const strategies = [
+      makeStrategy('trend_momentum_v1', 'ok', 'bullish', 'prioritize', 90, 'confirmed', '主策略支持', '主策略风险'),
+      makeStrategy('mean_reversion_v1', 'ok', 'bearish', 'avoid', -60, 'confirmed', '偏空已确认支持', '偏空反对证据'),
+      makeStrategy('quality_left_side_reversal_v1', 'ok', 'bullish', 'watch', 30, 'forming', '形成中支持', '形成中风险'),
+      makeStrategy('breakout_volume_v1', 'not_applicable', 'neutral', 'no_action', null, 'confirmed', '不适用支持', ''),
+      makeStrategy('relative_strength_rotation_v1', 'error', 'bullish', 'wait', null, 'watching', '错误状态支持', ''),
+    ]
+    vi.spyOn(api, 'getDailyDataset').mockResolvedValue(dataset as never)
+    vi.spyOn(api, 'getDailyChart').mockResolvedValue(chart as never)
+    vi.spyOn(api, 'getDailyStrategies').mockResolvedValue({ dataset_id: datasetId, strategy_decisions: strategies, deterministic_synthesis: { consensus_state: 'aligned', suggested_action: 'prioritize', strongest_supporting_strategy_ids: ['trend_momentum_v1-decision'] } } as never)
+    vi.spyOn(api, 'listObservationGroups').mockResolvedValue([])
+    vi.spyOn(api, 'getObservationOptions').mockResolvedValue({ run_id: null, status: 'unavailable', trading_date: '2026-08-21', cutoff_time: null, available: false, options: { is_mock: true, status: 'not_collected', available: false, data_state: 'placeholder' }, alignment: null, message: null })
+    const opportunityRequest = vi.spyOn(api, 'getDailyOpportunityView')
+
+    await router.push('/instruments/AAA?dataset=dataset-strategy-layout&run=run-layout&discoveryEvent=indicator_transition:event-1&lens=rsi14')
+    await router.isReady()
+    const wrapper = mount(InstrumentDecisionView, {
+      global: {
+        plugins: [router],
+        stubs: {
+          AppShell: true,
+          DecisionChartWorkspace: { props: ['strategyFilter'], template: '<div data-testid="chart-stub" :data-strategy-filter="strategyFilter"></div>' },
+          RemoteDecisionPanel: true,
+          RouterLink: { template: '<a><slot /></a>' },
+        },
+      },
+    })
+    await flushPromises()
+
+    const html = wrapper.html()
+    expect(opportunityRequest).not.toHaveBeenCalled()
+    expect(wrapper.find('.opportunity-view-panel').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('当前日线机会')
+    expect(wrapper.text()).not.toContain('当前无有效突破计划')
+    expect(html.indexOf('strategy-advice-panel')).toBeLessThan(html.indexOf('chart-toolbar'))
+    expect(wrapper.get('.decision-content-grid').find('.strategy-advice-panel').exists()).toBe(false)
+    expect(wrapper.get('.decision-insight-rail').text()).not.toContain('算法建议')
+
+    const rows = wrapper.findAll('.strategy-decision-row')
+    expect(rows).toHaveLength(5)
+    expect(rows.map((row) => row.attributes('data-strategy'))).toEqual([
+      'trend_momentum_v1', 'mean_reversion_v1', 'quality_left_side_reversal_v1', 'breakout_volume_v1', 'relative_strength_rotation_v1',
+    ])
+    expect(wrapper.get('.strategy-detail').text()).toContain('主策略支持')
+    expect(wrapper.get('.strategy-detail').text()).toContain('HORIZON 5 trading_day')
+    expect(wrapper.get('.strategy-detail').text()).toContain('IMPLEMENTATION implementati')
+    expect(wrapper.get('[data-testid="discovery-context"]').text()).toContain('从变化发现进入 · 指标 rsi14 · 使用冻结 Dataset')
+
+    await rows[1].trigger('click')
+    expect(wrapper.get('.strategy-detail').text()).toContain('偏空已确认支持')
+    expect(wrapper.get('[data-testid="chart-stub"]').attributes('data-strategy-filter')).toBe('mean_reversion_v1')
   })
 
   it('shows a condition-based setup without fake price-distance placeholders', async () => {
@@ -712,6 +786,9 @@ describe('InstrumentDecisionView', () => {
     expect(text).toContain('无价格距离')
     expect(text).toContain('收盘价站上 MA20 后确认入场。')
     expect(text).toContain('收盘价跌破 MA50 时失效。')
+    const opposition = wrapper.get('.strategy-decision-opposition').text()
+    expect(opposition).toContain('反对 / 待确认尚需确认：收盘价站上 MA20 后确认入场。')
+    expect(opposition).not.toContain('收盘价跌破 MA50 时失效。')
     expect(text).not.toContain('确认距 —')
     expect(text).not.toContain('失效距 —')
   })

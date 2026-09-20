@@ -10,6 +10,8 @@ htmlcov/
 backend/.venv/
 backend/urus.db
 backend/*.db
+backend/*.db-wal
+backend/*.db-shm
 backend/data/
 artifacts/
 

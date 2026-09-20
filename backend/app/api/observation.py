@@ -11,6 +11,7 @@ from app.api.dependencies import get_db, get_settings
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.decision_harness.cross_section import CrossSectionService
+from app.decision_harness.discovery import build_discovery_projection
 from app.integrations.moomoo import OpenDMarketAdapter
 from app.integrations.sidecar_captures import (
     SidecarCaptureStore,
@@ -355,6 +356,16 @@ def get_strategy_cross_section(
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     return CrossSectionService(db).strategy_projection(run_id, strategy_id)
+
+
+@router.get("/runs/{run_id}/discovery", response_model=dict[str, Any])
+def get_observation_discovery(
+    run_id: str,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Return a read-only change projection for one frozen Observation Run."""
+
+    return build_discovery_projection(db, run_id)
 
 
 @router.get("/runs/{run_id}", response_model=ObservationRunResponse)

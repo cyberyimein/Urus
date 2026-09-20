@@ -7,5 +7,6 @@ import './styles.css'
 import './styles/decision-workbench.css'
 import './styles/observation.css'
 import './styles/cross-section.css'
+import './styles/discovery.css'
 
 createApp(App).use(createPinia()).use(router).mount('#app')

@@ -6,6 +6,7 @@ from app.api.universe import router as universe_router
 from app.api.daily_evidence import router as daily_evidence_router
 from app.api.observation import router as observation_router
 from app.api.remote_decisions import router as remote_decisions_router
+from app.api.focus_symbols import router as focus_symbols_router
 
 api_router = APIRouter(prefix="/api")
 api_router.include_router(health_router)
@@ -14,3 +15,4 @@ api_router.include_router(universe_router)
 api_router.include_router(daily_evidence_router)
 api_router.include_router(observation_router)
 api_router.include_router(remote_decisions_router)
+api_router.include_router(focus_symbols_router)

@@ -52,7 +52,7 @@ onMounted(async () => {
       </span>
     </RouterLink>
     <nav class="topnav" aria-label="主导航">
-      <RouterLink to="/" active-class="active">首页</RouterLink>
+      <RouterLink to="/" active-class="active">发现</RouterLink>
       <RouterLink to="/groups" active-class="active">组观察</RouterLink>
       <RouterLink to="/indicators" active-class="active">指标扫描</RouterLink>
       <RouterLink to="/strategies" active-class="active">策略扫描</RouterLink>

@@ -27,6 +27,7 @@ describe('AppShell', () => {
     })
 
     expect(wrapper.get('nav').text()).toContain('收盘观测')
+    expect(wrapper.get('nav').text()).toContain('发现')
     expect(wrapper.get('nav').text()).not.toContain('旧研究中心')
     expect(wrapper.get('nav').text()).not.toContain('历史报告')
     expect(wrapper.get('nav').text()).not.toContain('手动分析')

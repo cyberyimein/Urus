@@ -1,14 +1,21 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import httpx
 import pytest
+from sqlalchemy import func, select
 
+from app.decision_harness.discovery import DiscoveryProjectionService
 from app.decision_harness.group_observation import build_group_snapshot
 from app.decision_harness.market_evidence import DailyMarketEvidenceService
 from app.decision_harness.observation_report import build_observation_report, rank_observation_groups
-from app.models.observation import GroupDailySnapshotModel
+from app.models.observation import (
+    GroupDailySnapshotModel,
+    ObservationGroupVersionModel,
+    ObservationRunModel,
+)
 from app.repositories.daily_evidence import DailyEvidenceRepository
 from app.repositories.observation import ObservationUniverseRevisionRepository
 from app.repositories.universe import InstrumentUniverseRepository
@@ -1582,3 +1589,524 @@ def test_observation_report_v2_buckets_themes_and_keeps_legacy_fields() -> None:
     assert "group_rankings" in report
     assert "improving_groups" in report
     assert "deteriorating_groups" in report
+
+
+def _discovery_run(report: dict | None = None) -> SimpleNamespace:
+    return SimpleNamespace(
+        id="run-discovery-current",
+        status="succeeded",
+        trading_date=datetime(2026, 8, 21).date(),
+        cutoff_time=datetime(2026, 8, 21, 12, 0, tzinfo=UTC),
+        group_ids=["group-a", "group-b"],
+        payload_json={"report": report or {}},
+    )
+
+
+def _discovery_row(
+    group_id: str,
+    group_name: str,
+    indicator_id: str,
+    *,
+    benchmark: str = "QQQ",
+) -> dict:
+    current_state, previous_state = (
+        ("overbought", "balanced") if indicator_id == "rsi14" else ("leading", "inline")
+    )
+    current_value, previous_value = (75.0, 50.0) if indicator_id == "rsi14" else (1.0, 0.0)
+    return {
+        "group_id": group_id,
+        "group_name": group_name,
+        "symbol": "AAA",
+        "snapshot_id": f"snapshot-{group_id}-current",
+        "dataset_id": "dataset-current",
+        "previous_snapshot_id": f"snapshot-{group_id}-previous",
+        "previous_dataset_id": "dataset-previous",
+        "previous_trading_date": "2026-08-20",
+        "transition_date": "2026-08-21",
+        "value": current_value,
+        "previous_value": previous_value,
+        "display_value": str(current_value),
+        "previous_display_value": str(previous_value),
+        "state": current_state,
+        "previous_state": previous_state,
+        "state_label": current_state,
+        "previous_state_label": previous_state,
+        "change": current_value - previous_value,
+        "benchmark_symbols": [benchmark],
+        "transition": {
+            "type": "state_changed",
+            "from": previous_state,
+            "to": current_state,
+        },
+    }
+
+
+class _DiscoveryCrossSectionFake:
+    def __init__(self, rows_by_indicator: dict[str, list[dict]]) -> None:
+        self.rows_by_indicator = rows_by_indicator
+        self.reverse = False
+
+    @staticmethod
+    def indicator_catalog() -> list[dict[str, str]]:
+        return [
+            {"id": "rsi14", "name": "RSI 14", "feature_version": "technical_v5"},
+            {
+                "id": "relative_strength_20d",
+                "name": "Relative Strength 20D",
+                "feature_version": "technical_v5",
+            },
+        ]
+
+    def indicator_projection(self, run_id: str, indicator_id: str) -> dict:
+        rows = list(self.rows_by_indicator.get(indicator_id, []))
+        if self.reverse:
+            rows.reverse()
+        return {
+            "comparison": {
+                "status": "ok",
+                "previous_trading_date": "2026-08-20",
+            },
+            "rows": rows,
+            "quality": {"status": "ok", "warnings": []},
+        }
+
+
+class _DiscoverySessionFake:
+    def __init__(self, group_versions: dict[str, SimpleNamespace] | None = None) -> None:
+        self.group_versions = group_versions or {}
+
+    def get(self, model, object_id: str):
+        assert model is ObservationGroupVersionModel
+        return self.group_versions.get(str(object_id))
+
+
+class _DiscoveryRepositoryFake:
+    def __init__(
+        self,
+        run: SimpleNamespace,
+        *,
+        snapshots: dict[str, SimpleNamespace] | None = None,
+        previous: dict[str, SimpleNamespace] | None = None,
+        group_versions: dict[str, SimpleNamespace] | None = None,
+    ) -> None:
+        self.run = run
+        self.snapshots = snapshots or {}
+        self.previous = previous or {}
+        self.session = _DiscoverySessionFake(group_versions)
+
+    def get_run(self, run_id: str) -> SimpleNamespace | None:
+        return self.run if run_id == self.run.id else None
+
+    def get_snapshot(self, snapshot_id: str) -> SimpleNamespace | None:
+        return self.snapshots.get(str(snapshot_id))
+
+    def previous_snapshot(self, *, group_id: str, group_version_id: str, trading_date):
+        return self.previous.get(str(group_id))
+
+
+def _discovery_group_case(
+    group_id: str,
+    *,
+    tags: list[str] | None = None,
+    symbols: list[str] | None = None,
+    valid_count: int = 4,
+    coverage: float = 1.0,
+    previous_available: bool = True,
+    current_state: str = "broad_strength",
+    previous_state: str = "mixed",
+    impulse: str = "improving",
+    changed: bool = True,
+) -> tuple[SimpleNamespace, SimpleNamespace | None, SimpleNamespace]:
+    version_id = f"version-{group_id}"
+    requested_count = len(symbols or ["AAA", "BBB", "CCC", "DDD"])
+    current_date = datetime(2026, 8, 21, tzinfo=UTC).date()
+    previous_date = datetime(2026, 8, 20, tzinfo=UTC).date()
+    current_payload = {
+        "features": {
+            "breadth": {"above_ma20": 0.75},
+            "relative_strength": {"median_excess_20d": 1.25},
+            "leader_concentration": 0.4,
+        },
+        "group_decision": {
+            "state": current_state,
+            "impulse": impulse,
+            "participation": 0.75,
+            "rank_eligible": True,
+            "sample_support": {
+                "valid_symbol_count": valid_count,
+                "requested_symbol_count": requested_count,
+                "coverage": coverage,
+            },
+        },
+        "changes": {
+            "previous_trading_date": previous_date.isoformat(),
+            "group_state": {
+                "from": previous_state,
+                "to": current_state,
+                "changed": changed,
+            },
+            "breadth_ma20_delta": 0.125,
+            "relative_20d_delta_percent": 0.5,
+            "leaders_added": ["AAA"],
+            "leaders_removed": ["ZZZ"],
+        },
+    }
+    previous_payload = {
+        "group_decision": {"state": previous_state},
+        "trading_date": previous_date.isoformat(),
+    }
+    current = SimpleNamespace(
+        id=f"snapshot-{group_id}-current",
+        group_id=group_id,
+        group_version_id=version_id,
+        dataset_id=f"dataset-{group_id}-current",
+        trading_date=current_date,
+        payload_json=current_payload,
+    )
+    previous = (
+        SimpleNamespace(
+            id=f"snapshot-{group_id}-previous",
+            group_id=group_id,
+            group_version_id=version_id,
+            dataset_id=f"dataset-{group_id}-previous",
+            trading_date=previous_date,
+            payload_json=previous_payload,
+        )
+        if previous_available
+        else None
+    )
+    group_version = SimpleNamespace(
+        id=version_id,
+        group_id=group_id,
+        display_name=f"{group_id} theme",
+        tags=tags or ["theme"],
+        symbols=symbols or ["AAA", "BBB", "CCC", "DDD"],
+    )
+    return current, previous, group_version
+
+
+def _discovery_group_service(cases: list[tuple[SimpleNamespace, SimpleNamespace | None, SimpleNamespace]]):
+    run = _discovery_run()
+    run.payload_json = {
+        "report": {},
+        "group_snapshots": [
+            {
+                "group_id": current.group_id,
+                "group_version_id": current.group_version_id,
+                "snapshot_id": current.id,
+                "dataset_id": current.dataset_id,
+                "status": "succeeded",
+            }
+            for current, _, _ in cases
+        ],
+    }
+    snapshots = {current.id: current for current, previous, _ in cases}
+    previous = {
+        current.group_id: prior
+        for current, prior, _ in cases
+        if prior is not None
+    }
+    group_versions = {current.group_version_id: version for current, _, version in cases}
+    service = DiscoveryProjectionService(None)
+    service.repository = _DiscoveryRepositoryFake(
+        run,
+        snapshots=snapshots,
+        previous=previous,
+        group_versions=group_versions,
+    )
+    service.cross_section = _DiscoveryCrossSectionFake({})
+    return service, run
+
+
+def test_discovery_group_phase_events_filter_to_qualified_theme_groups() -> None:
+    cases = [
+        _discovery_group_case("qualified"),
+        _discovery_group_case("indicator", tags=["theme", "indicator-recommendation"]),
+        _discovery_group_case("single", symbols=["AAA"]),
+        _discovery_group_case("low-sample", valid_count=3),
+        _discovery_group_case("no-previous", previous_available=False),
+        _discovery_group_case("universe-core-watchlist", tags=["theme"]),
+    ]
+    service, run = _discovery_group_service(cases)
+
+    result = service.build(run.id)
+
+    assert [item["group"]["id"] for item in result["events"]] == ["qualified"]
+    event = result["events"][0]
+    assert event["kind"] == "group_phase_change"
+    assert event["stage"] == {"id": "broad_strength_start", "label": "参与扩散至广泛强势"}
+    assert event["metrics"] == {
+        "participation": 0.75,
+        "breadth_ma20": 0.75,
+        "breadth_ma20_delta": 0.125,
+        "relative_20d": 1.25,
+        "relative_20d_delta": 0.5,
+        "leader_concentration": 0.4,
+        "valid_symbol_count": 4,
+        "requested_symbol_count": 4,
+        "coverage": 1.0,
+        "leaders_added": ["AAA"],
+        "leaders_removed": ["ZZZ"],
+    }
+    assert event["duration"] == {"status": "unavailable", "label": "持续时长未知"}
+    assert event["current"] == {
+        "run_id": run.id,
+        "trading_date": "2026-08-21",
+        "snapshot_ids": ["snapshot-qualified-current"],
+        "dataset_ids": ["dataset-qualified-current"],
+    }
+    assert event["compare"] == {
+        "run_id": None,
+        "trading_date": "2026-08-20",
+        "snapshot_ids": ["snapshot-qualified-previous"],
+        "dataset_ids": ["dataset-qualified-previous"],
+    }
+    assert event["route"] == {
+        "name": "group-observation",
+        "params": {"groupId": "qualified"},
+        "query": {"run": run.id, "discoveryEvent": event["event_id"]},
+    }
+    first_digest = result["content_sha256"]
+    replay = service.build(run.id)
+    assert replay["content_sha256"] == first_digest
+    assert replay["events"][0]["event_id"] == event["event_id"]
+
+
+@pytest.mark.parametrize(
+    ("current_state", "previous_state", "impulse", "expected"),
+    [
+        ("narrow_leadership", "mixed", "stable", "少数龙头"),
+        ("narrow_leadership", "narrow_leadership", "deteriorating", "少数龙头"),
+        ("broad_strength", "broad_strength", "deteriorating", "开始恶化"),
+        ("broad_strength", "mixed", "stable", "参与扩散至广泛强势"),
+        ("broad_strength", "broad_strength", "improving", "广泛强势继续扩散"),
+        ("mixed", "mixed", "improving", "边际改善"),
+    ],
+)
+def test_discovery_group_phase_stage_mapping(
+    current_state: str,
+    previous_state: str,
+    impulse: str,
+    expected: str,
+) -> None:
+    service, run = _discovery_group_service(
+        [
+            _discovery_group_case(
+                "stage-case",
+                current_state=current_state,
+                previous_state=previous_state,
+                impulse=impulse,
+            )
+        ]
+    )
+
+    result = service.build(run.id)
+
+    assert len(result["events"]) == 1
+    assert result["events"][0]["stage"]["label"] == expected
+
+
+def test_discovery_group_phase_events_sort_before_indicator_events() -> None:
+    cases = [
+        _discovery_group_case(
+            "group-late",
+            current_state="narrow_leadership",
+            previous_state="mixed",
+            impulse="stable",
+        ),
+        _discovery_group_case(
+            "group-early",
+            current_state="broad_strength",
+            previous_state="broad_strength",
+            impulse="deteriorating",
+        ),
+        _discovery_group_case(
+            "group-mid",
+            current_state="broad_strength",
+            previous_state="mixed",
+            impulse="stable",
+        ),
+    ]
+    service, run = _discovery_group_service(cases)
+    service.cross_section = _DiscoveryCrossSectionFake(
+        {"rsi14": [_discovery_row("indicator-group", "Indicator", "rsi14")]}
+    )
+
+    result = service.build(run.id)
+
+    assert [item["stage"]["label"] for item in result["events"][:3]] == [
+        "开始恶化",
+        "参与扩散至广泛强势",
+        "少数龙头",
+    ]
+    assert result["events"][3]["kind"] == "indicator_transition"
+
+
+def test_discovery_indicator_transitions_deduplicate_groups_and_benchmarks() -> None:
+    run = _discovery_run()
+    fake = _DiscoveryCrossSectionFake(
+        {
+            "rsi14": [
+                _discovery_row("group-a", "组 A", "rsi14"),
+                _discovery_row("group-b", "组 B", "rsi14"),
+            ],
+            "relative_strength_20d": [
+                _discovery_row("group-a", "组 A", "relative_strength_20d", benchmark="QQQ"),
+                _discovery_row("group-b", "组 B", "relative_strength_20d", benchmark="SPY"),
+            ],
+        }
+    )
+    service = DiscoveryProjectionService(None)
+    service.repository = _DiscoveryRepositoryFake(run)
+    service.cross_section = fake
+
+    result = service.build(run.id)
+    assert len(result["events"]) == 3
+    rsi_events = [item for item in result["events"] if item["lens"]["id"] == "rsi14"]
+    relative_events = [
+        item for item in result["events"] if item["lens"]["id"] == "relative_strength_20d"
+    ]
+    assert len(rsi_events) == 1
+    assert {item["id"] for item in rsi_events[0]["groups"]} == {"group-a", "group-b"}
+    assert len(relative_events) == 2
+    assert {item["id"] for item in relative_events[0]["groups"]} != {
+        item["id"] for item in relative_events[1]["groups"]
+    }
+    route = rsi_events[0]["route"]
+    assert route["name"] == "instrument-decision"
+    assert route["params"] == {"symbol": "AAA"}
+    assert route["query"] == {
+        "dataset": "dataset-current",
+        "run": run.id,
+        "discoveryEvent": rsi_events[0]["event_id"],
+        "lens": "rsi14",
+    }
+    assert set(result["events"][0]) == {
+        "event_id",
+        "kind",
+        "symbol",
+        "lens",
+        "groups",
+        "current",
+        "compare",
+        "before",
+        "after",
+        "transition",
+        "priority_reason",
+        "route",
+    }
+
+    first_digest = result["content_sha256"]
+    first_ids = [item["event_id"] for item in result["events"]]
+    fake.reverse = True
+    replay = service.build(run.id)
+    assert replay["content_sha256"] == first_digest
+    assert [item["event_id"] for item in replay["events"]] == first_ids
+
+
+def test_discovery_without_previous_evidence_is_explicitly_empty() -> None:
+    run = _discovery_run()
+
+    class NoPrevious(_DiscoveryCrossSectionFake):
+        def indicator_projection(self, run_id: str, indicator_id: str) -> dict:
+            return {
+                "comparison": {"status": "unavailable", "previous_trading_date": None},
+                "rows": [],
+                "quality": {"status": "ok", "warnings": []},
+            }
+
+    service = DiscoveryProjectionService(None)
+    service.repository = _DiscoveryRepositoryFake(run)
+    service.cross_section = NoPrevious({})
+
+    result = service.build(run.id)
+    assert result["events"] == []
+    assert result["comparison"]["status"] == "unavailable"
+    assert result["quality"]["capabilities"]["strategy_transition"] == "deferred"
+    assert any("没有可比" in item for item in result["quality"]["warnings"])
+
+
+def test_discovery_group_event_supplies_comparison_when_indicators_are_unavailable() -> None:
+    service, run = _discovery_group_service([_discovery_group_case("group-only")])
+
+    class NoIndicatorHistory(_DiscoveryCrossSectionFake):
+        def indicator_projection(self, run_id: str, indicator_id: str) -> dict:
+            return {
+                "comparison": {"status": "unavailable", "previous_trading_date": None},
+                "rows": [],
+                "quality": {"status": "ok", "warnings": []},
+            }
+
+    service.cross_section = NoIndicatorHistory({})
+
+    result = service.build(run.id)
+
+    assert result["events"][0]["kind"] == "group_phase_change"
+    assert result["comparison"] == {
+        "mode": "previous_trading_session",
+        "status": "partial",
+        "current_trading_date": "2026-08-21",
+        "previous_trading_date": "2026-08-20",
+        "previous_trading_dates": ["2026-08-20"],
+        "compare_run_id": None,
+    }
+    assert result["quality"]["status"] == "partial"
+    assert not any("未生成跨日变化" in item for item in result["quality"]["warnings"])
+
+
+def test_discovery_endpoint_is_read_only_and_marks_only_strategy_deferred(client) -> None:
+    cutoff = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
+    session_dates = completed_session_dates(cutoff, "XNYS", count=260)
+    with client.app.state.session_factory() as session:
+        repository = DailyEvidenceRepository(session)
+        for symbol, start in (("INTC", 20.0), ("AMD", 80.0), ("QQQ", 300.0)):
+            repository.upsert_bars(
+                _bars(symbol, session_dates, start),
+                source="fixture",
+                collected_at=cutoff,
+            )
+        session.commit()
+
+    group = client.post(
+        "/api/observation/groups",
+        json={
+            "group_id": "discovery-read-only",
+            "display_name": "Discovery read only",
+            "symbols": ["INTC", "AMD"],
+            "benchmark_symbols": ["QQQ"],
+        },
+    )
+    assert group.status_code == 201, group.text
+    created = client.post(
+        "/api/observation/runs",
+        json={
+            "group_ids": ["discovery-read-only"],
+            "trading_date": session_dates[-1].isoformat(),
+            "cutoff_time": cutoff.isoformat(),
+            "request_intent_id": "discovery-read-only-run",
+        },
+    )
+    assert created.status_code == 201, created.text
+    run_id = created.json()["run_id"]
+
+    with client.app.state.session_factory() as session:
+        before = (
+            session.scalar(select(func.count()).select_from(ObservationRunModel)),
+            session.scalar(select(func.count()).select_from(GroupDailySnapshotModel)),
+        )
+    response = client.get(f"/api/observation/runs/{run_id}/discovery")
+    with client.app.state.session_factory() as session:
+        after = (
+            session.scalar(select(func.count()).select_from(ObservationRunModel)),
+            session.scalar(select(func.count()).select_from(GroupDailySnapshotModel)),
+        )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["schema_version"] == "urus.discovery_projection.v1"
+    assert body["quality"]["capabilities"] == {
+        "indicator_transition": "available",
+        "strategy_transition": "deferred",
+        "group_phase_change": "available",
+    }
+    assert before == after

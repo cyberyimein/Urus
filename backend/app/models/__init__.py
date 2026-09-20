@@ -24,6 +24,7 @@ from app.models.remote_decision import (
     RemoteDecisionEventModel,
     RemoteDecisionRunModel,
 )
+from app.models.focus import FocusSymbolModel
 
 __all__ = [
     "RuntimeSettingsModel",
@@ -46,4 +47,5 @@ __all__ = [
     "RemoteDecisionRunModel",
     "RemoteDecisionEventModel",
     "RemoteDecisionArtifactModel",
+    "FocusSymbolModel",
 ]

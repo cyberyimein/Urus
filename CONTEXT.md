@@ -36,6 +36,10 @@ Urus 负责 Universe、市场数据、日线证据、期权结构、确定性策
 
 **Cross-sectional Group Ranking**：在同一 Observation Run 内，对具备 Sample Support 排名资格的组进行波动调整和截面 mid-rank 标准化。排名以风险调整后的相对收益、MA20/MA50 广度和领涨分散度为因子；缺失因子不填零，少于 5 个合格组时排名不可用。
 
+**Discovery Projection**：从一份冻结 Observation Run 及其已有的可比前序快照生成的只读变化列表。它复用横截面和报告事实，按证据身份去重并保留全部观察组归属；不采集数据、不修改策略结果，也不把缺少前序证据解释为没有变化。第一阶段只提供明确的指标状态变化，策略与组阶段事件在输入契约成熟前标为 deferred。
+
+**Focus List**：个人重点关注的 symbol 集合。它与 Instrument Universe 的采集角色、观察组成员和运行资格分离；加入或移出 Focus List 不改变市场数据采集范围。
+
 **Option Evidence**：在同一次 Observation Run 中按配置标的和到期日采集的期权快照及链路计算结果，包含 Option Spot、IV、Expected Move、DEX、GEX、Gamma Wall、Gamma Profile 和 Max Pain。
 
 **Regular-Close Alignment**：用交易所官方 regular close 与期权结构价位进行的确定性邻近比较。`near_max_pain` 和 `near_dex_wall` 只表示邻近候选；`dex_influence_candidate` 表示结构性影响候选，不表示 DEX 已经造成收盘。

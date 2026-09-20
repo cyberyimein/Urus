@@ -26,6 +26,7 @@ import type {
   CrossSectionCatalogItem,
   CrossSectionProjection,
 } from '@/types/crossSection'
+import type { DiscoveryProjection } from '@/types/discovery'
 import type {
   RemoteDecisionEvent,
   RemoteDecisionIntent,
@@ -34,6 +35,7 @@ import type {
   RemoteDecisionSource,
 } from '@/types/remoteDecision'
 import type { DailyOpportunityViewResponse } from '@/types/opportunityView'
+import type { FocusSymbol, FocusSymbolDeleteResponse } from '@/types/focus'
 
 // Local Vite serves `/api` through the dev proxy, which keeps browser requests
 // same-origin and avoids loopback cross-port restrictions. Deployments can
@@ -155,6 +157,15 @@ export const api = {
   },
   getObservationRun: (runId: string) =>
     request<ObservationRun>(`/observation/runs/${encodeURIComponent(runId)}`),
+  listFocusSymbols: () => request<FocusSymbol[]>('/focus-symbols'),
+  addFocusSymbol: (symbol: string) =>
+    request<FocusSymbol>(`/focus-symbols/${encodeURIComponent(symbol)}`, { method: 'PUT' }),
+  removeFocusSymbol: (symbol: string) =>
+    request<FocusSymbolDeleteResponse>(`/focus-symbols/${encodeURIComponent(symbol)}`, { method: 'DELETE' }),
+  getObservationDiscovery: (runId: string) =>
+    request<DiscoveryProjection>(
+      `/observation/runs/${encodeURIComponent(runId)}/discovery`,
+    ),
   listIndicatorCatalog: () =>
     request<CrossSectionCatalogItem[]>('/observation/indicator-catalog'),
   getIndicatorCrossSection: (runId: string, indicatorId: string) =>

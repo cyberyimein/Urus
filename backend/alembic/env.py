@@ -26,6 +26,7 @@ from app.models import (  # noqa: F401
     RemoteDecisionRunModel,
     RemoteDecisionEventModel,
     RemoteDecisionArtifactModel,
+    FocusSymbolModel,
 )
 
 config = context.config

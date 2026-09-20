@@ -1,5 +1,5 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { api } from '@/api/client'
 import App from '@/App.vue'
@@ -264,6 +264,72 @@ const strategyProjection: CrossSectionProjection = {
   ],
 }
 
+const overlappingProjection: CrossSectionProjection = (() => {
+  const overlappingGroup = {
+    ...projection.groups[0],
+    group_id: 'core-watchlist',
+    group_name: '核心关注列表',
+    display_name: '核心关注列表',
+    group_version_id: 'group-version-2',
+    snapshot_id: 'snapshot-2',
+    dataset_id: 'dataset-1',
+    symbol_count: 4,
+    valid_symbol_count: 4,
+  }
+  const overlappingRows = projection.rows.map((row) => ({
+    ...row,
+    id: row.id.replace('semiconductors', 'core-watchlist'),
+    group_id: 'core-watchlist',
+    group_name: '核心关注列表',
+    group_version_id: 'group-version-2',
+    snapshot_id: 'snapshot-2',
+    dataset_id: 'dataset-1',
+  }))
+  const uniqueRow = {
+    ...projection.rows[0],
+    id: 'core-watchlist:TSM:rsi14',
+    group_id: 'core-watchlist',
+    group_name: '核心关注列表',
+    group_version_id: 'group-version-2',
+    snapshot_id: 'snapshot-2',
+    dataset_id: 'dataset-1',
+    symbol: 'TSM',
+    value: 55,
+    previous_value: 48,
+    change: 7,
+    display_value: '55.00',
+    state: 'balanced',
+    state_label: '平衡',
+    transition: null,
+  }
+  return {
+    ...projection,
+    groups: [projection.groups[0], overlappingGroup],
+    rows: [...projection.rows, ...overlappingRows, uniqueRow],
+    quality: { ...projection.quality, projected_group_count: 2, projected_row_count: 7, valid_row_count: 7 },
+  }
+})()
+
+const relativeStrengthProjection: CrossSectionProjection = {
+  ...projection,
+  lens: { ...projection.lens, id: 'relative_strength_20d' },
+  indicator: { ...projection.indicator!, id: 'relative_strength_20d', name: 'Relative Strength 20D', unit: 'percent' },
+  groups: [
+    { ...projection.groups[0], group_id: 'group-qqq', group_name: '组 QQQ', group_version_id: 'group-qqq-v1', snapshot_id: 'snapshot-qqq', dataset_id: 'dataset-rs', benchmark_symbols: ['QQQ'], symbol_count: 1, valid_symbol_count: 1 },
+    { ...projection.groups[0], group_id: 'group-spy', group_name: '组 SPY', group_version_id: 'group-spy-v1', snapshot_id: 'snapshot-spy', dataset_id: 'dataset-rs', benchmark_symbols: ['SPY'], symbol_count: 1, valid_symbol_count: 1 },
+  ],
+  rows: [
+    { ...projection.rows[0], id: 'group-qqq:INTC:relative_strength_20d', group_id: 'group-qqq', group_name: '组 QQQ', group_version_id: 'group-qqq-v1', snapshot_id: 'snapshot-qqq', dataset_id: 'dataset-rs', value: 2.2, previous_value: 1.1, change: 1.1, display_value: '2.20%', previous_display_value: '1.10%', state: 'leading', state_label: '相对领先', benchmark_symbols: ['QQQ'] },
+    { ...projection.rows[0], id: 'group-spy:INTC:relative_strength_20d', group_id: 'group-spy', group_name: '组 SPY', group_version_id: 'group-spy-v1', snapshot_id: 'snapshot-spy', dataset_id: 'dataset-rs', value: -0.4, previous_value: 0.2, change: -0.6, display_value: '-0.40%', previous_display_value: '0.20%', state: 'lagging', state_label: '相对落后', benchmark_symbols: ['SPY'] },
+  ],
+  transitions: [],
+  quality: { ...projection.quality, projected_group_count: 2, projected_row_count: 2, valid_row_count: 2, dataset_ids: ['dataset-rs'], snapshot_ids: ['snapshot-qqq', 'snapshot-spy'] },
+}
+
+beforeEach(() => {
+  vi.spyOn(api, 'listFocusSymbols').mockResolvedValue([])
+})
+
 afterEach(() => vi.restoreAllMocks())
 
 describe('CrossSectionView', () => {
@@ -274,6 +340,23 @@ describe('CrossSectionView', () => {
     expect(indicatorComponent).toBeDefined()
     expect(strategyComponent).toBeDefined()
     expect(indicatorComponent).not.toBe(strategyComponent)
+  })
+
+  it('keeps named feature versions free of a synthetic v prefix', async () => {
+    vi.spyOn(api, 'listIndicatorCatalog').mockResolvedValue([projection.indicator!])
+    vi.spyOn(api, 'listObservationRuns').mockResolvedValue([run])
+    vi.spyOn(api, 'getIndicatorCrossSection').mockResolvedValue(projection)
+
+    await router.push('/indicators/rsi14?run=run-1')
+    await router.isReady()
+    const wrapper = mount(CrossSectionView, {
+      props: { lensType: 'indicator' },
+      global: { plugins: [router], stubs: { AppShell: true, RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await flushPromises()
+
+    expect(wrapper.get('.cross-section-lens-identity').text()).toBe('rsi14 · technical_v5')
+    expect(wrapper.get('.cross-section-lens-tab').text()).toContain('technical_v5')
   })
 
   it('renders all symbols from the selected observation run and keeps AI disabled', async () => {
@@ -314,21 +397,130 @@ describe('CrossSectionView', () => {
     expect(wrapper.text()).toContain('超买')
     expect(wrapper.text()).toContain('颜色表示状态，不是交易指令')
     expect(wrapper.text()).toContain('前一交易日 2026-08-20')
-    expect(wrapper.findAll('.cross-section-visual-marker--previous')).toHaveLength(3)
     expect(wrapper.find('.cross-section-ai-button').attributes('disabled')).toBeDefined()
-    expect(wrapper.findAll('.cross-section-table-row')).toHaveLength(0)
-    expect(wrapper.findAll('.cross-section-symbol-card')).toHaveLength(3)
-    expect(wrapper.find('.cross-section-symbol-card[data-state="oversold"]')).toBeTruthy()
-    expect(wrapper.find('.cross-section-symbol-card[data-state="balanced"]')).toBeTruthy()
-    expect(wrapper.find('.cross-section-symbol-card[data-state="overbought"]')).toBeTruthy()
-    expect(wrapper.find('.cross-section-scale-zone[data-state="oversold"]')).toBeTruthy()
-    expect(wrapper.find('.cross-section-scale-zone[data-state="balanced"]')).toBeTruthy()
-    expect(wrapper.find('.cross-section-scale-zone[data-state="overbought"]')).toBeTruthy()
-    expect(wrapper.findAll('.cross-section-visual-marker--current')).toHaveLength(3)
+    expect(wrapper.findAll('.cross-section-table-row')).toHaveLength(3)
+    expect(wrapper.findAll('.cross-section-symbol-card')).toHaveLength(0)
+    expect(wrapper.find('.cross-section-table-row[data-symbol="INTC"]').text()).toContain('平衡 → 超卖')
+    expect(wrapper.find('.cross-section-table-row[data-symbol="INTC"]').text()).toContain('状态变化')
 
     await wrapper.findAll('.cross-section-lens-tab')[1].trigger('click')
     await flushPromises()
     expect(getProjection).toHaveBeenLastCalledWith('run-1', 'macd_histogram')
+  })
+
+  it('deduplicates overlapping group facts and applies search, group, and indicator sorting', async () => {
+    vi.spyOn(api, 'listIndicatorCatalog').mockResolvedValue([projection.indicator!])
+    vi.spyOn(api, 'listObservationRuns').mockResolvedValue([run])
+    vi.spyOn(api, 'getIndicatorCrossSection').mockResolvedValue(overlappingProjection)
+
+    await router.push('/indicators/rsi14?run=run-1')
+    await router.isReady()
+    const wrapper = mount(CrossSectionView, {
+      props: { lensType: 'indicator' },
+      global: { plugins: [router], stubs: { AppShell: true, RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await flushPromises()
+
+    expect(wrapper.findAll('.cross-section-table-row')).toHaveLength(4)
+    expect(wrapper.text()).toContain('当前排序：新变化优先')
+    expect(wrapper.find('.cross-section-table-row[data-symbol="INTC"]').findAll('.cross-section-group-label').map((item) => item.text())).toEqual(['半导体', '指标推荐'])
+    expect(wrapper.findAll('.cross-section-table-row').map((row) => row.attributes('data-symbol'))).toEqual(['INTC', 'TSM', 'NVDA', 'AMD'])
+
+    const search = wrapper.get('[data-testid="cross-section-search"]')
+    await search.setValue('TSM')
+    expect(wrapper.findAll('.cross-section-table-row')).toHaveLength(1)
+    expect(wrapper.find('.cross-section-table-row').attributes('data-symbol')).toBe('TSM')
+    await search.setValue('')
+
+    await wrapper.get('[data-testid="cross-section-group-filter"]').setValue('semiconductors')
+    expect(wrapper.findAll('.cross-section-table-row')).toHaveLength(3)
+    await wrapper.get('[data-testid="cross-section-group-filter"]').setValue('')
+    await wrapper.get('[data-testid="cross-section-sort"]').setValue('value')
+    expect(wrapper.findAll('.cross-section-table-row').map((row) => row.attributes('data-symbol'))).toEqual(['NVDA', 'TSM', 'AMD', 'INTC'])
+
+    const focusFilter = wrapper.get('[data-testid="cross-section-focus-filter"]')
+    expect(focusFilter.find('option[value="focused"]').attributes('disabled')).toBeUndefined()
+    expect(focusFilter.find('option[value="unfocused"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.text()).toContain('关注列表已加载 · 0 个')
+  })
+
+  it('loads focus symbols and filters focused and unfocused rows without writes', async () => {
+    vi.mocked(api.listFocusSymbols).mockResolvedValue([{ symbol: 'AMD', created_at: '2026-09-19T00:00:00Z' }])
+    vi.spyOn(api, 'listIndicatorCatalog').mockResolvedValue([projection.indicator!])
+    vi.spyOn(api, 'listObservationRuns').mockResolvedValue([run])
+    vi.spyOn(api, 'getIndicatorCrossSection').mockResolvedValue(projection)
+
+    await router.push('/indicators/rsi14?run=run-1')
+    await router.isReady()
+    const wrapper = mount(CrossSectionView, {
+      props: { lensType: 'indicator' },
+      global: { plugins: [router], stubs: { AppShell: true, RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="cross-section-focus-loaded"]').text()).toContain('1 个')
+    expect(wrapper.get('option[value="focused"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('option[value="unfocused"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.findAll('.cross-section-table-row[data-focused="true"]')).toHaveLength(1)
+    expect(wrapper.find('.cross-section-table-row[data-symbol="AMD"]').attributes('data-focused')).toBe('true')
+
+    await wrapper.get('[data-testid="cross-section-focus-filter"]').setValue('focused')
+    expect(wrapper.findAll('.cross-section-table-row')).toHaveLength(1)
+    expect(wrapper.find('.cross-section-table-row').attributes('data-symbol')).toBe('AMD')
+    await wrapper.get('[data-testid="cross-section-focus-filter"]').setValue('unfocused')
+    expect(wrapper.findAll('.cross-section-table-row')).toHaveLength(2)
+    expect(wrapper.find('[data-symbol="AMD"]').exists()).toBe(false)
+  })
+
+  it('keeps focus filters unknown after failure and restores them after retry', async () => {
+    vi.mocked(api.listFocusSymbols)
+      .mockRejectedValueOnce(new Error('focus read failed'))
+      .mockResolvedValueOnce([{ symbol: 'AMD', created_at: '2026-09-19T00:00:00Z' }])
+    vi.spyOn(api, 'listIndicatorCatalog').mockResolvedValue([projection.indicator!])
+    vi.spyOn(api, 'listObservationRuns').mockResolvedValue([run])
+    vi.spyOn(api, 'getIndicatorCrossSection').mockResolvedValue(projection)
+
+    await router.push('/indicators/rsi14?run=run-1')
+    await router.isReady()
+    const wrapper = mount(CrossSectionView, {
+      props: { lensType: 'indicator' },
+      global: { plugins: [router], stubs: { AppShell: true, RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="cross-section-focus-error"]').text()).toContain('关注状态未知')
+    expect(wrapper.get('option[value="focused"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('option[value="unfocused"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.findAll('.cross-section-table-row[data-focused="unknown"]')).toHaveLength(3)
+    expect(wrapper.findAll('.cross-section-table-row')).toHaveLength(3)
+
+    await wrapper.get('[data-testid="cross-section-focus-retry"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="cross-section-focus-loaded"]').text()).toContain('1 个')
+    expect(wrapper.get('option[value="focused"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('option[value="unfocused"]').attributes('disabled')).toBeUndefined()
+  })
+
+  it('keeps relative-strength benchmark identities separate and highlights a discovery target', async () => {
+    const relativeCatalog = [{ ...projection.indicator!, id: 'relative_strength_20d', name: 'Relative Strength 20D' }]
+    vi.spyOn(api, 'listIndicatorCatalog').mockResolvedValue(relativeCatalog)
+    vi.spyOn(api, 'listObservationRuns').mockResolvedValue([run])
+    vi.spyOn(api, 'getIndicatorCrossSection').mockResolvedValue(relativeStrengthProjection)
+
+    await router.push('/indicators/relative_strength_20d?run=run-1&discoveryEvent=indicator_transition:event-1&symbol=INTC&lens=relative_strength_20d')
+    await router.isReady()
+    const wrapper = mount(CrossSectionView, {
+      props: { lensType: 'indicator' },
+      global: { plugins: [router], stubs: { AppShell: true, RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await flushPromises()
+
+    expect(wrapper.findAll('.cross-section-table-row')).toHaveLength(2)
+    expect(wrapper.find('.cross-section-table-row[data-benchmark="QQQ"]').exists()).toBe(true)
+    expect(wrapper.find('.cross-section-table-row[data-benchmark="SPY"]').exists()).toBe(true)
+    expect(wrapper.findAll('.cross-section-table-row[data-highlighted="true"]')).toHaveLength(2)
+    expect(wrapper.get('[data-testid="discovery-context"]').text()).toContain('已定位 INTC')
+    expect(wrapper.text()).toContain('状态变化')
   })
 
   it('ignores a failed latest run and selects the latest completed run', async () => {
@@ -392,7 +584,8 @@ describe('CrossSectionView', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('指标推荐')
-    expect(wrapper.findAll('.cross-section-group-card')).toHaveLength(1)
+    expect(wrapper.findAll('.cross-section-group-label')).toHaveLength(3)
+    expect(wrapper.findAll('.cross-section-table-row')).toHaveLength(3)
   })
 
   it('uses strategy-specific stance, setup stage, and zero-centered score visuals', async () => {
@@ -416,19 +609,19 @@ describe('CrossSectionView', () => {
 
     expect(getStrategyProjection).toHaveBeenCalledWith('run-1', 'trend_momentum_v1')
     expect(wrapper.text()).toContain('策略横向扫描')
-    expect(wrapper.text()).toContain('STRATEGY DECISION MAP')
-    expect(wrapper.text()).toContain('阶段与 score 分开显示')
+    expect(wrapper.text()).toContain('STRATEGY COMPARISON')
+    expect(wrapper.text()).toContain('阶段、方向与 score 分开显示')
     expect(wrapper.text()).toContain('接近确认')
     expect(wrapper.text()).not.toContain('核心观察组')
-    expect(wrapper.find('.cross-section-group-stage-counts').exists()).toBe(true)
-    expect(wrapper.find('.cross-section-group-scale[data-visual-kind="decision"]').attributes('aria-label')).toContain('score -100 至 +100')
-    expect(wrapper.findAll('.cross-section-group-card')).toHaveLength(1)
-    expect(wrapper.findAll('.cross-section-symbol-card')).toHaveLength(3)
-    expect(wrapper.find('.cross-section-symbol-card[data-state="bullish"][data-stage="confirmed"]')).toBeTruthy()
-    expect(wrapper.find('.cross-section-symbol-card[data-state="bearish"][data-stage="near_confirmation"]')).toBeTruthy()
-    expect(wrapper.findAll('.cross-section-decision-zone')).toHaveLength(9)
-    expect(wrapper.findAll('.cross-section-decision-zero')).toHaveLength(3)
-    expect(wrapper.text()).toContain('score · -100 至 +100')
+    expect(wrapper.findAll('.cross-section-table-row')).toHaveLength(3)
+    expect(wrapper.find('.cross-section-table-row[data-symbol="INTC"]').text()).toContain('偏多')
+    expect(wrapper.find('.cross-section-table-row[data-symbol="INTC"]').text()).toContain('已确认')
+    expect(wrapper.findAll('.cross-section-symbol-card')).toHaveLength(0)
+    expect(wrapper.findAll('.cross-section-table-row').map((row) => row.attributes('data-symbol'))[0]).toBe('INTC')
+    await wrapper.get('[data-testid="cross-section-sort"]').setValue('score')
+    expect(wrapper.findAll('.cross-section-table-row').map((row) => row.attributes('data-symbol'))).toEqual(['INTC', 'NVDA', 'AMD'])
+    await wrapper.get('[data-testid="cross-section-sort-direction"]').trigger('click')
+    expect(wrapper.findAll('.cross-section-table-row').map((row) => row.attributes('data-symbol'))).toEqual(['AMD', 'NVDA', 'INTC'])
   })
 
   it('reloads the strategy catalog when the shared route changes from indicators', async () => {

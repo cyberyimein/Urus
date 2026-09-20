@@ -5,7 +5,6 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { api } from '@/api/client'
 import AppShell from '@/components/AppShell.vue'
 import DecisionChartWorkspace from '@/components/decision/DecisionChartWorkspace.vue'
-import OpportunityViewPanel from '@/components/decision/OpportunityViewPanel.vue'
 import RemoteDecisionPanel from '@/components/decision/RemoteDecisionPanel.vue'
 import InstrumentOptionsEvidence from '@/components/InstrumentOptionsEvidence.vue'
 import type {
@@ -207,7 +206,6 @@ const sourceLabel = computed(() => dataset.value?.bar_manifest?.find((item) => i
 const firstWarning = computed(() => quality.value?.warnings?.[0] ?? dataset.value?.quality?.warnings?.[0] ?? '')
 const latestIndicatorSnapshot = computed(() => projection.value?.instruments?.[selectedSymbol.value]?.indicator_snapshot_id ?? null)
 const symbolStrategyDecisions = computed(() => strategyDecisions.value.filter((item) => item.scope.symbol === selectedSymbol.value))
-const activeStrategyDecision = computed(() => symbolStrategyDecisions.value.find((item) => item.strategy.name === activeStrategy.value) ?? null)
 const displaySynthesis = computed(() => (
   deterministicSynthesis.value.symbol_summaries?.[selectedSymbol.value]
   ?? deterministicSynthesis.value
@@ -257,6 +255,46 @@ const setupStageLabels: Record<string, string> = {
   invalidated: '已失效',
   insufficient_data: '数据不足',
 }
+const strategyStatusOrder: Record<string, number> = { ok: 0, not_applicable: 1, error: 2 }
+const strategyStageOrder: Record<string, number> = {
+  confirmed: 0,
+  near_confirmation: 1,
+  armed: 2,
+  watching: 3,
+  forming: 4,
+  invalidated: 5,
+  insufficient_data: 6,
+}
+
+function strategyStage(decision: StrategyDecision) {
+  return decision.setup_plan?.stage ?? decision.setup_progress?.stage ?? 'insufficient_data'
+}
+
+function strategyStageLabel(decision: StrategyDecision) {
+  const stage = strategyStage(decision)
+  return setupStageLabels[stage] ?? stage
+}
+
+function strategyStatusLabel(decision: StrategyDecision) {
+  const labels: Record<string, string> = { ok: '可用', not_applicable: '不适用', error: '错误' }
+  return labels[decision.status] ?? decision.status
+}
+
+function strategyDirectionLabel(decision: StrategyDecision) {
+  const direction = decision.setup_plan?.direction ?? decision.stance
+  return strategyStanceLabels[direction ?? ''] ?? direction ?? '—'
+}
+
+function strategySupportReason(decision: StrategyDecision) {
+  return decision.reasons?.[0]?.detail ?? '当前没有额外支持理由。'
+}
+
+function strategyOpposingEvidence(decision: StrategyDecision) {
+  return decision.risks?.[0]
+    ?? (decision.confirmation_conditions?.[0] ? `尚需确认：${decision.confirmation_conditions[0]}` : null)
+    ?? '暂无额外反对证据。'
+}
+
 const primaryStrategyDecision = computed<StrategyDecision | null>(() => {
   const decisions = symbolStrategyDecisions.value.filter((item) => item.status === 'ok')
   const preferredIds = [
@@ -267,24 +305,36 @@ const primaryStrategyDecision = computed<StrategyDecision | null>(() => {
     const decision = decisions.find((item) => item.decision_id === decisionId)
     if (decision) return decision
   }
-  const stagePriority: Record<string, number> = {
-    confirmed: 0,
-    near_confirmation: 1,
-    armed: 1,
-    watching: 2,
-    forming: 3,
-    invalidated: 4,
-  }
   return [...decisions].sort((left, right) => {
-    const leftStage = left.setup_plan?.stage ?? left.setup_progress.stage
-    const rightStage = right.setup_plan?.stage ?? right.setup_progress.stage
-    const stageDelta = (stagePriority[leftStage] ?? 9) - (stagePriority[rightStage] ?? 9)
+    const stageDelta = (strategyStageOrder[strategyStage(left)] ?? 99) - (strategyStageOrder[strategyStage(right)] ?? 99)
     if (stageDelta) return stageDelta
     const stanceDelta = Number(right.stance !== 'neutral') - Number(left.stance !== 'neutral')
     if (stanceDelta) return stanceDelta
     return Math.abs(right.score ?? 0) - Math.abs(left.score ?? 0)
   })[0] ?? null
 })
+const orderedSymbolStrategyDecisions = computed(() => {
+  const primaryId = primaryStrategyDecision.value?.decision_id
+  return [...symbolStrategyDecisions.value].sort((left, right) => {
+    if (left.decision_id === primaryId) return -1
+    if (right.decision_id === primaryId) return 1
+    const statusDelta = (strategyStatusOrder[left.status] ?? 99) - (strategyStatusOrder[right.status] ?? 99)
+    if (statusDelta) return statusDelta
+    const stageDelta = (strategyStageOrder[strategyStage(left)] ?? 99) - (strategyStageOrder[strategyStage(right)] ?? 99)
+    if (stageDelta) return stageDelta
+    const leftName = strategyNameLabels[left.strategy.name] ?? left.strategy.name
+    const rightName = strategyNameLabels[right.strategy.name] ?? right.strategy.name
+    if (leftName < rightName) return -1
+    if (leftName > rightName) return 1
+    return left.strategy.name < right.strategy.name ? -1 : left.strategy.name > right.strategy.name ? 1 : 0
+  })
+})
+const activeStrategyDecision = computed(() => (
+  (activeStrategy.value
+    ? symbolStrategyDecisions.value.find((item) => item.strategy.name === activeStrategy.value)
+    : null)
+  ?? primaryStrategyDecision.value
+))
 const primarySetupStage = computed(() => {
   const decision = primaryStrategyDecision.value
   const stage = decision?.setup_plan?.stage ?? decision?.setup_progress.stage ?? 'insufficient_data'
@@ -321,6 +371,11 @@ const trendMetric = computed(() => {
   return `距 MA20 ${distance(ma20.value)} · MA50 ${distance(ma50.value)} · MA200 ${distance(ma200.value)}`
 })
 const historicalDatasetId = computed(() => typeof route.query.dataset === 'string' ? route.query.dataset : '')
+const discoveryContext = computed(() => {
+  const discoveryEvent = typeof route.query.discoveryEvent === 'string' ? route.query.discoveryEvent.trim() : ''
+  const lens = typeof route.query.lens === 'string' ? route.query.lens.trim() : ''
+  return discoveryEvent && lens ? { discoveryEvent, lens } : null
+})
 const optionsData = computed<OptionsData | null>(() => optionsPayload.value)
 const postCloseOptionAlignment = computed<PostCloseOptionAlignment | null>(() => optionsAlignment.value)
 const instrumentAiSource = computed<RemoteDecisionSource>(() => ({
@@ -795,7 +850,7 @@ watch(
         <section class="decision-now" :data-tone="synthesisTone">
           <div class="decision-now-action">
             <span class="section-kicker">DECISION NOW</span>
-            <small>最终行动</small>
+            <small>当前判断</small>
             <strong>{{ synthesisActionLabel }}</strong>
             <p>{{ displaySynthesis.conflict_summary || primaryStrategyDecision?.reasons?.[0]?.detail || '等待确定性策略形成可执行结论。' }}</p>
           </div>
@@ -816,11 +871,113 @@ watch(
           </div>
         </section>
 
-        <OpportunityViewPanel
-          :dataset-id="dataset?.dataset_id ?? null"
-          :symbol="selectedSymbol"
-          :disabled="loading || Boolean(demoReason)"
-        />
+        <section v-if="discoveryContext" class="discovery-context" data-testid="discovery-context">
+          <div>
+            <span class="section-kicker">DISCOVERY CONTEXT</span>
+            <strong>从变化发现进入 · 指标 {{ discoveryContext.lens }} · 使用冻结 Dataset</strong>
+          </div>
+          <RouterLink to="/" class="discovery-context-link">返回发现 →</RouterLink>
+        </section>
+
+        <section class="strategy-advice-panel" data-testid="strategy-advice-panel">
+          <header class="strategy-advice-head">
+            <div class="strategy-advice-title">
+              <span class="section-kicker">STRATEGY LAYER</span>
+              <h2>算法建议</h2>
+              <p>{{ displaySynthesis.conflict_summary || '策略会读取同一份冻结日 K，独立输出方向、风险和确认条件。' }}</p>
+            </div>
+            <div class="strategy-advice-summary">
+              <div class="synthesis-panel" :data-tone="synthesisTone">
+                <div><span>DETERMINISTIC SYNTHESIS</span><strong>{{ synthesisLabel }}</strong></div>
+                <b>{{ synthesisActionLabel }}</b>
+              </div>
+              <span class="decision-chip small">{{ symbolStrategyDecisions.length }} STRATEGIES</span>
+            </div>
+          </header>
+
+          <div class="strategy-advice-body">
+            <div class="strategy-advice-list">
+              <div class="strategy-advice-subhead"><span>ALL STRATEGIES</span><small>点击查看完整详情</small></div>
+              <div v-if="orderedSymbolStrategyDecisions.length" class="strategy-decision-list">
+                <div
+                  v-for="decision in orderedSymbolStrategyDecisions"
+                  :key="decision.decision_id"
+                  class="strategy-decision-row"
+                  :class="{ active: (activeStrategy ?? primaryStrategyDecision?.strategy.name) === decision.strategy.name }"
+                  :data-status="decision.status"
+                  :data-stage="strategyStage(decision)"
+                  :data-tone="decision.stance === 'bullish' ? 'positive' : decision.stance === 'bearish' ? 'negative' : 'neutral'"
+                  :data-strategy="decision.strategy.name"
+                  role="button"
+                  tabindex="0"
+                  @click="selectStrategy(decision.strategy.name)"
+                  @keydown.enter.prevent="selectStrategy(decision.strategy.name)"
+                  @keydown.space.prevent="selectStrategy(decision.strategy.name)"
+                >
+                  <div class="strategy-decision-head">
+                    <span><i></i><strong>{{ strategyNameLabels[decision.strategy.name] ?? decision.strategy.name }}</strong></span>
+                    <b>{{ strategyActionLabels[decision.action] ?? decision.action }}</b>
+                  </div>
+                  <div class="strategy-decision-meta">
+                    <span>{{ strategyDirectionLabel(decision) }}</span>
+                    <span>{{ strategyStageLabel(decision) }}</span>
+                    <span>score {{ decision.score ?? '—' }}</span>
+                    <span :data-status="decision.status">{{ strategyStatusLabel(decision) }}</span>
+                  </div>
+                  <p class="strategy-decision-support"><em>支持</em>{{ strategySupportReason(decision) }}</p>
+                  <p class="strategy-decision-opposition"><em>反对 / 待确认</em>{{ strategyOpposingEvidence(decision) }}</p>
+                </div>
+              </div>
+              <div v-else class="strategy-placeholder"><span class="placeholder-mark">—</span><div><strong>策略暂不可用</strong><small>LOCAL DEMO 或数据尚未通过策略质量 Gate</small></div></div>
+            </div>
+
+            <div v-if="activeStrategyDecision" class="strategy-detail" data-testid="strategy-detail">
+              <div class="strategy-detail-head"><span>SELECTED STRATEGY</span><strong>{{ strategyNameLabels[activeStrategyDecision.strategy.name] ?? activeStrategyDecision.strategy.name }}</strong></div>
+              <div class="strategy-detail-overview">
+                <span>{{ strategyDirectionLabel(activeStrategyDecision) }}</span>
+                <span>{{ strategyStageLabel(activeStrategyDecision) }}</span>
+                <span>{{ strategyActionLabels[activeStrategyDecision.action] ?? activeStrategyDecision.action }}</span>
+                <span>score {{ activeStrategyDecision.score ?? '—' }}</span>
+              </div>
+              <div class="strategy-detail-evidence">
+                <section>
+                  <span class="strategy-detail-label">支持理由</span>
+                  <p v-for="reason in activeStrategyDecision.reasons.slice(0, 3)" :key="`reason-${reason.code}-${reason.detail}`">{{ reason.detail }}</p>
+                  <p v-if="!activeStrategyDecision.reasons.length">暂无支持理由。</p>
+                </section>
+                <section>
+                  <span class="strategy-detail-label">风险 / 反对证据</span>
+                  <p v-for="risk in activeStrategyDecision.risks.slice(0, 3)" :key="`risk-${risk}`">{{ risk }}</p>
+                  <p v-if="!activeStrategyDecision.risks.length">{{ strategyOpposingEvidence(activeStrategyDecision) }}</p>
+                </section>
+              </div>
+              <div class="strategy-detail-conditions">
+                <section>
+                  <span class="strategy-detail-label">确认条件</span>
+                  <p v-for="condition in activeStrategyDecision.confirmation_conditions" :key="`confirmation-${condition}`">{{ condition }}</p>
+                  <p v-if="!activeStrategyDecision.confirmation_conditions.length">暂无确认条件。</p>
+                </section>
+                <section>
+                  <span class="strategy-detail-label">失效条件</span>
+                  <p v-for="condition in activeStrategyDecision.invalidation_conditions" :key="`invalidation-${condition}`">{{ condition }}</p>
+                  <p v-if="!activeStrategyDecision.invalidation_conditions.length">暂无失效条件。</p>
+                </section>
+              </div>
+              <div v-if="activeStrategyDecision.setup_plan" class="strategy-detail-setup">
+                <div><span>触发价格</span><strong>{{ activeStrategyDecision.setup_plan.confirmation_reference ?? 'price' }} {{ activeStrategyDecision.setup_plan.confirmation_operator }} {{ formatPrice(activeStrategyDecision.setup_plan.confirmation_price) }}</strong><small>剩余 {{ formatPrice(activeStrategyDecision.setup_plan.remaining_price) }} · {{ formatPercent(activeStrategyDecision.setup_plan.remaining_percent) }} · {{ formatAtrDistance(activeStrategyDecision.setup_plan.remaining_atr) }}</small></div>
+                <div><span>失效价格</span><strong>{{ activeStrategyDecision.setup_plan.invalidation_reference ?? 'price' }} {{ activeStrategyDecision.setup_plan.invalidation_operator }} {{ formatPrice(activeStrategyDecision.setup_plan.invalidation_price) }}</strong><small>距离 {{ formatPrice(activeStrategyDecision.setup_plan.invalidation_distance_price) }} · {{ formatPercent(activeStrategyDecision.setup_plan.invalidation_distance_percent) }} · {{ formatAtrDistance(activeStrategyDecision.setup_plan.invalidation_distance_atr) }}</small></div>
+              </div>
+              <div v-else class="strategy-detail-progress">
+                <span v-if="activeStrategyDecision.setup_progress.confirmation_distance_atr !== null">确认距 {{ formatAtrDistance(activeStrategyDecision.setup_progress.confirmation_distance_atr) }}</span>
+                <span v-if="activeStrategyDecision.setup_progress.invalidation_distance_atr !== null">失效距 {{ formatAtrDistance(activeStrategyDecision.setup_progress.invalidation_distance_atr) }}</span>
+                <span v-if="activeStrategyDecision.setup_progress.confirmation_distance_atr === null && activeStrategyDecision.setup_progress.invalidation_distance_atr === null">条件型 Setup · 无价格距离</span>
+              </div>
+              <div class="strategy-detail-meta">HORIZON {{ activeStrategyDecision.horizon.value }} {{ activeStrategyDecision.horizon.unit }} · {{ strategyStatusLabel(activeStrategyDecision) }}</div>
+              <small class="strategy-detail-trace">IMPLEMENTATION {{ formatHash(activeStrategyDecision.strategy.implementation_sha256) }} · VERSION {{ activeStrategyDecision.strategy.version }} · DECISION {{ activeStrategyDecision.decision_id }}</small>
+            </div>
+            <div v-else class="strategy-placeholder strategy-detail-placeholder"><span class="placeholder-mark">—</span><div><strong>暂无默认策略详情</strong><small>当前个股没有可用的 primary strategy。</small></div></div>
+          </div>
+        </section>
 
         <section class="chart-toolbar">
           <div class="range-tabs"><span class="toolbar-label">WINDOW</span><button v-for="item in ['3M', '6M', '1Y', 'ALL']" :key="item" type="button" :class="{ active: range === item }" @click="setRange(item)">{{ item }}</button></div>
@@ -851,35 +1008,6 @@ watch(
                 <div class="fact-row"><span class="fact-icon" :data-tone="momentum.tone">◒</span><div><small>MOMENTUM</small><strong>{{ momentum.label }}</strong><p>{{ momentum.detail }}</p><em>{{ momentumMetric }}</em></div></div>
                 <div class="fact-row"><span class="fact-icon" :data-tone="relativeState.tone">⇄</span><div><small>RELATIVE STRENGTH</small><strong>{{ relativeState.label }}</strong><p>{{ relativeState.detail }}</p><em>{{ relativeMetric }}</em></div></div>
               </div>
-            </article>
-
-            <article class="insight-card handoff-card">
-              <div class="insight-card-head"><div><span class="section-kicker">STRATEGY LAYER</span><h2>算法建议</h2></div><span class="decision-chip small">{{ symbolStrategyDecisions.length }} STRATEGIES</span></div>
-              <div class="synthesis-panel" :data-tone="synthesisTone">
-                <div><span>DETERMINISTIC SYNTHESIS</span><strong>{{ synthesisLabel }}</strong></div>
-                <b>{{ synthesisActionLabel }}</b>
-              </div>
-              <p class="synthesis-summary">{{ displaySynthesis.conflict_summary || '策略会读取同一份冻结日 K，独立输出方向、风险和确认条件。' }}</p>
-              <div v-if="symbolStrategyDecisions.length" class="strategy-decision-list">
-                <div v-for="decision in symbolStrategyDecisions" :key="decision.decision_id" class="strategy-decision-row" :class="{ active: activeStrategy === decision.strategy.name }" :data-status="decision.status" :data-tone="decision.stance === 'bullish' ? 'positive' : decision.stance === 'bearish' ? 'negative' : 'neutral'" role="button" tabindex="0" @click="selectStrategy(decision.strategy.name)" @keydown.enter.prevent="selectStrategy(decision.strategy.name)" @keydown.space.prevent="selectStrategy(decision.strategy.name)">
-                  <div class="strategy-decision-head"><span><i></i><strong>{{ strategyNameLabels[decision.strategy.name] ?? decision.strategy.name }}</strong></span><b>{{ strategyActionLabels[decision.action] ?? decision.action }}</b></div>
-                  <p>{{ decision.reasons[0]?.detail ?? '当前没有额外解释。' }}</p>
-                  <small>{{ strategyStanceLabels[decision.stance] ?? decision.stance }} · score {{ decision.score ?? '—' }} · {{ decision.setup_progress.stage }}</small>
-                </div>
-              </div>
-              <div v-if="activeStrategyDecision" class="strategy-detail">
-                <div class="strategy-detail-head"><span>SELECTED STRATEGY</span><strong>{{ strategyNameLabels[activeStrategyDecision.strategy.name] ?? activeStrategyDecision.strategy.name }}</strong></div>
-                <template v-if="activeStrategyDecision.setup_plan">
-                  <div class="strategy-detail-progress"><b>{{ activeStrategyDecision.setup_plan.stage }}</b><span>确认 {{ activeStrategyDecision.setup_plan.confirmation_operator }} {{ formatPrice(activeStrategyDecision.setup_plan.confirmation_price) }}</span><span>当前距离 {{ formatPrice(activeStrategyDecision.setup_plan.remaining_price) }} · {{ formatPercent(activeStrategyDecision.setup_plan.remaining_percent) }} · {{ formatAtrDistance(activeStrategyDecision.setup_plan.remaining_atr) }}</span></div>
-                  <p><em>触发条件</em>{{ activeStrategyDecision.setup_plan.confirmation_reference ?? 'price' }} {{ activeStrategyDecision.setup_plan.confirmation_operator }} {{ formatPrice(activeStrategyDecision.setup_plan.confirmation_price) }}</p>
-                  <p><em>失效位</em>{{ activeStrategyDecision.setup_plan.invalidation_reference ?? 'price' }} {{ activeStrategyDecision.setup_plan.invalidation_operator }} {{ formatPrice(activeStrategyDecision.setup_plan.invalidation_price) }} · 距离 {{ formatAtrDistance(activeStrategyDecision.setup_plan.invalidation_distance_atr) }}</p>
-                </template>
-                <div v-else class="strategy-detail-progress"><b>{{ activeStrategyDecision.setup_progress.stage }}</b><span>确认距 {{ formatAtrDistance(activeStrategyDecision.setup_progress.confirmation_distance_atr) }}</span><span>失效距 {{ formatAtrDistance(activeStrategyDecision.setup_progress.invalidation_distance_atr) }}</span></div>
-                <p>{{ activeStrategyDecision.risks[0] ?? '当前没有额外风险说明。' }}</p>
-                <template v-if="!activeStrategyDecision.setup_plan"><p><em>确认</em>{{ activeStrategyDecision.confirmation_conditions[0] ?? '暂无确认条件。' }}</p><p><em>失效</em>{{ activeStrategyDecision.invalidation_conditions[0] ?? '暂无失效条件。' }}</p></template>
-                <small>HORIZON {{ activeStrategyDecision.horizon.value }} {{ activeStrategyDecision.horizon.unit }} · {{ activeStrategyDecision.evidence_refs.length }} EVIDENCE REFS</small>
-              </div>
-              <div v-if="!symbolStrategyDecisions.length" class="strategy-placeholder"><span class="placeholder-mark">—</span><div><strong>策略暂不可用</strong><small>LOCAL DEMO 或数据尚未通过策略质量 Gate</small></div></div>
             </article>
 
             <article class="insight-card ai-card">

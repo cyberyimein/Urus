@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 
 import UniverseSettingsView from '@/views/UniverseSettingsView.vue'
 import InstrumentDecisionView from '@/views/InstrumentDecisionView.vue'
+import DiscoveryView from '@/views/DiscoveryView.vue'
 import GroupObservationView from '@/views/GroupObservationView.vue'
 import ObservationRunView from '@/views/ObservationRunView.vue'
 import IndicatorCrossSectionView from '@/views/IndicatorCrossSectionView.vue'
@@ -11,7 +12,7 @@ import RemoteDecisionRunView from '@/views/RemoteDecisionRunView.vue'
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: '/', name: 'home', component: InstrumentDecisionView },
+    { path: '/', name: 'home', component: DiscoveryView },
     { path: '/instruments/:symbol', name: 'instrument-decision', component: InstrumentDecisionView },
     { path: '/groups', name: 'groups', component: GroupObservationView },
     { path: '/groups/:groupId', name: 'group-observation', component: GroupObservationView },
