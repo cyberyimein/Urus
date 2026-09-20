@@ -40,7 +40,15 @@ class DiscoveryProjectionService:
         warnings: list[str] = []
         partial_projection = False
         for definition in self.cross_section.indicator_catalog():
-            projection = self.cross_section.indicator_projection(run.id, str(definition["id"]))
+            indicator_id = str(definition["id"])
+            try:
+                projection = self.cross_section.indicator_projection(run.id, indicator_id)
+            except AppError as exc:
+                comparisons.append({"status": "unavailable", "previous_trading_date": None})
+                partial_projection = True
+                indicator_name = str(definition.get("name") or indicator_id)
+                warnings.append(f"{indicator_name} 投影不可用：{exc.message}")
+                continue
             comparisons.append(dict(projection.get("comparison") or {}))
             quality = dict(projection.get("quality") or {})
             partial_projection = partial_projection or quality.get("status") != "ok"

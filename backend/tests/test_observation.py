@@ -7,6 +7,7 @@ import httpx
 import pytest
 from sqlalchemy import func, select
 
+from app.core.errors import AppError
 from app.decision_harness.discovery import DiscoveryProjectionService
 from app.decision_harness.group_observation import build_group_snapshot
 from app.decision_harness.market_evidence import DailyMarketEvidenceService
@@ -2052,6 +2053,39 @@ def test_discovery_group_event_supplies_comparison_when_indicators_are_unavailab
     }
     assert result["quality"]["status"] == "partial"
     assert not any("未生成跨日变化" in item for item in result["quality"]["warnings"])
+
+
+def test_discovery_continues_when_one_indicator_projection_fails() -> None:
+    service, run = _discovery_group_service([_discovery_group_case("group-only")])
+
+    class RelativeStrengthFailure(_DiscoveryCrossSectionFake):
+        def indicator_projection(self, run_id: str, indicator_id: str) -> dict:
+            if indicator_id == "relative_strength_20d":
+                raise AppError(
+                    "冻结 Run 中包含不同的相对强弱 benchmark，不能静默混排。",
+                    code="relative_strength_benchmark_mismatch",
+                    status_code=409,
+                )
+            return super().indicator_projection(run_id, indicator_id)
+
+    service.cross_section = RelativeStrengthFailure(
+        {"rsi14": [_discovery_row("indicator-group", "Indicator", "rsi14")]}
+    )
+
+    result = service.build(run.id)
+
+    assert [item["kind"] for item in result["events"]] == [
+        "group_phase_change",
+        "indicator_transition",
+    ]
+    assert [item["lens"]["id"] for item in result["events"] if item["kind"] == "indicator_transition"] == ["rsi14"]
+    assert not any(item.get("lens", {}).get("id") == "relative_strength_20d" for item in result["events"])
+    assert result["quality"]["status"] == "partial"
+    assert any(
+        "Relative Strength 20D" in warning
+        and "冻结 Run 中包含不同的相对强弱 benchmark，不能静默混排。" in warning
+        for warning in result["quality"]["warnings"]
+    )
 
 
 def test_discovery_endpoint_is_read_only_and_marks_only_strategy_deferred(client) -> None:
