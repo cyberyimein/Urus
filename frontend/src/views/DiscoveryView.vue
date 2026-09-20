@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 
 import { api } from '@/api/client'
@@ -28,6 +28,7 @@ const focusError = ref('')
 const focusRetryMode = ref<'load' | 'toggle' | null>(null)
 const focusRetrySymbol = ref('')
 const pendingFocusSymbol = ref('')
+const ALL_INDICATORS = '__all__'
 
 const events = computed(() => (discovery.value?.events ?? []).filter(
   (event): event is IndicatorTransitionEvent => event.kind === 'indicator_transition',
@@ -35,11 +36,38 @@ const events = computed(() => (discovery.value?.events ?? []).filter(
 const groupEvents = computed(() => (discovery.value?.events ?? []).filter(
   (event): event is GroupPhaseChangeEvent => event.kind === 'group_phase_change',
 ))
+const indicatorOptions = computed(() => {
+  const options = new Map<string, { id: string; name: string; count: number }>()
+  for (const event of events.value) {
+    const existing = options.get(event.lens.id)
+    if (existing) {
+      existing.count += 1
+    } else {
+      options.set(event.lens.id, { id: event.lens.id, name: event.lens.name, count: 1 })
+    }
+  }
+  return [...options.values()]
+})
+const selectedIndicatorId = ref('')
+watch(indicatorOptions, (options) => {
+  if (!options.length) {
+    selectedIndicatorId.value = ''
+    return
+  }
+  if (selectedIndicatorId.value !== ALL_INDICATORS && !options.some((option) => option.id === selectedIndicatorId.value)) {
+    selectedIndicatorId.value = options[0].id
+  }
+}, { immediate: true })
+const selectedIndicatorEvents = computed(() => (
+  selectedIndicatorId.value === ALL_INDICATORS
+    ? events.value
+    : events.value.filter((event) => event.lens.id === selectedIndicatorId.value)
+))
 const totalEvents = computed(() => events.value.length + groupEvents.value.length)
 const focusStateKnown = computed(() => focusLoaded.value && focusAvailable.value)
 const filteredEvents = computed(() => {
-  if (!focusStateKnown.value || focusFilter.value === 'all') return events.value
-  return events.value.filter((event) => (
+  if (!focusStateKnown.value || focusFilter.value === 'all') return selectedIndicatorEvents.value
+  return selectedIndicatorEvents.value.filter((event) => (
     focusFilter.value === 'focused'
       ? isFocused(event.symbol)
       : !isFocused(event.symbol)
@@ -376,7 +404,7 @@ onMounted(() => { void load() })
               <p class="section-kicker">INDICATOR TRANSITIONS</p>
               <h2>个股指标变化</h2>
             </div>
-            <small>当前筛选 {{ filteredEvents.length }} / 全部 {{ events.length }}</small>
+            <small>当前展示 {{ filteredEvents.length }} / 所选指标 {{ selectedIndicatorEvents.length }} / 全部指标 {{ events.length }}</small>
           </div>
 
           <section v-if="!events.length" class="discovery-subsection-empty" data-testid="discovery-no-indicator-events">
@@ -384,6 +412,20 @@ onMounted(() => { void load() })
           </section>
 
           <template v-else>
+            <div class="discovery-indicator-selector">
+              <label for="discovery-indicator-select">指标切换</label>
+              <select
+                id="discovery-indicator-select"
+                v-model="selectedIndicatorId"
+                data-testid="discovery-indicator-select"
+                aria-label="指标切换"
+              >
+                <option :value="ALL_INDICATORS">全部指标（{{ events.length }}）</option>
+                <option v-for="option in indicatorOptions" :key="option.id" :value="option.id">
+                  {{ option.name }}（{{ option.count }}）
+                </option>
+              </select>
+            </div>
             <section class="discovery-event-controls" data-testid="discovery-focus-controls" aria-label="重点关注筛选">
               <div class="discovery-filter-tabs" role="group" aria-label="事件筛选">
                 <button
@@ -397,7 +439,6 @@ onMounted(() => { void load() })
                   @click="focusFilter = filter"
                 >{{ focusFilterLabel(filter) }}</button>
               </div>
-              <span>当前筛选 {{ filteredEvents.length }} / 全部 {{ events.length }}</span>
             </section>
 
             <section v-if="!filteredEvents.length" class="empty-panel discovery-empty" data-testid="discovery-filter-empty">

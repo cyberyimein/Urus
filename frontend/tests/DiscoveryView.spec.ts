@@ -187,6 +187,63 @@ describe('DiscoveryView', () => {
     expect(wrapper.findAll('[data-testid="discovery-group-event-card"]')).toHaveLength(1)
   })
 
+  it('switches indicator scope before applying focus filters and keeps counts explicit', async () => {
+    vi.spyOn(api, 'listFocusSymbols').mockResolvedValue([{ symbol: 'AMD', created_at: '2026-09-19T00:00:00Z' }])
+    vi.spyOn(api, 'listObservationRuns').mockResolvedValue([observationRun('run-indicators', 'succeeded', '2026-09-19')])
+    const projection = discoveryProjection('run-indicators')
+    projection.events.push(
+      {
+        ...projection.events[0],
+        event_id: 'indicator_transition:event-2',
+        symbol: 'NVDA',
+        route: {
+          ...projection.events[0].route,
+          params: { symbol: 'NVDA' },
+          query: { ...projection.events[0].route.query, discoveryEvent: 'indicator_transition:event-2' },
+        },
+      },
+      {
+        ...projection.events[0],
+        event_id: 'indicator_transition:event-3',
+        symbol: 'AMD',
+        lens: { id: 'macd', name: 'MACD', version: 'v1' },
+        route: {
+          ...projection.events[0].route,
+          params: { symbol: 'AMD' },
+          query: { ...projection.events[0].route.query, discoveryEvent: 'indicator_transition:event-3', lens: 'macd' },
+        },
+      },
+    )
+    vi.spyOn(api, 'getObservationDiscovery').mockResolvedValue(projection)
+
+    const wrapper = mountDiscovery()
+    await flushPromises()
+
+    const selector = wrapper.get('[data-testid="discovery-indicator-select"]')
+    const indicatorSection = wrapper.get('[aria-label="个股指标变化"]')
+    expect((selector.element as HTMLSelectElement).value).toBe('rsi14')
+    expect(selector.text()).toContain('RSI 14（2）')
+    expect(selector.text()).toContain('MACD（1）')
+    expect(wrapper.findAll('[data-testid="discovery-event-card"]')).toHaveLength(2)
+    expect(indicatorSection.get('.discovery-section-heading small').text()).toBe('当前展示 2 / 所选指标 2 / 全部指标 3')
+
+    await selector.setValue('macd')
+    expect(wrapper.findAll('[data-testid="discovery-event-card"]')).toHaveLength(1)
+    expect(wrapper.get('[data-testid="discovery-event-card"]').text()).toContain('AMD')
+    expect(indicatorSection.get('.discovery-section-heading small').text()).toBe('当前展示 1 / 所选指标 1 / 全部指标 3')
+
+    await wrapper.findAll('.discovery-filter-tab')[1].trigger('click')
+    expect(wrapper.findAll('[data-testid="discovery-event-card"]')).toHaveLength(1)
+
+    await selector.setValue('__all__')
+    expect(wrapper.findAll('[data-testid="discovery-event-card"]')).toHaveLength(1)
+    expect(indicatorSection.get('.discovery-section-heading small').text()).toBe('当前展示 1 / 所选指标 3 / 全部指标 3')
+
+    await wrapper.findAll('.discovery-filter-tab')[0].trigger('click')
+    expect(wrapper.findAll('[data-testid="discovery-event-card"]')).toHaveLength(3)
+    expect(indicatorSection.get('.discovery-section-heading small').text()).toBe('当前展示 3 / 所选指标 3 / 全部指标 3')
+  })
+
   it('shows separate empty states for missing group and indicator signals', async () => {
     vi.spyOn(api, 'listObservationRuns').mockResolvedValue([observationRun('run-group-only', 'succeeded', '2026-09-19')])
     const groupOnly = discoveryProjection('run-group-only', false)
@@ -247,6 +304,7 @@ describe('DiscoveryView', () => {
 
     const wrapper = mountDiscovery()
     await flushPromises()
+    await wrapper.get('[data-testid="discovery-indicator-select"]').setValue('__all__')
     const filterButtons = wrapper.findAll('.discovery-filter-tab')
 
     await filterButtons[1].trigger('click')
@@ -284,7 +342,7 @@ describe('DiscoveryView', () => {
     await filterButtons[2].trigger('click')
     expect(wrapper.findAll('[data-testid="discovery-event-card"]')).toHaveLength(1)
     expect(wrapper.get('[data-testid="discovery-event-card"]').text()).toContain('AMD')
-    expect(wrapper.get('[data-testid="discovery-focus-controls"]').text()).toContain('当前筛选 1 / 全部 2')
+    expect(wrapper.get('[aria-label="个股指标变化"] .discovery-section-heading small').text()).toBe('当前展示 1 / 所选指标 2 / 全部指标 2')
   })
 
   it('keeps focus state unknown after a failed GET and restores filters after retry', async () => {

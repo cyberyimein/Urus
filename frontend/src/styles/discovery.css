@@ -25,10 +25,13 @@
 .discovery-filter-tabs { display: flex; flex-wrap: wrap; gap: 5px; }
 .discovery-filter-tab { min-height: 31px; padding: 0 10px; border: 1px solid var(--line-soft); border-radius: 5px; color: var(--muted); background: var(--surface); font: 10px "SFMono-Regular", Consolas, monospace; }
 .discovery-filter-tab:hover, .discovery-filter-tab.active { border-color: var(--accent); color: var(--ink); background: rgba(182, 79, 56, .1); }
-.discovery-event-controls > span { color: var(--muted); font: 9px "SFMono-Regular", Consolas, monospace; white-space: nowrap; }
 .discovery-section-heading { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin: 19px 0 12px; }
 .discovery-section-heading h2 { margin-top: 6px; font-size: 25px; }
 .discovery-section-heading small { color: var(--muted); font: 10px "SFMono-Regular", Consolas, monospace; }
+.discovery-indicator-selector { display: flex; align-items: center; gap: 8px; margin: -2px 0 10px; }
+.discovery-indicator-selector label { color: var(--muted); font: 9px "SFMono-Regular", Consolas, monospace; white-space: nowrap; }
+.discovery-indicator-selector select { min-width: 220px; min-height: 31px; padding: 0 9px; border: 1px solid var(--line-soft); border-radius: 5px; color: var(--soft-ink); background: var(--surface); font: 10px "SFMono-Regular", Consolas, monospace; }
+.discovery-indicator-selector select:focus { border-color: var(--accent); outline: 2px solid rgba(182, 79, 56, .2); outline-offset: 1px; }
 .discovery-card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(310px, 1fr)); gap: 10px; }
 .discovery-group-card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 10px; }
 .discovery-card { display: grid; align-content: start; gap: 13px; min-width: 0; padding: 15px; border: 1px solid var(--line); border-radius: 7px; background: rgba(28, 23, 20, .82); }
@@ -76,8 +79,9 @@
   .discovery-run-strip > div { min-height: 69px; padding: 10px; }
   .discovery-run-strip strong { font-size: 12px; }
   .discovery-section-heading { align-items: start; flex-direction: column; }
+  .discovery-indicator-selector { align-items: stretch; flex-direction: column; }
+  .discovery-indicator-selector select { width: 100%; min-width: 0; }
   .discovery-event-controls { align-items: start; flex-direction: column; }
-  .discovery-event-controls > span { align-self: end; }
   .discovery-card-grid, .discovery-group-card-grid { grid-template-columns: 1fr; }
   .discovery-group-facts { grid-template-columns: 1fr 1fr; }
 }
