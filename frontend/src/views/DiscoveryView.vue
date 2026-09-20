@@ -49,6 +49,8 @@ const indicatorOptions = computed(() => {
   return [...options.values()]
 })
 const selectedIndicatorId = ref('')
+const indicatorMenu = ref<HTMLDetailsElement | null>(null)
+const indicatorMenuOpen = ref(false)
 watch(indicatorOptions, (options) => {
   if (!options.length) {
     selectedIndicatorId.value = ''
@@ -58,6 +60,14 @@ watch(indicatorOptions, (options) => {
     selectedIndicatorId.value = options[0].id
   }
 }, { immediate: true })
+const selectedIndicatorOption = computed(() => {
+  if (selectedIndicatorId.value === ALL_INDICATORS) {
+    return { id: ALL_INDICATORS, name: '全部指标', count: events.value.length }
+  }
+  return indicatorOptions.value.find((option) => option.id === selectedIndicatorId.value)
+    ?? indicatorOptions.value[0]
+    ?? null
+})
 const selectedIndicatorEvents = computed(() => (
   selectedIndicatorId.value === ALL_INDICATORS
     ? events.value
@@ -149,6 +159,25 @@ function focusFilterLabel(filter: FocusFilter) {
   if (filter === 'focused') return '我的重点'
   if (filter === 'unfocused') return '未重点关注'
   return '全部'
+}
+
+function selectIndicator(id: string) {
+  selectedIndicatorId.value = id
+  indicatorMenu.value?.removeAttribute('open')
+  indicatorMenuOpen.value = false
+}
+
+function handleIndicatorMenuToggle(event: Event) {
+  indicatorMenuOpen.value = (event.currentTarget as HTMLDetailsElement).open
+}
+
+function closeIndicatorMenu(event: KeyboardEvent) {
+  if (event.key !== 'Escape') return
+  event.preventDefault()
+  const details = event.currentTarget as HTMLDetailsElement
+  details.open = false
+  indicatorMenuOpen.value = false
+  details.querySelector<HTMLElement>('summary')?.focus()
 }
 
 async function loadFocusSymbols() {
@@ -413,18 +442,56 @@ onMounted(() => { void load() })
 
           <template v-else>
             <div class="discovery-indicator-selector">
-              <label for="discovery-indicator-select">指标切换</label>
-              <select
-                id="discovery-indicator-select"
-                v-model="selectedIndicatorId"
-                data-testid="discovery-indicator-select"
-                aria-label="指标切换"
+              <span class="discovery-indicator-selector-label">指标切换</span>
+              <details
+                ref="indicatorMenu"
+                class="discovery-indicator-menu"
+                data-testid="discovery-indicator-menu"
+                @keydown="closeIndicatorMenu"
+                @toggle="handleIndicatorMenuToggle"
               >
-                <option :value="ALL_INDICATORS">全部指标（{{ events.length }}）</option>
-                <option v-for="option in indicatorOptions" :key="option.id" :value="option.id">
-                  {{ option.name }}（{{ option.count }}）
-                </option>
-              </select>
+                <summary
+                  class="discovery-indicator-trigger"
+                  data-testid="discovery-indicator-trigger"
+                  aria-label="指标切换"
+                  aria-haspopup="listbox"
+                  :aria-expanded="indicatorMenuOpen"
+                >
+                  <span class="discovery-indicator-trigger-copy">
+                    <span class="discovery-indicator-trigger-label">{{ selectedIndicatorOption?.name ?? '指标' }}</span>
+                    <span class="discovery-indicator-trigger-count">（{{ selectedIndicatorOption?.count ?? 0 }}）</span>
+                  </span>
+                  <span class="discovery-indicator-chevron" aria-hidden="true">⌄</span>
+                </summary>
+                <div class="discovery-indicator-popover" role="listbox" aria-label="选择指标">
+                  <button
+                    type="button"
+                    class="discovery-indicator-option"
+                    :class="{ active: selectedIndicatorId === ALL_INDICATORS }"
+                    :aria-selected="selectedIndicatorId === ALL_INDICATORS"
+                    role="option"
+                    data-testid="discovery-indicator-option"
+                    @click="selectIndicator(ALL_INDICATORS)"
+                  >
+                    <span>全部指标</span>
+                    <span>{{ events.length }}</span>
+                  </button>
+                  <button
+                    v-for="option in indicatorOptions"
+                    :key="option.id"
+                    type="button"
+                    class="discovery-indicator-option"
+                    :class="{ active: selectedIndicatorId === option.id }"
+                    :aria-selected="selectedIndicatorId === option.id"
+                    role="option"
+                    data-testid="discovery-indicator-option"
+                    @click="selectIndicator(option.id)"
+                  >
+                    <span>{{ option.name }}</span>
+                    <span>{{ option.count }}</span>
+                  </button>
+                </div>
+              </details>
             </div>
             <section class="discovery-event-controls" data-testid="discovery-focus-controls" aria-label="重点关注筛选">
               <div class="discovery-filter-tabs" role="group" aria-label="事件筛选">

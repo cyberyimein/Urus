@@ -29,9 +29,21 @@
 .discovery-section-heading h2 { margin-top: 6px; font-size: 25px; }
 .discovery-section-heading small { color: var(--muted); font: 10px "SFMono-Regular", Consolas, monospace; }
 .discovery-indicator-selector { display: flex; align-items: center; gap: 8px; margin: -2px 0 10px; }
-.discovery-indicator-selector label { color: var(--muted); font: 9px "SFMono-Regular", Consolas, monospace; white-space: nowrap; }
-.discovery-indicator-selector select { min-width: 220px; min-height: 31px; padding: 0 9px; border: 1px solid var(--line-soft); border-radius: 5px; color: var(--soft-ink); background: var(--surface); font: 10px "SFMono-Regular", Consolas, monospace; }
-.discovery-indicator-selector select:focus { border-color: var(--accent); outline: 2px solid rgba(182, 79, 56, .2); outline-offset: 1px; }
+.discovery-indicator-selector-label { color: var(--muted); font: 9px "SFMono-Regular", Consolas, monospace; white-space: nowrap; }
+.discovery-indicator-menu { position: relative; min-width: 220px; }
+.discovery-indicator-trigger { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 31px; padding: 0 9px; border: 1px solid var(--line-soft); border-radius: 5px; color: var(--soft-ink); background: var(--surface); font: 10px "SFMono-Regular", Consolas, monospace; cursor: pointer; list-style: none; user-select: none; }
+.discovery-indicator-trigger::-webkit-details-marker { display: none; }
+.discovery-indicator-trigger:hover, .discovery-indicator-menu[open] .discovery-indicator-trigger { border-color: var(--accent); background: rgba(182, 79, 56, .1); }
+.discovery-indicator-trigger:focus-visible { border-color: var(--accent); outline: 2px solid rgba(182, 79, 56, .2); outline-offset: 1px; }
+.discovery-indicator-trigger-copy { display: flex; min-width: 0; gap: 4px; }
+.discovery-indicator-trigger-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.discovery-indicator-trigger-count { color: var(--muted); }
+.discovery-indicator-chevron { color: var(--accent); font-size: 14px; line-height: 1; transform: rotate(0deg); transition: transform .15s ease; }
+.discovery-indicator-menu[open] .discovery-indicator-chevron { transform: rotate(180deg); }
+.discovery-indicator-popover { position: absolute; z-index: 10; top: calc(100% + 5px); left: 0; right: 0; display: grid; gap: 2px; max-height: 260px; overflow-y: auto; padding: 5px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-raised); box-shadow: 0 12px 28px rgba(0, 0, 0, .28); }
+.discovery-indicator-option { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; min-height: 29px; padding: 0 8px; border: 1px solid transparent; border-radius: 4px; color: var(--soft-ink); background: transparent; font: 10px "SFMono-Regular", Consolas, monospace; text-align: left; cursor: pointer; }
+.discovery-indicator-option:hover, .discovery-indicator-option:focus-visible, .discovery-indicator-option[aria-selected="true"] { border-color: rgba(196, 122, 80, .5); color: var(--ink); background: rgba(182, 79, 56, .16); outline: none; }
+.discovery-indicator-option span:last-child { color: var(--muted); font-size: 9px; }
 .discovery-card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(310px, 1fr)); gap: 10px; }
 .discovery-group-card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 10px; }
 .discovery-card { display: grid; align-content: start; gap: 13px; min-width: 0; padding: 15px; border: 1px solid var(--line); border-radius: 7px; background: rgba(28, 23, 20, .82); }
@@ -80,7 +92,8 @@
   .discovery-run-strip strong { font-size: 12px; }
   .discovery-section-heading { align-items: start; flex-direction: column; }
   .discovery-indicator-selector { align-items: stretch; flex-direction: column; }
-  .discovery-indicator-selector select { width: 100%; min-width: 0; }
+  .discovery-indicator-menu { width: 100%; min-width: 0; }
+  .discovery-indicator-trigger { width: 100%; }
   .discovery-event-controls { align-items: start; flex-direction: column; }
   .discovery-card-grid, .discovery-group-card-grid { grid-template-columns: 1fr; }
   .discovery-group-facts { grid-template-columns: 1fr 1fr; }
