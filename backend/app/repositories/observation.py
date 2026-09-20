@@ -335,6 +335,19 @@ class ObservationRepository:
             select(ObservationRunModel).where(ObservationRunModel.idempotency_key == key)
         )
 
+    def restart_failed_run(self, model: ObservationRunModel) -> ObservationRunModel:
+        """Reuse an idempotent failed run after a transient execution failure."""
+
+        if model.status != "failed":
+            raise ValueError("Only failed Observation Runs can be restarted")
+        model.status = "running"
+        model.payload_json = {}
+        model.content_sha256 = ""
+        model.error_message = None
+        model.completed_at = None
+        self.session.commit()
+        return model
+
     def list_runs(self, limit: int = 50) -> list[ObservationRunModel]:
         return list(
             self.session.scalars(
@@ -496,6 +509,8 @@ class ObservationRepository:
             "options": dict(payload.get("options") or {}),
             "options_alignment": payload.get("options_alignment"),
             "options_collection": dict(payload.get("options_collection") or {}),
+            "source_captures": payload.get("source_captures"),
+            "collection_plan_id": payload.get("collection_plan_id"),
             "group_count": len(model.group_ids or []),
             "successful_group_count": int(payload.get("successful_group_count", len(payload.get("group_snapshots") or []))),
             "failed_group_count": int(payload.get("failed_group_count", 0)),

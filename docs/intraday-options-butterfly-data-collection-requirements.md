@@ -227,6 +227,19 @@ warnings
 - provider Greeks 和自算 Greeks 不得写入同一个无来源字段；
 - 每个派生字段都要能够追溯到 capture 和 calculation version。
 
+#### 5.3.1 Eoflora EOD 预测输入的 IV 清洗
+
+Moomoo 对部分深度实值、临近到期、报价陈旧或标的与期权时间戳不同步的合约可能返回
+`implied_volatility = 0`；该值表示 provider 没有给出可用 IV，不得当作真实零波动率送入模型。
+原始 provider 快照保持不变，Eoflora EOD 消费边界按以下顺序清洗：
+
+1. provider IV 大于零时原样保留，并写 `iv_source=moomoo`；
+2. provider IV 缺失或不大于零、且 `0 <= bid <= ask`、`ask > 0` 时，以 bid/ask 中价反解；
+3. 反解采用 `black_scholes_european_mid_bisection_v1`，年化无风险利率和股息率来自采集器配置，期限按交易日到到期日的实际日历天数除以 365；ETF 美式期权因此属于可复现的欧洲式近似，不冒充交易所官方 IV；
+4. 补算成功时同步用同一组参数计算 Delta/Gamma，并写入 `iv_source`、`iv_model`、中价、期限、利率和股息率；
+5. 中价超出模型无套利可解区间、报价无效或仍缺关键字段时 fail-closed，过滤该合约，不用邻近合约、旧值或常数强填；
+6. 质量报告必须记录 source、retained、filtered、backfill attempted/succeeded/failed 数量。只有保留率达到配置阈值且每个到期日仍有 call/put 双边数据时，EOD 输入才可标记 ready。
+
 ### 5.4 链元数据
 
 合约代码、到期日、执行价、类型、乘数、行权方式等静态字段应去重存储，并保留首次和最后观察时间。不得依赖未来重新查询已到期链。

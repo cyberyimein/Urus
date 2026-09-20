@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+import hashlib
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -15,6 +17,7 @@ from urus_moomoo.services.scheduler import CollectorScheduler
 from urus_moomoo.runtime import CollectorRuntime
 from urus_moomoo.config import CollectionTask
 from urus_moomoo.storage.sqlite import CollectorStore, SCHEMA_VERSION
+from urus_moomoo.storage.intraday import CanonicalIntradayStore
 
 
 class _ProviderCalendar:
@@ -99,6 +102,27 @@ def test_coordinator_persists_rate_classes(tmp_path: Path):
     assert waited == 1
     assert second.acquire_rate_slot("snapshot", 2, now=datetime(2026, 1, 1, 0, 0, 1, tzinfo=UTC)) == 0
     second.close()
+
+
+def test_scheduler_releases_calendar_provider_lock_before_idle(tmp_path: Path):
+    coordinator = CollectionCoordinator(tmp_path / "scheduler.lock")
+
+    class _LockingCalendar(_SessionCalendar):
+        def is_session(self, value):
+            coordinator.acquire_rate_slot("calendar", 0.01, now=datetime.now(UTC))
+            return False
+
+    scheduler = CollectorScheduler(
+        [],
+        timezone="UTC",
+        calendar=_LockingCalendar(set()),
+        runner=lambda *_args: None,
+        on_idle=coordinator.close,
+    )
+
+    scheduler.run_once(datetime(2026, 9, 8, 12, tzinfo=UTC))
+
+    assert coordinator.locked is False
 
 
 def test_quota_reserve_and_request_time_admission_fail_closed():
@@ -205,9 +229,9 @@ def test_eoflora_eod_contract_is_ready_only_with_complete_model_fields(monkeypat
                     "bid": 1.0,
                     "ask": 1.1,
                     "open_interest": 20,
-                    "implied_volatility": 20.0,
-                    "delta": 0.5,
-                    "gamma": 0.03,
+                    "implied_volatility": 0.0,
+                    "delta": 0.0,
+                    "gamma": 0.0,
                     "volume": 2,
                     "quote_time": "2026-09-08 16:59:59",
                     "request_started_at": "2026-09-08T21:00:00+00:00",
@@ -239,6 +263,7 @@ def test_eoflora_eod_contract_is_ready_only_with_complete_model_fields(monkeypat
             "symbols": [
                 {
                     "symbol": symbol,
+                    "spot": 100.0,
                     "expirations": [
                         {"expiration": "2026-09-09", "contracts": contracts(symbol)}
                     ],
@@ -266,13 +291,50 @@ def test_eoflora_eod_contract_is_ready_only_with_complete_model_fields(monkeypat
     assert result["dte_max"] == 45
     assert "symbols" not in result
     assert result["eoflora_option_rows"][0]["type"] == "call"
-    assert result["eoflora_option_rows"][0]["implied_volatility"] == 0.2
+    assert result["eoflora_option_rows"][0]["implied_volatility"] > 0
+    assert result["eoflora_option_rows"][0]["iv_source"] == "calculated_mid"
+    assert result["eoflora_option_rows"][0]["delta"] > 0
+    assert result["eoflora_option_rows"][0]["gamma"] > 0
+    assert result["eoflora_option_rows"][1]["implied_volatility"] == 0.21
+    assert result["eoflora_option_rows"][1]["iv_source"] == "moomoo"
+    assert result["quality_summary"]["iv_backfill_attempted"] == 3
+    assert result["quality_summary"]["iv_backfill_succeeded"] == 3
+    expected_content = {
+        "trading_date": "2026-09-08",
+        "requested_symbols": ["IWM", "QQQ", "SPY"],
+        "dte_range": [1, 45],
+        "strike_band_percent": 10.0,
+        "underlying_closes": result["underlying_closes"],
+        "option_rows": result["eoflora_option_rows"],
+    }
+    expected_digest = hashlib.sha256(
+        json.dumps(
+            expected_content,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    assert result["content_sha256"] == expected_digest
     assert result["underlying_closes"] == {"SPY": 100.0, "QQQ": 100.0, "IWM": 100.0}
     assert len(result["content_sha256"]) == 64
     assert result["ready"] is True
     assert result["complete"] is True
     invalid = dict(result["eoflora_option_rows"][0], gamma=None)
     assert adapter._valid_eoflora_row(invalid) is False
+
+
+def test_eoflora_eod_iv_backfill_rejects_midpoint_below_no_arbitrage_bound():
+    adapter = object.__new__(MoomooIntradayOptionsAdapter)
+
+    calculated = adapter._calculate_eod_iv_and_greeks(
+        row={"type": "call", "strike": 80.0, "bid": 19.0, "ask": 19.5},
+        spot=100.0,
+        trading_date=date(2026, 9, 8),
+        expiration="2026-09-09",
+    )
+
+    assert calculated is None
 
 
 def test_sqlite_storage_and_contract_boundary(tmp_path: Path):
@@ -283,7 +345,88 @@ def test_sqlite_storage_and_contract_boundary(tmp_path: Path):
         quota.capture(lambda: {"available": True, "used": 1, "remain": 2, "total": 3})
         assert store.latest_quota_snapshot() is not None
         assert store.read_raw("capture-1")["kind"] == "daily"
-    assert SCHEMA_VERSION == 2
+    assert SCHEMA_VERSION == 3
+
+
+def test_canonical_intraday_store_materializes_consumer_ready_snapshot(tmp_path: Path):
+    from app.intraday_options.storage import IntradayOptionStore
+
+    database = tmp_path / "intraday.sqlite"
+    bootstrap = IntradayOptionStore(f"sqlite:///{database}", tmp_path / "bootstrap-raw")
+    bootstrap.close()
+    payload = {
+        "captured_at": "2026-09-08T14:00:02+00:00",
+        "quality_summary": {"complete": True},
+        "warnings": [],
+        "underlying_bars": [],
+        "symbols": [
+            {
+                "symbol": symbol,
+                "spot": 100.0,
+                "spot_time": "2026-09-08 10:00:00",
+                "spot_request_started_at": "2026-09-08T14:00:00+00:00",
+                "spot_received_at": "2026-09-08T14:00:01+00:00",
+                "expirations": [
+                    {
+                        "expiration": "2026-09-09",
+                        "contracts": [
+                            {
+                                "contract_code": f"US.{symbol}260909C00100000",
+                                "option_type": "CALL",
+                                "expiration": "2026-09-09",
+                                "strike": 100,
+                                "bid": 1.0,
+                                "ask": 1.1,
+                                "quote_time": "2026-09-08 10:00:00",
+                                "request_started_at": "2026-09-08T14:00:00+00:00",
+                                "received_at": "2026-09-08T14:00:01+00:00",
+                            }
+                        ],
+                    }
+                ],
+            }
+            for symbol in ("SPY", "QQQ", "IWM")
+        ],
+    }
+    store = CanonicalIntradayStore(
+        database,
+        raw_payload_dir=tmp_path / "raw",
+        market_timezone="America/New_York",
+    )
+    try:
+        result = store.persist(
+            scheduled_at=datetime(2026, 9, 8, 14, tzinfo=UTC),
+            capture_tier="structure",
+            symbols=["SPY", "QQQ", "IWM"],
+            band_percent=10,
+            payload=payload,
+        )
+        repeated = store.persist(
+            scheduled_at=datetime(2026, 9, 8, 14, tzinfo=UTC),
+            capture_tier="structure",
+            symbols=["SPY", "QQQ", "IWM"],
+            band_percent=10,
+            payload=payload,
+        )
+        connection = store.connection
+        run = connection.execute(
+            "SELECT status, symbols_completed, selected_attempt_id FROM intraday_option_capture_runs"
+        ).fetchone()
+        underlying_count = connection.execute(
+            "SELECT COUNT(*) FROM intraday_underlying_snapshots"
+        ).fetchone()[0]
+        option_count = connection.execute(
+            "SELECT COUNT(*) FROM intraday_option_contract_snapshots"
+        ).fetchone()[0]
+    finally:
+        store.close()
+
+    assert repeated == result
+    assert run["status"] == "succeeded"
+    assert json.loads(run["symbols_completed"]) == ["IWM", "QQQ", "SPY"]
+    assert run["selected_attempt_id"] == result["attempt_id"]
+    assert underlying_count == 3
+    assert option_count == 3
 
 
 def test_source_boundary_has_no_urus_application_imports():
@@ -440,6 +583,7 @@ def test_intraday_schedule_uses_session_bounds_and_private_parameters(tmp_path: 
     assert len(due) == 1
     assert due[0].task.params["capture_tier"] == "structure"
     assert due[0].task.params["band_percent"] == 10
+    assert set(due[0].task.params) == {"capture_tier", "band_percent"}
 
 
 def test_intraday_anchor_is_compared_in_market_timezone():

@@ -16,6 +16,16 @@ from urus_moomoo.storage.sqlite import CollectorStore
 logger = logging.getLogger(__name__)
 
 
+_INTRADAY_SCHEDULE_PARAMS = {
+    "interval_seconds",
+    "start_margin_seconds",
+    "end_margin_seconds",
+    "anchor_times",
+    "fast_band_percent",
+    "structure_band_percent",
+}
+
+
 def _schedule_time(value: str) -> tuple[int, int] | None:
     text = value.strip()
     if len(text) == 5 and text[2] == ":" and all(part.isdigit() for part in text.split(":")):
@@ -54,7 +64,9 @@ class CollectorScheduler:
         clock: Callable[[], datetime] | None = None,
         store: CollectorStore | None = None,
         catch_up_seconds: float = 3600.0,
+        intraday_catch_up_seconds: float = 600.0,
         market_timezone: str | None = None,
+        on_idle: Callable[[], None] | None = None,
     ) -> None:
         self.tasks = tuple(tasks)
         self.timezone = ZoneInfo(timezone)
@@ -64,6 +76,8 @@ class CollectorScheduler:
         self.clock = clock or (lambda: datetime.now(self.timezone))
         self.store = store
         self.catch_up = timedelta(seconds=max(0.0, catch_up_seconds))
+        self.intraday_catch_up = timedelta(seconds=max(0.0, intraday_catch_up_seconds))
+        self.on_idle = on_idle
         self.completed: set[tuple[str, str]] = set()
 
     def due(self, now: datetime | None = None) -> list[DueTask]:
@@ -77,12 +91,33 @@ class CollectorScheduler:
                 for task in self.tasks:
                     if not task.enabled:
                         continue
+                    task_catch_up = (
+                        self.intraday_catch_up
+                        if task.schedule.strip().lower() == "intraday"
+                        else self.catch_up
+                    )
                     for scheduled_at, scheduled_task in self._task_times(task, day):
                         if scheduled_at is None or not (
-                            timedelta(0) <= current - scheduled_at <= self.catch_up
+                            timedelta(0) <= current - scheduled_at <= task_catch_up
                         ):
                             continue
                         if self.store and self.store.scheduler_completed(task.name, scheduled_at):
+                            continue
+                        if (
+                            self.store
+                            and task.operation.strip() == "capture_eod_options"
+                            and self.store.recover_eod_scheduler_completion(
+                                task.name,
+                                scheduled_at,
+                                trading_date=day.isoformat(),
+                                requested_symbols=task.symbols,
+                            )
+                        ):
+                            logger.info(
+                                "recovered completed EOD task from raw capture: task=%s scheduled_at=%s",
+                                task.name,
+                                scheduled_at.isoformat(),
+                            )
                             continue
                         if (task.name, scheduled_at.isoformat()) in self.completed:
                             continue
@@ -92,7 +127,15 @@ class CollectorScheduler:
 
     def run_once(self, now: datetime | None = None) -> list[str]:
         ran: list[str] = []
-        for due in self.due(now):
+        try:
+            due_tasks = self.due(now)
+        finally:
+            # Calendar/provider lookups can use the same host-wide coordinator
+            # as collection tasks.  They must not retain that lock while the
+            # scheduler sleeps, otherwise recovery and replay processes block.
+            if self.on_idle is not None:
+                self.on_idle()
+        for due in due_tasks:
             try:
                 result = self.runner(due.task, due.scheduled_at)
             except Exception:
@@ -110,7 +153,16 @@ class CollectorScheduler:
                 )
                 continue
             if self.store:
-                self.store.mark_scheduler_completed(due.task.name, due.scheduled_at)
+                capture_id = None
+                if isinstance(result, Mapping):
+                    contract = result.get("contract")
+                    if isinstance(contract, Mapping):
+                        capture_id = str(contract.get("capture_id") or "") or None
+                self.store.mark_scheduler_completed(
+                    due.task.name,
+                    due.scheduled_at,
+                    capture_id=capture_id,
+                )
             self.completed.add((due.task.name, due.scheduled_at.isoformat()))
             ran.append(due.task.name)
         return ran
@@ -136,7 +188,11 @@ class CollectorScheduler:
             while cursor <= final:
                 key = cursor.astimezone(self.market_timezone).strftime("%H:%M")
                 tier = "structure" if key in anchors else "fast"
-                capture_params = dict(params)
+                capture_params = {
+                    key: value
+                    for key, value in params.items()
+                    if key not in _INTRADAY_SCHEDULE_PARAMS
+                }
                 capture_params["capture_tier"] = tier
                 if tier == "structure" and structure_band is not None:
                     capture_params["band_percent"] = structure_band

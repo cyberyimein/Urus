@@ -103,3 +103,27 @@ max_dte = 45
     assert task.operation == "capture_eod_options"
     assert task.delay_seconds == 3600
     assert task.params == {"band_percent": 10, "max_dte": 45}
+
+
+def test_load_config_keeps_private_publisher_settings(tmp_path: Path) -> None:
+    path = tmp_path / "tasks.toml"
+    path.write_text(
+        """
+[runtime]
+timezone = "Asia/Tokyo"
+[runtime.publisher]
+api_url = "http://urus:8000"
+timeout_seconds = 12
+
+[[tasks]]
+name = "options-close"
+schedule = "post-close"
+operation = "options_snapshot"
+symbols = ["SPY"]
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(path)
+
+    assert config.publisher == {"api_url": "http://urus:8000", "timeout_seconds": 12}

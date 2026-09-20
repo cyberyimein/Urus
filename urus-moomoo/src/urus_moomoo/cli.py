@@ -10,6 +10,7 @@ from .config import load_config
 from .integrations.moomoo import OpenDMarketAdapter
 from .integrations.moomoo_intraday_options import MoomooIntradayOptionsAdapter
 from .integrations.moomoo_options import MoomooOptionsAdapter
+from .publisher import ObservationPublisher
 from .runtime import CollectorRuntime
 from .services.calendar import build_moomoo_calendar
 from .services.scheduler import CollectorScheduler
@@ -50,26 +51,68 @@ def main(argv: list[str] | None = None) -> int:
     )
     if args.command != "validate":
         runtime = _build_runtime(config)
+        publisher = ObservationPublisher.from_config(config, capture_reader=runtime.store.read_raw)
+
+        def collect_and_publish(task, scheduled_at):
+            if publisher is not None:
+                resumed_capture_id = publisher.resume_if_ready(task, scheduled_at)
+                if resumed_capture_id is not None:
+                    return {
+                        "scheduled_at": scheduled_at.isoformat(),
+                        "contract": {"capture_id": resumed_capture_id},
+                        "completed": True,
+                    }
+                task = publisher.prepare_task(task, scheduled_at)
+            if task.operation.strip() == "instrument_cards":
+                # The publisher freezes the current Universe immediately before
+                # collection.  Extend the request-time history scope to that
+                # exact plan; otherwise dynamically discovered symbols are
+                # rejected as outside_scope by HistoryAdmission.
+                prepare = getattr(runtime.history_admission, "prepare_symbols", None)
+                if callable(prepare):
+                    prepare(task.symbols)
+            result = runtime.collect_task(task, scheduled_at)
+            if publisher is not None and not publisher.observe(task, scheduled_at, result):
+                result["completed"] = False
+            return result
+
         try:
             if args.command == "run-once":
                 now = datetime.now(ZoneInfo(config.timezone))
                 for task in config.tasks:
                     if task.enabled:
-                        runtime.collect_task(task, now)
+                        collect_and_publish(task, now)
             else:
                 calendar = build_moomoo_calendar(
                     runtime.provider, config.exchange_calendar, cache_path=config.calendar_cache
                 )
+
+                def on_idle() -> None:
+                    # A prior API outage must not depend on the scheduler's
+                    # narrow market catch-up window.  Retry exact, immutable
+                    # capture pairs independently; collection errors remain
+                    # isolated so the calendar loop stays alive.
+                    if publisher is not None:
+                        try:
+                            publisher.retry_pending()
+                        except Exception as exc:
+                            print(f"observation publication retry deferred: {exc}")
+                    runtime.coordinator.close()
+
                 CollectorScheduler(
                     config.tasks,
                     timezone=config.timezone,
                     calendar=calendar,
-                    runner=runtime.collect_task,
+                    runner=collect_and_publish,
                     store=runtime.store,
                     catch_up_seconds=config.catch_up_seconds,
+                    intraday_catch_up_seconds=config.intraday_catch_up_seconds,
                     market_timezone=config.market_timezone,
+                    on_idle=on_idle,
                 ).run_forever(poll_seconds=config.poll_seconds)
         finally:
+            if publisher is not None:
+                publisher.close()
             runtime.close()
     return 0
 

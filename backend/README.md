@@ -18,6 +18,16 @@ The application creates missing local tables on startup for a fresh checkout. Al
 
 `POST /api/observation/runs` is the single collection entry point. It freezes the active Universe groups, admits required daily-history symbols through `HistoryAdmission`, collects stock/ETF evidence, runs deterministic strategies, and collects the configured option symbols through `OptionsCollectionService`.
 
+In the split production deployment, a scheduled request supplies
+`source_captures` with exact `market_capture_id` / `options_capture_id` and
+their payload SHA-256 values. The API reads only those immutable
+`urus.moomoo.capture.v2` rows from the shared sidecar SQLite database, checks
+the fixed task names, trading date, provider, checksum, and symbol coverage,
+and then adapts their `instrument_cards` and `options_snapshot` payloads into
+the normal Observation Run. This path never falls back to a live OpenD
+adapter. Production requires these locators for every scheduled run; manual
+runs retain the explicit live-adapter workflow.
+
 The scheduler invokes this endpoint once after the US session. It never starts a separate data worker and it never invokes AI. The stock and option adapters share `MoomooCollectionCoordinator`, which holds the host-wide lock and persists pacing timestamps for snapshot, history, option metadata, and option-chain calls.
 
 The optional intraday option collector is a separate supervised process because

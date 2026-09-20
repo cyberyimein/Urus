@@ -10,6 +10,7 @@ from urus_moomoo.contracts import capture_contract
 from urus_moomoo.services.pacing import CollectionCoordinator
 from urus_moomoo.services.quota import HistoryAdmission, HistoryCapacityService
 from urus_moomoo.storage.sqlite import CollectorStore
+from urus_moomoo.storage.intraday import CanonicalIntradayStore
 
 
 class CollectorRuntime:
@@ -25,6 +26,15 @@ class CollectorRuntime:
         self.config = config
         output_dir = Path(config.output_dir).expanduser()
         self.store = CollectorStore(config.sqlite_path or output_dir / "collector.sqlite")
+        self.intraday_store = (
+            CanonicalIntradayStore(
+                config.intraday_sqlite_path,
+                raw_payload_dir=config.intraday_raw_payload_dir,
+                market_timezone=config.market_timezone,
+            )
+            if config.intraday_sqlite_path is not None
+            else None
+        )
         self.coordinator = CollectionCoordinator(config.lock_path or output_dir / "collection.lock")
         capacity = HistoryCapacityService(settings=config, store=self.store)
         self.provider = provider
@@ -52,17 +62,43 @@ class CollectorRuntime:
         with self.coordinator:
             self._reset_collection_run()
             payload = self._collect(task, scheduled_at)
+            if task.operation.strip() == "capture_intraday" and self.intraday_store is not None:
+                params = dict(task.params or {})
+                self.intraday_store.persist(
+                    scheduled_at=scheduled_at,
+                    capture_tier=str(params["capture_tier"]),
+                    symbols=list(task.symbols),
+                    band_percent=float(params["band_percent"]),
+                    payload=payload,
+                )
             contract = capture_contract(
                 kind=task.operation,
                 payload=payload,
                 requested_symbols=list(task.symbols),
+                task_name=task.name,
+                scheduled_at=scheduled_at,
+                trading_date=scheduled_at.astimezone(
+                    ZoneInfo(self.config.market_timezone)
+                ).date().isoformat(),
             )
-            self.store.write_raw(
-                contract["capture_id"],
-                task.operation,
-                contract,
-                schema_version=str(contract["schema_version"]),
-            )
+            completed = self._operation_completed(task.operation, payload)
+            if task.operation.strip() == "capture_eod_options":
+                self.store.write_scheduled_raw(
+                    task.name,
+                    scheduled_at,
+                    str(contract["capture_id"]),
+                    task.operation,
+                    contract,
+                    schema_version=str(contract["schema_version"]),
+                    completed=completed,
+                )
+            else:
+                self.store.write_raw(
+                    contract["capture_id"],
+                    task.operation,
+                    contract,
+                    schema_version=str(contract["schema_version"]),
+                )
             snapshots = payload.get("history_snapshots", payload.get("instruments", []))
             for snapshot in snapshots if isinstance(snapshots, list) else []:
                 if not isinstance(snapshot, dict):
@@ -76,7 +112,7 @@ class CollectorRuntime:
             return {
                 "scheduled_at": scheduled_at.isoformat(),
                 "contract": contract,
-                "completed": self._operation_completed(task.operation, payload),
+                "completed": completed,
             }
 
     def _reset_collection_run(self) -> None:
@@ -138,3 +174,5 @@ class CollectorRuntime:
         finally:
             self.coordinator.close()
             self.store.close()
+            if self.intraday_store is not None:
+                self.intraday_store.close()

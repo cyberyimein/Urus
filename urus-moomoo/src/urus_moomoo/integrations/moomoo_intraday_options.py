@@ -538,8 +538,11 @@ class MoomooIntradayOptionsAdapter(MoomooOptionsAdapter):
             max_dte=max_dte,
         )
         rows: list[dict[str, Any]] = []
-        invalid_contracts: list[str] = []
+        filtered_contracts: list[str] = []
         expiry_types: dict[tuple[str, str], set[str]] = {}
+        total_contracts = 0
+        iv_backfill_attempted = 0
+        iv_backfill_succeeded = 0
         for symbol_payload in payload.get("symbols", []):
             if not isinstance(symbol_payload, dict):
                 continue
@@ -552,8 +555,8 @@ class MoomooIntradayOptionsAdapter(MoomooOptionsAdapter):
                 for contract in expiration_payload.get("contracts", []):
                     if not isinstance(contract, dict):
                         continue
+                    total_contracts += 1
                     option_type = str(contract.get("option_type") or "").lower()
-                    types.add(option_type)
                     raw_iv = self._number(contract.get("implied_volatility"))
                     row = {
                         "date": trading_date.isoformat(),
@@ -572,10 +575,25 @@ class MoomooIntradayOptionsAdapter(MoomooOptionsAdapter):
                         "quote_time": contract.get("quote_time"),
                         "request_started_at": contract.get("request_started_at"),
                         "received_at": contract.get("received_at"),
+                        "iv_source": "moomoo" if raw_iv is not None and raw_iv > 0 else None,
+                        "iv_model": None,
                     }
-                    rows.append(row)
+                    if raw_iv is None or raw_iv <= 0:
+                        iv_backfill_attempted += 1
+                        calculated = self._calculate_eod_iv_and_greeks(
+                            row=row,
+                            spot=symbol_payload.get("spot"),
+                            trading_date=trading_date,
+                            expiration=expiration,
+                        )
+                        if calculated is not None:
+                            row.update(calculated)
+                            iv_backfill_succeeded += 1
                     if not self._valid_eoflora_row(row):
-                        invalid_contracts.append(str(contract.get("contract_code") or ""))
+                        filtered_contracts.append(str(contract.get("contract_code") or ""))
+                        continue
+                    rows.append(row)
+                    types.add(option_type)
 
         underlying_closes: dict[str, float] = {}
         for symbol in {item.upper().removeprefix("US.") for item in symbols}:
@@ -599,10 +617,11 @@ class MoomooIntradayOptionsAdapter(MoomooOptionsAdapter):
         missing_required_symbols = sorted(required_symbols - requested_symbols)
         quality = payload.get("quality_summary")
         provider_complete = bool(quality.get("complete")) if isinstance(quality, dict) else False
+        retained_quote_ratio = len(rows) / total_contracts if total_contracts else 0.0
         complete = (
             provider_complete
             and bool(rows)
-            and not invalid_contracts
+            and retained_quote_ratio >= getattr(self, "min_quote_coverage", 0.80)
             and not missing_two_sided
             and not missing_required_symbols
             and set(underlying_closes) == requested_symbols
@@ -611,7 +630,10 @@ class MoomooIntradayOptionsAdapter(MoomooOptionsAdapter):
             "trading_date": trading_date.isoformat(),
             "requested_symbols": sorted(requested_symbols),
             "dte_range": [1, max_dte],
-            "strike_band_percent": band_percent,
+            # The frozen consumer canonicalises this contract value as 10.0.
+            # Normalise before hashing so TOML integer syntax cannot change
+            # the otherwise identical content digest.
+            "strike_band_percent": float(band_percent),
             "underlying_closes": underlying_closes,
             "option_rows": rows,
         }
@@ -632,13 +654,149 @@ class MoomooIntradayOptionsAdapter(MoomooOptionsAdapter):
             "content_sha256": content_sha256,
             "quality_summary": {
                 **(quality if isinstance(quality, dict) else {}),
-                "invalid_contract_codes": invalid_contracts,
+                "complete": complete,
+                # This field describes emitted rows and therefore remains empty:
+                # invalid source rows are never allowed across the Eoflora boundary.
+                "invalid_contract_codes": [],
+                "source_contract_count": total_contracts,
+                "retained_contract_count": len(rows),
+                "retained_quote_ratio": retained_quote_ratio,
+                "filtered_contract_count": len(filtered_contracts),
+                "filtered_contract_codes": filtered_contracts,
+                "iv_backfill_attempted": iv_backfill_attempted,
+                "iv_backfill_succeeded": iv_backfill_succeeded,
+                "iv_backfill_failed": iv_backfill_attempted - iv_backfill_succeeded,
+                "iv_backfill_model": "black_scholes_european_mid_bisection_v1",
+                "iv_backfill_price": "valid_bid_ask_midpoint",
+                "iv_backfill_rate_percent": getattr(self, "risk_free_rate_percent", 4.0),
+                "iv_backfill_dividend_yield_percent": getattr(
+                    self, "dividend_yield_percent", 0.0
+                ),
                 "missing_two_sided_expirations": missing_two_sided,
                 "missing_required_symbols": missing_required_symbols,
             },
             "ready": complete,
             "complete": complete,
         }
+
+    def _calculate_eod_iv_and_greeks(
+        self,
+        *,
+        row: dict[str, Any],
+        spot: Any,
+        trading_date: date,
+        expiration: str,
+    ) -> dict[str, Any] | None:
+        """Invert a valid midpoint and return auditable BS IV/Greeks.
+
+        This is deliberately fail-closed.  A stale or asynchronous quote that
+        violates the model's no-arbitrage range is filtered instead of being
+        coerced into a plausible-looking volatility.
+        """
+
+        try:
+            underlying = float(spot)
+            strike = float(row["strike"])
+            bid = float(row["bid"])
+            ask = float(row["ask"])
+            expiry_date = date.fromisoformat(expiration)
+        except (TypeError, ValueError, KeyError):
+            return None
+        option_type = str(row.get("type") or "").lower()
+        if (
+            option_type not in {"call", "put"}
+            or not all(math.isfinite(value) for value in (underlying, strike, bid, ask))
+            or underlying <= 0
+            or strike <= 0
+            or bid < 0
+            or ask < bid
+            or ask <= 0
+        ):
+            return None
+        days = (expiry_date - trading_date).days
+        if days < 1:
+            return None
+        time_years = days / 365.0
+        rate = getattr(self, "risk_free_rate_percent", 4.0) / 100.0
+        dividend_yield = getattr(self, "dividend_yield_percent", 0.0) / 100.0
+        midpoint = (bid + ask) / 2.0
+
+        low_sigma = 1.0e-6
+        high_sigma = 5.0
+        low_price, _, _ = self._black_scholes_price_delta_gamma(
+            option_type, underlying, strike, time_years, rate, dividend_yield, low_sigma
+        )
+        high_price, _, _ = self._black_scholes_price_delta_gamma(
+            option_type, underlying, strike, time_years, rate, dividend_yield, high_sigma
+        )
+        tolerance = max(1.0e-8, midpoint * 1.0e-10)
+        if midpoint < low_price - tolerance or midpoint > high_price + tolerance:
+            return None
+
+        for _ in range(80):
+            sigma = (low_sigma + high_sigma) / 2.0
+            price, _, _ = self._black_scholes_price_delta_gamma(
+                option_type, underlying, strike, time_years, rate, dividend_yield, sigma
+            )
+            if price < midpoint:
+                low_sigma = sigma
+            else:
+                high_sigma = sigma
+        implied_volatility = (low_sigma + high_sigma) / 2.0
+        _, delta, gamma = self._black_scholes_price_delta_gamma(
+            option_type,
+            underlying,
+            strike,
+            time_years,
+            rate,
+            dividend_yield,
+            implied_volatility,
+        )
+        return {
+            "implied_volatility": implied_volatility,
+            "delta": delta,
+            "gamma": gamma,
+            "iv_source": "calculated_mid",
+            "iv_model": "black_scholes_european_mid_bisection_v1",
+            "iv_quote_price": midpoint,
+            "iv_time_years": time_years,
+            "iv_risk_free_rate": rate,
+            "iv_dividend_yield": dividend_yield,
+        }
+
+    @staticmethod
+    def _black_scholes_price_delta_gamma(
+        option_type: str,
+        spot: float,
+        strike: float,
+        time_years: float,
+        rate: float,
+        dividend_yield: float,
+        volatility: float,
+    ) -> tuple[float, float, float]:
+        sqrt_time = math.sqrt(time_years)
+        d1 = (
+            math.log(spot / strike)
+            + (rate - dividend_yield + 0.5 * volatility * volatility) * time_years
+        ) / (volatility * sqrt_time)
+        d2 = d1 - volatility * sqrt_time
+        def normal_cdf(value: float) -> float:
+            return 0.5 * (1.0 + math.erf(value / math.sqrt(2.0)))
+        discounted_spot = spot * math.exp(-dividend_yield * time_years)
+        discounted_strike = strike * math.exp(-rate * time_years)
+        if option_type == "call":
+            price = discounted_spot * normal_cdf(d1) - discounted_strike * normal_cdf(d2)
+            delta = math.exp(-dividend_yield * time_years) * normal_cdf(d1)
+        else:
+            price = discounted_strike * normal_cdf(-d2) - discounted_spot * normal_cdf(-d1)
+            delta = math.exp(-dividend_yield * time_years) * (normal_cdf(d1) - 1.0)
+        density = math.exp(-0.5 * d1 * d1) / math.sqrt(2.0 * math.pi)
+        gamma = (
+            math.exp(-dividend_yield * time_years)
+            * density
+            / (spot * volatility * sqrt_time)
+        )
+        return price, delta, gamma
 
     @staticmethod
     def _valid_eoflora_row(row: dict[str, Any]) -> bool:

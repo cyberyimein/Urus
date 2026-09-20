@@ -55,6 +55,13 @@ set -a
 . "$env_file"
 set +a
 
+# Apple Container does not currently provide reliable container-name DNS on
+# user-defined networks. Reach the published Urus API through the VM gateway
+# unless the private deployment environment provides an explicit URL.
+if [[ -z "${URUS_INTERNAL_API_URL:-}" ]]; then
+    export URUS_INTERNAL_API_URL="${URUS_APPLE_GATEWAY_URL:-http://192.168.67.1:7777}"
+fi
+
 python3 - "$config" <<'PY'
 import json
 import os
@@ -63,12 +70,24 @@ import sys
 
 config = pathlib.Path(sys.argv[1])
 
-def values(name):
-    return [item.strip() for item in os.environ.get(name, "").split(",") if item.strip()]
+def values(name, default=""):
+    return [item.strip().upper() for item in os.environ.get(name, default).split(",") if item.strip()]
 
 market_symbols = values("MOOMOO_MARKET_SYMBOLS")
 intraday_symbols = values("INTRADAY_OPTIONS_SYMBOLS")
-if not market_symbols or not intraday_symbols:
+excluded_options = set(values("OPTIONS_WATCHLIST_EXCLUDED_SYMBOLS", "SPCX"))
+options_snapshot_symbols = list(
+    dict.fromkeys(
+        symbol
+        for symbol in values("OPTIONS_TARGET_SYMBOLS", "SPY,QQQ,SMH,IGV")
+        + values(
+            "OPTIONS_WATCHLIST_SYMBOLS",
+            "LITE,COHR,MRVL,NOK,AMD,INTC,NVDA,NBIS,ORCL,MSFT,NOW,RKLB,AMZN,AAPL,GOOG",
+        )
+        if symbol not in excluded_options
+    )
+)
+if not market_symbols or not intraday_symbols or not options_snapshot_symbols:
     raise SystemExit("private env must define market and intraday symbols")
 
 host = os.environ.get("MOOMOO_HOST", "").strip()
@@ -76,6 +95,10 @@ port = int(os.environ.get("MOOMOO_PORT", "11111"))
 market_timezone = os.environ.get("MARKET_TIMEZONE", "America/New_York").strip()
 fast_band = float(os.environ.get("INTRADAY_OPTIONS_FAST_BAND_PERCENT", "3"))
 structure_band = float(os.environ.get("INTRADAY_OPTIONS_STRUCTURE_BAND_PERCENT", "10"))
+urus_api_url = os.environ.get(
+    "URUS_INTERNAL_API_URL", "http://192.168.67.1:7777"
+).strip()
+urus_api_timeout = float(os.environ.get("URUS_INTERNAL_API_TIMEOUT_SECONDS", "30"))
 
 config.parent.mkdir(parents=True, exist_ok=True)
 config.write_text(
@@ -89,7 +112,15 @@ config.write_text(
             f'market_timezone = {json.dumps(market_timezone)}',
             'exchange_calendar = "XNYS"',
             'poll_seconds = 10',
-            'catch_up_seconds = 600',
+            'catch_up_seconds = 21600',
+            'intraday_catch_up_seconds = 600',
+            'intraday_sqlite_path = "/data/intraday_options/intraday_options-v2.db"',
+            'intraday_raw_payload_dir = "/data/intraday_options/raw"',
+            "",
+            "[runtime.publisher]",
+            f"api_url = {json.dumps(urus_api_url)}",
+            f"timeout_seconds = {urus_api_timeout}",
+            'state_path = "/data/urus-moomoo/observation-publisher.sqlite"',
             "",
             "[runtime.options]",
             "target_dtes = [0, 1]",
@@ -105,6 +136,14 @@ config.write_text(
             'operation = "instrument_cards"',
             "delay_seconds = 1800",
             f"symbols = {json.dumps(market_symbols)}",
+            "",
+            "[[tasks]]",
+            'name = "options-snapshot-post-close"',
+            "enabled = true",
+            'schedule = "post-close"',
+            'operation = "options_snapshot"',
+            "delay_seconds = 2100",
+            f"symbols = {json.dumps(options_snapshot_symbols)}",
             "",
             "[[tasks]]",
             'name = "capital-flow-post-close"',

@@ -105,6 +105,15 @@ class ObservationGroupSyncResponse(BaseModel):
     groups: list[ObservationGroupResponse]
 
 
+class ObservationSourceCaptures(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    market_capture_id: str = Field(min_length=1, max_length=128)
+    market_content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    options_capture_id: str = Field(min_length=1, max_length=128)
+    options_content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 class ObservationRunCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -116,6 +125,9 @@ class ObservationRunCreateRequest(BaseModel):
     universe_revision_id: str | None = Field(default=None, max_length=36)
     universe_freshness: str | None = Field(default=None, max_length=16)
     universe_source_url: str | None = Field(default=None, max_length=512)
+    source_captures: ObservationSourceCaptures | None = None
+    collection_plan_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    group_version_ids: list[str] = Field(default_factory=list, max_length=100)
 
     @field_validator("group_ids")
     @classmethod
@@ -126,6 +138,22 @@ class ObservationRunCreateRequest(BaseModel):
             if group_id and group_id not in normalized:
                 normalized.append(group_id)
         return normalized
+
+
+class ObservationCollectionPlanResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["urus.observation.collection_plan.v1"]
+    plan_id: str
+    trading_date: date
+    universe_revision_id: str | None = None
+    universe_source_url: str | None = None
+    universe_freshness: str
+    group_ids: list[str]
+    group_version_ids: list[str]
+    market_symbols: list[str]
+    options_symbols: list[str]
+    created_at: datetime
 
 
 class ObservationRunResponse(BaseModel):
@@ -146,6 +174,8 @@ class ObservationRunResponse(BaseModel):
     options: dict[str, Any] = Field(default_factory=dict)
     options_alignment: dict[str, Any] | None = None
     options_collection: dict[str, Any] = Field(default_factory=dict)
+    source_captures: dict[str, Any] | None = None
+    collection_plan_id: str | None = None
     group_count: int
     successful_group_count: int = 0
     failed_group_count: int = 0

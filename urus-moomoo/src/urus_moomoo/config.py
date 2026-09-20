@@ -44,7 +44,11 @@ class CollectorConfig:
     exchange_calendar: str = "XNYS"
     poll_seconds: float = 30.0
     catch_up_seconds: float = 3600.0
+    intraday_catch_up_seconds: float = 600.0
     options: dict[str, Any] | None = None
+    intraday_sqlite_path: Path | None = None
+    intraday_raw_payload_dir: Path | None = None
+    publisher: dict[str, Any] | None = None
 
 
 def default_config_path() -> Path:
@@ -92,9 +96,19 @@ def _parse_config(raw: dict[str, Any], config_path: Path) -> CollectorConfig:
         exchange_calendar=str(runtime.get("exchange_calendar", "XNYS")),
         poll_seconds=max(0.1, float(runtime.get("poll_seconds", 30.0))),
         catch_up_seconds=max(0.0, float(runtime.get("catch_up_seconds", 3600.0))),
+        intraday_catch_up_seconds=max(
+            0.0, float(runtime.get("intraday_catch_up_seconds", 600.0))
+        ),
+        intraday_sqlite_path=_optional_path(runtime.get("intraday_sqlite_path")),
+        intraday_raw_payload_dir=_optional_path(runtime.get("intraday_raw_payload_dir")),
         options=(
             dict(runtime.get("options", {}))
             if isinstance(runtime.get("options", {}), dict)
+            else None
+        ),
+        publisher=(
+            dict(runtime.get("publisher", {}))
+            if isinstance(runtime.get("publisher", {}), dict)
             else None
         ),
     )

@@ -919,6 +919,52 @@ def test_observation_options_reports_missing_trading_date_without_falling_back(c
     assert "2026-08-21" in body["message"]
 
 
+def test_scheduled_observation_requires_source_captures_when_enabled(client) -> None:
+    client.app.state.settings.observation_scheduled_require_source_captures = True
+
+    response = client.post(
+        "/api/observation/runs",
+        json={"trigger_mode": "scheduled", "trading_date": "2026-09-08"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "observation_source_captures_required"
+
+
+def test_source_capture_failure_never_builds_live_adapters(client, monkeypatch, tmp_path) -> None:
+    client.app.state.settings.sidecar_capture_database_path = str(
+        tmp_path / "missing-collector.sqlite"
+    )
+    monkeypatch.setattr(
+        "app.api.observation._market_adapter",
+        lambda *args, **kwargs: pytest.fail("live market adapter must not be constructed"),
+    )
+    monkeypatch.setattr(
+        "app.api.observation.OptionsCollectionService.build_adapter",
+        lambda *args, **kwargs: pytest.fail("live options adapter must not be constructed"),
+    )
+
+    response = client.post(
+        "/api/observation/runs",
+        json={
+            "trigger_mode": "scheduled",
+            "trading_date": "2026-09-08",
+            "group_ids": ["core-watchlist"],
+            "group_version_ids": ["missing-version"],
+            "collection_plan_id": "0" * 64,
+            "source_captures": {
+                "market_capture_id": "market-1",
+                "market_content_sha256": "0" * 64,
+                "options_capture_id": "options-1",
+                "options_content_sha256": "0" * 64,
+            },
+        },
+    )
+
+    assert response.status_code == 422
+    assert "Sidecar capture database is missing" in response.text
+
+
 def test_observation_group_updates_require_the_current_version(client) -> None:
     created = client.post(
         "/api/observation/groups",

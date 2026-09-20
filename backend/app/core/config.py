@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     # default fail-closed so a broken upstream cannot silently change the
     # observed universe.
     observation_allow_stale_universe: bool = False
+    sidecar_capture_database_path: str = "/data/urus-moomoo/collector.sqlite"
+    observation_scheduled_require_source_captures: bool = False
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     enabled_symbols: str = "QQQ,INTC"
     # Configured technical universe: QQQ is the default relative-strength

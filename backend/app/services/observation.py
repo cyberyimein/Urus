@@ -288,6 +288,68 @@ class ObservationRunService:
         )
         self.options = OptionsCollectionService()
 
+    def collection_plan(
+        self,
+        trading_date: date,
+        *,
+        universe_revision_id: str | None = None,
+    ) -> dict[str, Any]:
+        latest_completed = latest_completed_session_date(
+            utc_now(), self.settings.market_calendar
+        )
+        if trading_date > latest_completed:
+            raise ValueError(
+                f"{trading_date.isoformat()} 尚未完成收市；当前最后完整交易日为 "
+                f"{latest_completed.isoformat()}"
+            )
+        if not is_trading_session_date(trading_date, self.settings.market_calendar):
+            raise ValueError(f"{trading_date.isoformat()} 不是 {self.settings.market_calendar} 的交易日")
+        groups = self.groups.list_active()
+        if not groups:
+            raise ValueError("至少需要一个 active observation group")
+        active_revisions = {
+            str(group.universe_revision_id)
+            for group in groups
+            if group.source == "universe" and group.universe_revision_id
+        }
+        if len(active_revisions) > 1:
+            raise ValueError("active Universe groups 包含多个 revision，必须先重新同步")
+        active_revision_id = next(iter(active_revisions), None)
+        if universe_revision_id and active_revision_id != universe_revision_id:
+            raise ValueError("collection plan 的 Universe Revision 已漂移，请重新同步")
+        revision_id = universe_revision_id or active_revision_id
+        revision = self.universe_revisions.get(revision_id) if revision_id else None
+        if revision_id and revision is None:
+            raise ValueError(f"找不到 Universe Revision：{revision_id}")
+        market_symbols = list(
+            dict.fromkeys(
+                symbol
+                for group in groups
+                for symbol in [
+                    *list(group.symbols or []),
+                    *list(group.benchmark_symbols or []),
+                ]
+            )
+        )
+        definition = {
+            "schema_version": "urus.observation.collection_plan.v1",
+            "trading_date": trading_date.isoformat(),
+            "universe_revision_id": revision_id,
+            "group_ids": [group.group_id for group in groups],
+            "group_version_ids": [group.id for group in groups],
+            "market_symbols": market_symbols,
+            "options_symbols": list(self.settings.options_collection_symbol_list),
+        }
+        return {
+            **definition,
+            "plan_id": content_sha256(definition),
+            "universe_source_url": revision.source_url if revision else None,
+            "universe_freshness": (
+                "local" if revision and revision.source_url == "local" else "unknown"
+            ),
+            "created_at": utc_now(),
+        }
+
     def create_run(
         self,
         request: ObservationRunCreateRequest,
@@ -324,6 +386,9 @@ class ObservationRunService:
             selected.append(group)
         if not selected:
             raise ValueError("至少需要一个 active observation group")
+        if request.group_version_ids:
+            if sorted(request.group_version_ids) != sorted(item.id for item in selected):
+                raise ValueError("Observation groups 已在 collection plan 后发生变化")
         universe_revision_id = request.universe_revision_id
         universe_freshness = "unknown"
         universe_source_url: str | None = None
@@ -353,6 +418,28 @@ class ObservationRunService:
                 )
         version_ids = [item.id for item in selected]
         canonical_version_ids = sorted(version_ids)
+        source_captures = None
+        if request.source_captures is not None:
+            required_market_symbols = list(
+                dict.fromkeys(
+                    symbol
+                    for group in selected
+                    for symbol in [
+                        *list(group.symbols or []),
+                        *list(group.benchmark_symbols or []),
+                    ]
+                )
+            )
+            market_coverage = getattr(bar_source, "assert_covers", None)
+            options_coverage = getattr(options_source, "assert_covers", None)
+            if not callable(market_coverage) or not callable(options_coverage):
+                raise ValueError("source_captures 未绑定到只读 sidecar adapters")
+            market_coverage(required_market_symbols)
+            options_coverage(list(self.settings.options_collection_symbol_list))
+            source_captures = {
+                "market": bar_source.capture.provenance(),
+                "options": options_source.capture.provenance(),
+            }
         intent = request.request_intent_id or (
             f"scheduled:{trading_date.isoformat()}:{','.join(canonical_version_ids)}"
             if request.trigger_mode == "scheduled"
@@ -366,25 +453,31 @@ class ObservationRunService:
                 "group_version_ids": canonical_version_ids,
                 "universe_revision_id": universe_revision_id,
                 "universe_freshness": universe_freshness,
+                "source_captures": source_captures,
+                "collection_plan_id": request.collection_plan_id,
             }
         )
         existing = self.repository.get_by_idempotency(idempotency_key)
+        run = None
         if existing is not None:
-            return self.repository.run_response(existing)
+            if existing.status != "failed":
+                return self.repository.run_response(existing)
+            run = self.repository.restart_failed_run(existing)
 
         try:
-            run = self.repository.create_run(
-                run_id=str(uuid4()),
-                idempotency_key=idempotency_key,
-                trigger_mode=request.trigger_mode,
-                trading_date=trading_date,
-                cutoff_time=cutoff,
-                group_ids=[item.group_id for item in selected],
-                group_version_ids=version_ids,
-                universe_revision_id=universe_revision_id,
-                universe_freshness=universe_freshness,
-                universe_source_url=universe_source_url,
-            )
+            if run is None:
+                run = self.repository.create_run(
+                    run_id=str(uuid4()),
+                    idempotency_key=idempotency_key,
+                    trigger_mode=request.trigger_mode,
+                    trading_date=trading_date,
+                    cutoff_time=cutoff,
+                    group_ids=[item.group_id for item in selected],
+                    group_version_ids=version_ids,
+                    universe_revision_id=universe_revision_id,
+                    universe_freshness=universe_freshness,
+                    universe_source_url=universe_source_url,
+                )
         except IntegrityError:
             # Two scheduled/manual requests can pass the read-before-create
             # check at the same time.  The unique idempotency key is the
@@ -555,6 +648,8 @@ class ObservationRunService:
                         }
                     ),
                     "group_version_ids": sorted(version_ids),
+                    "source_captures": source_captures,
+                    "collection_plan_id": request.collection_plan_id,
                 },
             )
             payload = {
@@ -568,6 +663,8 @@ class ObservationRunService:
                 "options": options_payload,
                 "options_alignment": options_alignment,
                 "options_collection": options_collection,
+                "source_captures": source_captures,
+                "collection_plan_id": request.collection_plan_id,
                 "universe": {
                     "revision_id": universe_revision_id,
                     "freshness": universe_freshness,

@@ -12,12 +12,18 @@ from app.core.config import Settings
 from app.core.errors import AppError
 from app.decision_harness.cross_section import CrossSectionService
 from app.integrations.moomoo import OpenDMarketAdapter
+from app.integrations.sidecar_captures import (
+    SidecarCaptureStore,
+    SidecarMarketCaptureAdapter,
+    SidecarOptionsCaptureAdapter,
+)
 from app.repositories.observation import ObservationGroupRepository, ObservationRepository
 from app.schemas.observation import (
     ObservationGroupCreateRequest,
     ObservationGroupDetailResponse,
     ObservationGroupResponse,
     ObservationGroupSyncResponse,
+    ObservationCollectionPlanResponse,
     ObservationRunCreateRequest,
     ObservationOptionsResponse,
     ObservationRunResponse,
@@ -142,6 +148,51 @@ def create_observation_run(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> ObservationRunResponse:
+    adapter = None
+    options_adapter = None
+    if payload.source_captures is not None:
+        if payload.trigger_mode != "scheduled":
+            raise AppError(
+                "source_captures 仅允许用于 scheduled Observation Run",
+                code="observation_source_captures_invalid",
+                status_code=422,
+            )
+        if payload.trading_date is None:
+            raise AppError(
+                "sidecar Observation Run 必须显式提供 trading_date",
+                code="observation_source_captures_invalid",
+                status_code=422,
+            )
+        if not payload.collection_plan_id or not payload.group_ids or not payload.group_version_ids:
+            raise AppError(
+                "sidecar Observation Run 必须绑定 collection_plan_id、group_ids 和 group_version_ids",
+                code="observation_collection_plan_required",
+                status_code=422,
+            )
+        try:
+            store = SidecarCaptureStore(
+                settings.sidecar_capture_database_path,
+                market_timezone=settings.market_timezone,
+            )
+            market_capture, options_capture = store.load_pair(
+                payload.source_captures,
+                trading_date=payload.trading_date,
+            )
+            adapter = SidecarMarketCaptureAdapter(market_capture)
+            options_adapter = SidecarOptionsCaptureAdapter(options_capture)
+        except ValueError as exc:
+            raise AppError(
+                str(exc), code="observation_source_captures_invalid", status_code=422
+            ) from exc
+    elif (
+        payload.trigger_mode == "scheduled"
+        and settings.observation_scheduled_require_source_captures
+    ):
+        raise AppError(
+            "scheduled Observation Run 必须提供已校验的 sidecar source_captures",
+            code="observation_source_captures_required",
+            status_code=422,
+        )
     universe_sync: dict[str, Any] | None = None
     if payload.trigger_mode == "scheduled" and not payload.universe_revision_id:
         # The scheduler normally supplies the revision returned by its
@@ -155,36 +206,59 @@ def create_observation_run(
         except ValueError as exc:
             raise AppError(str(exc), code="observation_group_sync_invalid", status_code=422) from exc
     _ensure_groups(db, settings)
-    collection_coordinator = (
-        MoomooCollectionCoordinator(settings) if settings.moomoo_enabled else None
-    )
-    history_admission = (
-        HistoryAdmission(db, settings, rate_limiter=collection_coordinator)
-        if settings.moomoo_enabled
-        else None
-    )
-    adapter = None
-    options_adapter = None
+    run_service = ObservationRunService(db, settings)
+    if payload.source_captures is not None:
+        try:
+            plan = run_service.collection_plan(
+                payload.trading_date,
+                universe_revision_id=payload.universe_revision_id,
+            )
+        except ValueError as exc:
+            raise AppError(
+                str(exc), code="observation_collection_plan_invalid", status_code=409
+            ) from exc
+        if (
+            payload.collection_plan_id != plan["plan_id"]
+            or payload.group_ids != plan["group_ids"]
+            or payload.group_version_ids != plan["group_version_ids"]
+        ):
+            raise AppError(
+                "collection plan 已变化，请重新同步并采集",
+                code="observation_collection_plan_conflict",
+                status_code=409,
+            )
+    use_sidecar_captures = payload.source_captures is not None
+    collection_coordinator = None
+    history_admission = None
     calendar_source = None
     try:
-        adapter = _market_adapter(
-            settings,
-            history_admission=history_admission,
-            rate_limiter=collection_coordinator,
-        )
-        if adapter is not None:
-            calendar_source = build_moomoo_calendar(adapter, settings.market_calendar)
-            if history_admission is not None:
-                history_admission.bind_calendar_source(calendar_source)
-        options_adapter = OptionsCollectionService.build_adapter(
-            settings,
-            rate_limiter=collection_coordinator,
-        )
-        result = ObservationRunService(
-            db,
-            settings,
-            calendar_source=calendar_source,
-        ).create_run(
+        if not use_sidecar_captures:
+            collection_coordinator = (
+                MoomooCollectionCoordinator(settings) if settings.moomoo_enabled else None
+            )
+            history_admission = (
+                HistoryAdmission(db, settings, rate_limiter=collection_coordinator)
+                if settings.moomoo_enabled
+                else None
+            )
+            adapter = _market_adapter(
+                settings,
+                history_admission=history_admission,
+                rate_limiter=collection_coordinator,
+            )
+            if adapter is not None:
+                calendar_source = build_moomoo_calendar(adapter, settings.market_calendar)
+                if history_admission is not None:
+                    history_admission.bind_calendar_source(calendar_source)
+            options_adapter = OptionsCollectionService.build_adapter(
+                settings,
+                rate_limiter=collection_coordinator,
+            )
+        if calendar_source is not None:
+            run_service = ObservationRunService(
+                db, settings, calendar_source=calendar_source
+            )
+        result = run_service.create_run(
             payload,
             bar_source=adapter,
             options_source=options_adapter,
@@ -292,3 +366,24 @@ def get_observation_run(
     if model is None:
         raise AppError("找不到 Observation Run", code="observation_run_not_found", status_code=404)
     return ObservationRunResponse(**ObservationRepository.run_response(model))
+
+
+@router.get("/collection-plan", response_model=ObservationCollectionPlanResponse)
+def get_observation_collection_plan(
+    trading_date: date = Query(...),
+    universe_revision_id: str | None = Query(default=None, max_length=36),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> ObservationCollectionPlanResponse:
+    """Return the immutable collection scope without collecting or syncing."""
+
+    try:
+        result = ObservationRunService(db, settings).collection_plan(
+            trading_date,
+            universe_revision_id=universe_revision_id,
+        )
+    except ValueError as exc:
+        raise AppError(
+            str(exc), code="observation_collection_plan_invalid", status_code=409
+        ) from exc
+    return ObservationCollectionPlanResponse(**result)

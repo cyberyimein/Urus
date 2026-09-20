@@ -28,6 +28,8 @@
 - `services/scheduler.py`：由本服务自身驱动的定时/收市后任务和盘中期权任务边界；
 - `storage/sqlite.py` 与 `contracts.py`：原始数据 SQLite 落盘和带 schema version 的消费者契约。
 
+Eoflora EOD 输出会在消费者边界清洗 provider 的零/缺失 IV：有效 Moomoo IV 保留；其余仅在有效 bid/ask 中价满足模型可解条件时，用带版本和参数来源的 Black–Scholes 近似反解 IV、Delta 和 Gamma；无法可靠反解的合约过滤并计入质量摘要。原始 provider 响应不被覆盖。
+
 启动前必须提供被忽略的本地任务配置；缺失配置会直接失败。可用 `urus-moomoo validate --config <local.toml>` 校验，连接 OpenD 后用 `urus-moomoo run-once --config <local.toml>` 执行一次启用任务，或用 `urus-moomoo schedule --config <local.toml>` 启动独立调度器。调度器用 Moomoo 交易日判断是否开市，用 exchange calendar 计算收市时间；任务的 operation、标的、时刻、收市后延迟和采集参数只来自本地配置。
 
 ## 尚未迁移

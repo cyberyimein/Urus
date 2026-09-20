@@ -161,6 +161,8 @@ common+=(
     --env "INTRADAY_OPTIONS_DATABASE_URL=sqlite:////data/intraday_options/intraday_options-v2.db"
     --env "INTRADAY_OPTIONS_RAW_PAYLOAD_DIR=/data/intraday_options/raw"
     --env "INTRADAY_OPTIONS_BACKUP_DIR=/backups/intraday_options"
+    --env "OBSERVATION_SCHEDULED_REQUIRE_SOURCE_CAPTURES=true"
+    --env "SIDECAR_CAPTURE_DATABASE_PATH=/data/urus-moomoo/collector.sqlite"
     --volume "$data_dir:/data"
     --volume "$backup_dir:/backups"
 )
