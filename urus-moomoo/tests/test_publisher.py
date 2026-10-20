@@ -292,3 +292,62 @@ def test_default_plan_loader_fetches_collection_plan(monkeypatch, tmp_path: Path
             7,
         ),
     ]
+
+
+def test_recovery_only_verifies_new_captures_and_rechecks_on_restart(tmp_path, monkeypatch):
+    from datetime import UTC
+    from urus_moomoo.storage.sqlite import CollectorStore
+    store = CollectorStore(tmp_path / 'captures.sqlite')
+    contract = _contract('instrument_cards', 'market-1')
+    store.write_raw('market-1', 'instrument_cards', contract, schema_version=contract['schema_version'])
+    store.mark_scheduler_completed('market-post-close', datetime(2026, 9, 8, 21, 30, tzinfo=UTC), capture_id='market-1')
+    calls = []
+    verify = publisher_module._verified_content_sha256
+    def tracked(value):
+        calls.append(value['capture_id'])
+        return verify(value)
+    monkeypatch.setattr(publisher_module, '_verified_content_sha256', tracked)
+    def build():
+        return ObservationPublisher(api_url='http://unused', timeout_seconds=1,
+            state_path=tmp_path / 'publisher.sqlite', market_timezone='America/New_York',
+            capture_reader=store.read_raw, capture_database_path=store.path)
+    # CollectorStore's connection is committed before recovery reads it.
+    publisher = build()
+    try:
+        publisher.discover_completed_captures()
+        publisher.discover_completed_captures()
+        assert calls == ['market-1']
+        second = _contract('options_snapshot', 'options-1')
+        store.write_raw('options-1', 'options_snapshot', second, schema_version=second['schema_version'])
+        store.mark_scheduler_completed('options-snapshot-post-close', datetime(2026, 9, 8, 21, 35, tzinfo=UTC), capture_id='options-1')
+        publisher.discover_completed_captures()
+        assert calls == ['market-1', 'options-1']
+    finally:
+        publisher.close()
+    publisher = build()
+    publisher.close()
+    store.close()
+    assert len(calls) == 4
+
+
+def test_retry_failure_does_not_starve_later_date(tmp_path, monkeypatch):
+    publisher = ObservationPublisher(api_url='http://unused', timeout_seconds=1,
+        state_path=tmp_path / 'publisher.sqlite', market_timezone='UTC', capture_reader=lambda _: None)
+    for day in ['2026-09-08', '2026-09-09']:
+        publisher.connection.execute('INSERT INTO observation_publish_captures VALUES (?, ?, ?, ?, ?)',
+                                     (day, 'instrument_cards', day, 'hash', 'now'))
+    publisher.connection.commit()
+    calls = []
+    def publish(day):
+        calls.append(day)
+        if day == '2026-09-08':
+            raise TimeoutError('offline')
+        return 'run-2'
+    monkeypatch.setattr(publisher, 'publish_if_ready', publish)
+    try:
+        assert publisher.retry_pending() == []
+        assert publisher.retry_pending() == ['run-2']
+        assert publisher.retry_pending() == []
+        assert calls == ['2026-09-08', '2026-09-09']
+    finally:
+        publisher.close()

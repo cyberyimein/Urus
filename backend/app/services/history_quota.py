@@ -69,7 +69,10 @@ def _walk_detail(value: object) -> Iterable[str]:
                     for item in child:
                         if isinstance(item, str):
                             yield normalize_symbol(item)
-            yield from _walk_detail(child)
+            elif str(key).lower() in {
+                "detail_list", "detaillist", "details", "items", "codes", "symbols",
+            }:
+                yield from _walk_detail(child)
     elif isinstance(value, (list, tuple, set)):
         for item in value:
             yield from _walk_detail(item)

@@ -2,7 +2,9 @@
 
 Market-data collection and scheduling run in the independent ``urus-moomoo``
 container.  This supervisor intentionally owns only the API process and the
-database migration step.
+database migration step. The intraday event consumer is started only when its
+explicit feature flag is enabled; it reads existing captures without fetching
+market data.
 """
 
 from __future__ import annotations
@@ -128,6 +130,7 @@ def main() -> int:
 
     stop_requested = [False]
     api_process: subprocess.Popen[bytes] | None = None
+    event_process: subprocess.Popen[bytes] | None = None
 
     def request_shutdown(_signum: int, _frame: object) -> None:
         stop_requested[0] = True
@@ -145,10 +148,20 @@ def main() -> int:
             poll_seconds,
             stop_requested,
         )
+        if os.environ.get("INTRADAY_EVENTS_ENABLED", "false").strip().lower() in {
+            "true", "1", "yes", "on",
+        }:
+            event_process = _start([
+                uv, "run", "python", "-m", "app.intraday.event_consumer", "--watch",
+            ])
 
         while not stop_requested[0]:
             if api_process.poll() is not None:
                 raise RuntimeError(f"Urus API exited unexpectedly (code={api_process.returncode})")
+            if event_process is not None and event_process.poll() is not None:
+                raise RuntimeError(
+                    f"Intraday event consumer exited unexpectedly (code={event_process.returncode})"
+                )
             time.sleep(poll_seconds)
         return 0
     except KeyboardInterrupt:
@@ -157,6 +170,7 @@ def main() -> int:
         print(f"Urus API container supervisor failed: {exc}", file=sys.stderr, flush=True)
         return 1
     finally:
+        _terminate(event_process, shutdown_timeout)
         _terminate(api_process, shutdown_timeout)
 
 

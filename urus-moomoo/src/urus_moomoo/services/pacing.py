@@ -47,18 +47,31 @@ class CollectionCoordinator:
         handle = self.path.open("a+", encoding="utf-8")
         try:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-            handle.seek(0)
-            try:
-                payload = json.loads(handle.read() or "{}")
-            except json.JSONDecodeError:
-                payload = {}
-            timestamps = payload.get("next_allowed_at", {}) if isinstance(payload, dict) else {}
-            self._state = {
-                str(key): str(value)
-                for key, value in timestamps.items()
-                if isinstance(key, str) and isinstance(value, str)
-            }
-            self._handle = handle
+            self._activate_handle(handle)
+        except Exception:
+            handle.close()
+            raise
+
+    def acquire_with_timeout(self, timeout_seconds: float) -> bool:
+        """Try to acquire the shared lock without waiting past a task budget."""
+
+        if self._handle is not None:
+            return True
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        handle = self.path.open("a+", encoding="utf-8")
+        deadline = _utc_now().timestamp() + max(0.0, float(timeout_seconds))
+        try:
+            while True:
+                try:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    self._activate_handle(handle)
+                    return True
+                except BlockingIOError:
+                    remaining = deadline - _utc_now().timestamp()
+                    if remaining <= 0:
+                        handle.close()
+                        return False
+                    self._sleeper(min(0.05, remaining))
         except Exception:
             handle.close()
             raise
@@ -71,6 +84,7 @@ class CollectionCoordinator:
         now: datetime | None = None,
         sleeper: Callable[[float], None] | None = None,
         minimum_wait_seconds: float = 0.0,
+        latest_start_at: datetime | None = None,
     ) -> float:
         self.acquire()
         current = _as_utc(now or _utc_now())
@@ -80,12 +94,30 @@ class CollectionCoordinator:
             (next_allowed - current).total_seconds(),
             float(minimum_wait_seconds),
         )
+        if latest_start_at is not None and current + timedelta(seconds=wait_seconds) > _as_utc(
+            latest_start_at
+        ):
+            return float("inf")
         reserved_at = max(current, next_allowed) + timedelta(seconds=max(0.01, interval_seconds))
         self._state[rate_class] = reserved_at.isoformat()
         self._persist()
         if wait_seconds:
             (sleeper or self._sleeper)(wait_seconds)
         return wait_seconds
+
+    def _activate_handle(self, handle: IO[str]) -> None:
+        handle.seek(0)
+        try:
+            payload = json.loads(handle.read() or "{}")
+        except json.JSONDecodeError:
+            payload = {}
+        timestamps = payload.get("next_allowed_at", {}) if isinstance(payload, dict) else {}
+        self._state = {
+            str(key): str(value)
+            for key, value in timestamps.items()
+            if isinstance(key, str) and isinstance(value, str)
+        }
+        self._handle = handle
 
     def close(self) -> None:
         handle = self._handle

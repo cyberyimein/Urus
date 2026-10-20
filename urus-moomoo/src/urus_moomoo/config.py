@@ -12,6 +12,8 @@ ALLOWED_OPERATIONS = {
     "capital_flow_day",
     "options_snapshot",
     "capture_intraday",
+    "capture_intraday_equities",
+    "maintain_intraday_equities",
     "capture_session_close",
     "capture_eod_options",
 }

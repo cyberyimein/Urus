@@ -345,7 +345,7 @@ def test_sqlite_storage_and_contract_boundary(tmp_path: Path):
         quota.capture(lambda: {"available": True, "used": 1, "remain": 2, "total": 3})
         assert store.latest_quota_snapshot() is not None
         assert store.read_raw("capture-1")["kind"] == "daily"
-    assert SCHEMA_VERSION == 3
+    assert SCHEMA_VERSION == 5
 
 
 def test_canonical_intraday_store_materializes_consumer_ready_snapshot(tmp_path: Path):

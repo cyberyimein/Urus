@@ -1,0 +1,37 @@
+{
+  "checked_at": "2026-10-16T07:27:00.868966-04:00",
+  "groups": [
+    {
+      "complete": true,
+      "elapsed_seconds": 12.661,
+      "failed": [],
+      "group": 1,
+      "history_requests": 15,
+      "history_rows": 5850,
+      "quote_rows": 46,
+      "symbols": 15
+    },
+    {
+      "complete": true,
+      "elapsed_seconds": 11.818,
+      "failed": [],
+      "group": 2,
+      "history_requests": 16,
+      "history_rows": 6240,
+      "symbols": 16
+    },
+    {
+      "complete": true,
+      "elapsed_seconds": 11.291,
+      "failed": [],
+      "group": 3,
+      "history_requests": 15,
+      "history_rows": 5850,
+      "symbols": 15
+    }
+  ],
+  "history_date": "2026-10-15",
+  "new_codes": 0,
+  "remain": 54,
+  "used": 46
+}

@@ -105,6 +105,30 @@ max_dte = 45
     assert task.params == {"band_percent": 10, "max_dte": 45}
 
 
+def test_load_config_accepts_intraday_equity_maintenance_operation(tmp_path: Path) -> None:
+    path = tmp_path / "tasks.toml"
+    path.write_text(
+        """
+[runtime]
+timezone = "America/New_York"
+
+[[tasks]]
+name = "equity-maintenance"
+schedule = "pre-open"
+operation = "maintain_intraday_equities"
+delay_seconds = 5400
+symbols = ["SPY"]
+""",
+        encoding="utf-8",
+    )
+
+    task = load_config(path).tasks[0]
+
+    assert task.operation == "maintain_intraday_equities"
+    assert task.schedule == "pre-open"
+    assert task.delay_seconds == 5400
+
+
 def test_load_config_keeps_private_publisher_settings(tmp_path: Path) -> None:
     path = tmp_path / "tasks.toml"
     path.write_text(

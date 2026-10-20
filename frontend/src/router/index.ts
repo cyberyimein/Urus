@@ -8,6 +8,7 @@ import ObservationRunView from '@/views/ObservationRunView.vue'
 import IndicatorCrossSectionView from '@/views/IndicatorCrossSectionView.vue'
 import StrategyCrossSectionView from '@/views/StrategyCrossSectionView.vue'
 import RemoteDecisionRunView from '@/views/RemoteDecisionRunView.vue'
+import IntradayObservationView from '@/views/IntradayObservationView.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -20,6 +21,7 @@ export const router = createRouter({
     // path used by existing clients and bookmarks.
     { path: '/decision-runs/:localRunId', alias: '/remote-decisions/:localRunId', name: 'remote-decision-run', component: RemoteDecisionRunView },
     { path: '/observation-runs', name: 'observation-runs', component: ObservationRunView },
+    { path: '/intraday', name: 'intraday-observation', component: IntradayObservationView },
     // Indicator and strategy surfaces intentionally use different route
     // components. They share the visual implementation, but must not share a
     // mounted component tree when moving between the two workspaces.

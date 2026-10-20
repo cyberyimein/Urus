@@ -57,6 +57,7 @@ onMounted(async () => {
       <RouterLink to="/indicators" active-class="active">指标扫描</RouterLink>
       <RouterLink to="/strategies" active-class="active">策略扫描</RouterLink>
       <RouterLink to="/observation-runs" active-class="active">收盘观测</RouterLink>
+      <RouterLink to="/intraday" active-class="active">日内观察</RouterLink>
       <RouterLink to="/settings/universe" active-class="active">标的设置</RouterLink>
     </nav>
     <div

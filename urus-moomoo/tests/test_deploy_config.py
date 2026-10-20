@@ -31,7 +31,7 @@ def test_deploy_options_snapshot_matches_backend_symbol_policy(monkeypatch, tmp_
     }
     for key, value in values.items():
         monkeypatch.setenv(key, value)
-    monkeypatch.delenv("URUS_INTERNAL_API_URL", raising=False)
+    monkeypatch.setenv("URUS_INTERNAL_API_URL", "http://192.168.65.1:7777")
 
     config = _render_deploy_config(monkeypatch, tmp_path)
     tasks = {task.name: task for task in config.tasks}
@@ -45,4 +45,4 @@ def test_deploy_options_snapshot_matches_backend_symbol_policy(monkeypatch, tmp_
         "NVDA",
     )
     assert tasks["options-intraday"].symbols == ("SPY", "QQQ", "IWM")
-    assert config.publisher["api_url"] == "http://192.168.67.1:7777"
+    assert config.publisher["api_url"] == "http://192.168.65.1:7777"

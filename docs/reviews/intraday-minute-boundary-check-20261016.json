@@ -1,0 +1,44 @@
+{
+  "schema_version": "urus.minute-boundary-check.v1",
+  "checked_date": "2026-10-16",
+  "provider": "moomoo_openapi",
+  "sdk": "futu-api in current urus-moomoo image",
+  "market": "US",
+  "session": "regular",
+  "symbol": "SPY",
+  "evidence_trading_date": "2026-10-15",
+  "interval": "K_1M",
+  "comparison_interval": "K_5M",
+  "adjustment": "NONE",
+  "role": "end",
+  "minute_rows": 390,
+  "minute_first_local": "2026-10-15 09:31:00",
+  "minute_last_local": "2026-10-15 16:00:00",
+  "five_minute_rows": 78,
+  "five_minute_first_local": "2026-10-15 09:35:00",
+  "five_minute_last_local": "2026-10-15 16:00:00",
+  "aggregation_interval": "(T-5min,T]",
+  "matches": {
+    "open": 78,
+    "high": 78,
+    "low": 78,
+    "close": 78,
+    "volume_exact": 0
+  },
+  "price_tolerance": "max(1e-4, abs(provider_value)*1e-8)",
+  "volume_samples": [
+    {
+      "aggregate": 1469110,
+      "provider_5m": 1469111
+    },
+    {
+      "aggregate": 1042332,
+      "provider_5m": 1042334
+    }
+  ],
+  "method": "Read-only actual provider comparison under collector lock; four existing-symbol history calls; no writes to production datasets.",
+  "scope_limitations": [
+    "SPY regular session only; other symbols, extended sessions and half days not directly compared.",
+    "Raw full provider frames were not retained; this is a frozen comparison result, not an original raw capture."
+  ]
+}

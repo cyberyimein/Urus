@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from .config import load_config
+from .collection_runner import build_collection_runner
 from .integrations.moomoo import OpenDMarketAdapter
 from .integrations.moomoo_intraday_options import MoomooIntradayOptionsAdapter
 from .integrations.moomoo_options import MoomooOptionsAdapter
 from .publisher import ObservationPublisher
+from .intraday_pool import IntradayPoolPlanLoader
 from .runtime import CollectorRuntime
 from .services.calendar import build_moomoo_calendar
 from .services.scheduler import CollectorScheduler
@@ -22,7 +24,10 @@ class _Providers:
         self.options = options
 
     def __getattr__(self, name: str) -> Any:
-        target = self.options if name.startswith(("options_", "capture_")) else self.market
+        if name == "capture_intraday_equities":
+            target = self.market
+        else:
+            target = self.options if name.startswith(("options_", "capture_")) else self.market
         if target is None:
             raise AttributeError(name)
         return getattr(target, name)
@@ -38,10 +43,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "command",
         nargs="?",
-        choices=("validate", "run-once", "schedule"),
+        choices=("validate", "preflight", "run-once", "schedule", "recover-close", "audit"),
         default="validate",
     )
     parser.add_argument("--config", help="Path to the local-only task TOML")
+    parser.add_argument("--date", type=date.fromisoformat)
+    parser.add_argument("--start", type=date.fromisoformat)
+    parser.add_argument("--end", type=date.fromisoformat)
+    parser.add_argument("--apply", action="store_true", help="Write recovered close data; default is preview")
     args = parser.parse_args(argv)
     config = load_config(args.config)
     enabled = sum(task.enabled for task in config.tasks)
@@ -49,32 +58,53 @@ def main(argv: list[str] | None = None) -> int:
         f"urus-moomoo config ok: {enabled}/{len(config.tasks)} tasks enabled; "
         f"output={Path(config.output_dir)}"
     )
+    if args.command in {"recover-close", "audit"}:
+        import json
+        from .recovery import recover_close, audit_dates
+
+        if args.command == "recover-close":
+            if args.date is None:
+                parser.error("recover-close requires --date")
+            result = recover_close(config, args.date, apply=args.apply)
+        else:
+            if args.start is None or args.end is None:
+                parser.error("audit requires --start and --end (range when tasks were enabled)")
+            result = audit_dates(config, args.start, args.end)
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+        return 0
+    if args.command == "preflight":
+        from .preflight import run_preflight
+
+        result = run_preflight(config)
+        print(
+            "observation preflight ok: "
+            f"date={result['trading_date']} groups={result['group_count']} "
+            f"market_symbols={result['market_symbol_count']} "
+            f"options_symbols={result['options_symbol_count']}"
+        )
+        return 0
     if args.command != "validate":
         runtime = _build_runtime(config)
         publisher = ObservationPublisher.from_config(config, capture_reader=runtime.store.read_raw)
-
-        def collect_and_publish(task, scheduled_at):
-            if publisher is not None:
-                resumed_capture_id = publisher.resume_if_ready(task, scheduled_at)
-                if resumed_capture_id is not None:
-                    return {
-                        "scheduled_at": scheduled_at.isoformat(),
-                        "contract": {"capture_id": resumed_capture_id},
-                        "completed": True,
-                    }
-                task = publisher.prepare_task(task, scheduled_at)
-            if task.operation.strip() == "instrument_cards":
-                # The publisher freezes the current Universe immediately before
-                # collection.  Extend the request-time history scope to that
-                # exact plan; otherwise dynamically discovered symbols are
-                # rejected as outside_scope by HistoryAdmission.
-                prepare = getattr(runtime.history_admission, "prepare_symbols", None)
-                if callable(prepare):
-                    prepare(task.symbols)
-            result = runtime.collect_task(task, scheduled_at)
-            if publisher is not None and not publisher.observe(task, scheduled_at, result):
-                result["completed"] = False
-            return result
+        publisher_settings = dict(config.publisher or {})
+        api_url = publisher.api_url if publisher is not None else str(
+            publisher_settings.get("api_url", "")
+        ).strip()
+        api_timeout = float(publisher_settings.get("timeout_seconds", 15.0))
+        pool_plan_loader = IntradayPoolPlanLoader(
+            api_url=api_url,
+            # Plan reads run inside the due-task runner, after Eoflora's
+            # attempts in the tick. Keep the cold-start read bounded so it
+            # cannot consume a complete equity shard window.
+            timeout_seconds=min(api_timeout, 3.0),
+            store=runtime.store,
+        )
+        collect_and_publish = build_collection_runner(
+            runtime,
+            publisher,
+            pool_plan_loader,
+            market_timezone=config.market_timezone,
+        )
 
         try:
             if args.command == "run-once":
@@ -87,17 +117,9 @@ def main(argv: list[str] | None = None) -> int:
                     runtime.provider, config.exchange_calendar, cache_path=config.calendar_cache
                 )
 
-                def on_idle() -> None:
-                    # A prior API outage must not depend on the scheduler's
-                    # narrow market catch-up window.  Retry exact, immutable
-                    # capture pairs independently; collection errors remain
-                    # isolated so the calendar loop stays alive.
+                def on_quiet() -> None:
                     if publisher is not None:
-                        try:
-                            publisher.retry_pending()
-                        except Exception as exc:
-                            print(f"observation publication retry deferred: {exc}")
-                    runtime.coordinator.close()
+                        publisher.retry_pending()
 
                 CollectorScheduler(
                     config.tasks,
@@ -108,7 +130,10 @@ def main(argv: list[str] | None = None) -> int:
                     catch_up_seconds=config.catch_up_seconds,
                     intraday_catch_up_seconds=config.intraday_catch_up_seconds,
                     market_timezone=config.market_timezone,
-                    on_idle=on_idle,
+                    on_idle=runtime.coordinator.close,
+                    on_quiet=on_quiet,
+                    quiet_budget_seconds=(3 * publisher.timeout_seconds + config.poll_seconds + 5
+                                          if publisher else 45),
                 ).run_forever(poll_seconds=config.poll_seconds)
         finally:
             if publisher is not None:

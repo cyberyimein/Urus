@@ -5,6 +5,8 @@ from dataclasses import replace
 from datetime import UTC, datetime
 import hashlib
 import json
+import logging
+import time
 from pathlib import Path
 import sqlite3
 from typing import Any
@@ -88,6 +90,8 @@ class ObservationPublisher:
             """
         )
         self.connection.commit()
+        self._verified_slots = {}
+        self._retry_after = {}
         self.discover_completed_captures()
 
     @classmethod
@@ -290,7 +294,7 @@ class ObservationPublisher:
         return run_id
 
     def retry_pending(self) -> list[str]:
-        """Discover exact completed v2 slots and retry every unpublished ready pair."""
+        """Discover new completed v2 slots and retry one eligible unpublished date."""
 
         self.discover_completed_captures()
         dates = [
@@ -307,9 +311,18 @@ class ObservationPublisher:
         ]
         published = []
         for trading_date in dates:
-            run_id = self.publish_if_ready(trading_date)
-            if run_id is not None:
-                published.append(run_id)
+            if time.monotonic() < self._retry_after.get(trading_date, 0):
+                continue
+            self._retry_after[trading_date] = time.monotonic() + 60
+            try:
+                run_id = self.publish_if_ready(trading_date)
+                if run_id is not None:
+                    published.append(run_id)
+            except Exception:
+                logging.getLogger(__name__).exception("publication deferred: date=%s", trading_date)
+            # One date per idle tick bounds API outage latency. Other dates get
+            # their turn while this one cools down; no worker or queue needed.
+            break
         return published
 
     def discover_completed_captures(self) -> None:
@@ -323,17 +336,25 @@ class ObservationPublisher:
         try:
             rows = connection.execute(
                 """
-                SELECT s.task_name, s.capture_id, r.payload_json
+                SELECT s.task_name, s.capture_id
                 FROM scheduler_runs s
                 JOIN raw_captures r ON r.capture_id = s.capture_id
                 WHERE s.task_name IN ('market-post-close', 'options-snapshot-post-close')
                   AND r.schema_version = 'urus.moomoo.capture.v2'
                 """
             ).fetchall()
+            fresh = []
+            for row in rows:
+                key = (str(row["task_name"]), str(row["capture_id"]))
+                if key not in self._verified_slots:
+                    raw = connection.execute(
+                        "SELECT payload_json FROM raw_captures WHERE capture_id = ?", (key[1],)
+                    ).fetchone()
+                    fresh.append({"task_name": key[0], "capture_id": key[1],
+                                  "payload_json": raw["payload_json"]})
         finally:
             connection.close()
-        recovered: dict[tuple[str, str], tuple[str, str]] = {}
-        for row in rows:
+        for row in fresh:
             contract = _stored_contract(row)
             kind = str(contract.get("kind") or "")
             task_name = str(row["task_name"])
@@ -347,8 +368,13 @@ class ObservationPublisher:
             ):
                 continue
             digest = _verified_content_sha256(contract)
+            self._verified_slots[(task_name, str(row["capture_id"]))] = (
+                trading_date, kind, str(row["capture_id"]), digest
+            )
+        recovered: dict[tuple[str, str], tuple[str, str]] = {}
+        for trading_date, kind, capture_id, digest in self._verified_slots.values():
             key = (trading_date, kind)
-            value = (str(row["capture_id"]), digest)
+            value = (capture_id, digest)
             if key in recovered and recovered[key] != value:
                 raise RuntimeError(f"ambiguous completed captures for {trading_date} {kind}")
             recovered[key] = value
@@ -385,22 +411,41 @@ class ObservationPublisher:
         return plan
 
     def _fetch_plan(self, trading_date: str) -> Mapping[str, Any]:
-        sync_status, sync = self.post(
-            f"{self.api_url}/api/observation/groups/sync", b"{}", self.timeout_seconds
+        return fetch_collection_plan(
+            self.api_url, trading_date, self.timeout_seconds, post=self.post, get=_get_json
         )
-        revision = str(sync.get("universe_revision_id") or "")
-        if sync_status != 200 or not revision:
-            raise RuntimeError("Urus Universe sync failed before collection")
-        query = urlencode({"trading_date": trading_date, "universe_revision_id": revision})
-        status, plan = _get_json(
-            f"{self.api_url}/api/observation/collection-plan?{query}", self.timeout_seconds
-        )
-        if status != 200:
-            raise RuntimeError(f"Urus collection plan failed: HTTP {status}")
-        return plan
 
     def close(self) -> None:
         self.connection.close()
+
+
+def fetch_collection_plan(
+    api_url: str,
+    trading_date: str,
+    timeout_seconds: float,
+    *,
+    post: Callable[[str, bytes, float], tuple[int, Mapping[str, Any]]] | None = None,
+    get: Callable[[str, float], tuple[int, Mapping[str, Any]]] | None = None,
+) -> Mapping[str, Any]:
+    """Use the same sync and plan requests for collection and deployment checks."""
+
+    post = post or _post_json
+    get = get or _get_json
+    sync_status, sync = post(
+        f"{api_url.rstrip('/')}/api/observation/groups/sync", b"{}", timeout_seconds
+    )
+    revision = str(sync.get("universe_revision_id") or "")
+    if sync_status != 200 or not revision:
+        raise RuntimeError("Urus Universe sync failed before collection")
+    query = urlencode({"trading_date": trading_date, "universe_revision_id": revision})
+    status, plan = get(
+        f"{api_url.rstrip('/')}/api/observation/collection-plan?{query}", timeout_seconds
+    )
+    if status != 200:
+        raise RuntimeError(f"Urus collection plan failed: HTTP {status}")
+    if plan.get("universe_revision_id") != revision:
+        raise RuntimeError("Urus collection plan returned a different Universe Revision")
+    return plan
 
 
 def _stored_contract(row: Mapping[str, Any]) -> dict[str, Any]:

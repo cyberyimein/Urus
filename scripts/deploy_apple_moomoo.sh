@@ -56,10 +56,17 @@ set -a
 set +a
 
 # Apple Container does not currently provide reliable container-name DNS on
-# user-defined networks. Reach the published Urus API through the VM gateway
-# unless the private deployment environment provides an explicit URL.
+# user-defined networks. Reach the published Urus API through this network's
+# actual VM gateway unless the private environment provides an explicit URL.
+"$container_cli" system start >/dev/null 2>&1 || true
+if ! "$container_cli" network list | awk 'NR > 1 {print $1}' | grep -Fxq "$network"; then
+    "$container_cli" network create "$network" >/dev/null
+fi
 if [[ -z "${URUS_INTERNAL_API_URL:-}" ]]; then
-    export URUS_INTERNAL_API_URL="${URUS_APPLE_GATEWAY_URL:-http://192.168.67.1:7777}"
+    gateway=$("$container_cli" network inspect "$network" | python3 -c \
+        'import json, sys; print(json.load(sys.stdin)[0]["status"]["ipv4Gateway"])')
+    [[ -n "$gateway" ]] || { echo "missing gateway for $network" >&2; exit 1; }
+    export URUS_INTERNAL_API_URL="${URUS_APPLE_GATEWAY_URL:-http://$gateway:7777}"
 fi
 
 python3 - "$config" <<'PY'
@@ -96,7 +103,7 @@ market_timezone = os.environ.get("MARKET_TIMEZONE", "America/New_York").strip()
 fast_band = float(os.environ.get("INTRADAY_OPTIONS_FAST_BAND_PERCENT", "3"))
 structure_band = float(os.environ.get("INTRADAY_OPTIONS_STRUCTURE_BAND_PERCENT", "10"))
 urus_api_url = os.environ.get(
-    "URUS_INTERNAL_API_URL", "http://192.168.67.1:7777"
+    "URUS_INTERNAL_API_URL", ""
 ).strip()
 urus_api_timeout = float(os.environ.get("URUS_INTERNAL_API_TIMEOUT_SECONDS", "30"))
 
@@ -192,10 +199,6 @@ config.write_text(
 )
 PY
 
-"$container_cli" system start >/dev/null 2>&1 || true
-if ! "$container_cli" network list | awk 'NR > 1 {print $1}' | grep -Fxq "$network"; then
-    "$container_cli" network create "$network" >/dev/null
-fi
 "$container_cli" image load --input "$archive" || "$container_cli" image load -i "$archive"
 
 # Replace a previous planner instance, but leave the old Urus container intact
@@ -218,6 +221,14 @@ done
 if [[ "$healthy" != "1" ]]; then
     echo "urus-moomoo container did not stay running" >&2
     "$container_cli" logs "$container_name" 2>/dev/null || true
+    exit 1
+fi
+
+# Run through the publisher's sync and plan API path from inside the deployed
+# network. This collects no quotes and creates no Observation Run.
+if ! "$container_cli" exec "$container_name" python -m urus_moomoo.cli \
+    preflight --config /data/deploy/collection_tasks.local.toml; then
+    echo "urus-moomoo observation preflight failed" >&2
     exit 1
 fi
 

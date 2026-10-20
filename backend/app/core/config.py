@@ -88,6 +88,14 @@ class Settings(BaseSettings):
     # High-frequency option facts live in a dedicated store so multi-month
     # research growth cannot inflate or lock the operational Urus database.
     intraday_options_enabled: bool = False
+    # The intraday-equities read model remains opt-in while its local-only
+    # projection is being validated against sidecar capture contracts.
+    intraday_equities_enabled: bool = False
+    # The P4 evaluator is an explicit local consumer. Keep it opt-in so app
+    # startup and read-only GET endpoints never start a background worker.
+    intraday_events_enabled: bool = False
+    # P6 systematic risk is a read-only CTA-style proxy, disabled by default.
+    systematic_risk_enabled: bool = False
     intraday_options_database_url: str = (
         "sqlite:///./data/intraday_options/intraday_options-v2.db"
     )

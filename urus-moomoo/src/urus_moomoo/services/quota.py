@@ -10,6 +10,10 @@ from uuid import uuid4
 
 HISTORY_PROVIDER = "moomoo_openapi"
 HISTORY_QUOTA_KIND = "history_candlestick"
+_SYMBOL_DETAIL_KEYS = {"code", "symbol", "stock_code", "security_code"}
+_SYMBOL_DETAIL_CONTAINERS = {
+    "detail_list", "detaillist", "details", "items", "codes", "symbols",
+}
 
 
 class QuotaReader(Protocol):
@@ -51,24 +55,37 @@ def _integer(value: object) -> int | None:
 def _walk_detail(value: object) -> Iterable[str]:
     if isinstance(value, dict):
         for key, child in value.items():
-            if str(key).lower() in {"code", "symbol", "stock_code", "security_code"}:
+            normalized_key = str(key).strip().lower()
+            if normalized_key in _SYMBOL_DETAIL_KEYS:
                 if isinstance(child, str):
                     yield normalize_symbol(child)
                 elif isinstance(child, (list, tuple, set)):
                     for item in child:
                         if isinstance(item, str):
                             yield normalize_symbol(item)
-            yield from _walk_detail(child)
+            if (
+                normalized_key in _SYMBOL_DETAIL_CONTAINERS
+                and isinstance(child, (dict, list, tuple, set))
+            ):
+                if normalized_key in {"codes", "symbols"} and isinstance(
+                    child, (list, tuple, set)
+                ):
+                    for item in child:
+                        if isinstance(item, str):
+                            yield normalize_symbol(item)
+                yield from _walk_detail(child)
     elif isinstance(value, (list, tuple, set)):
         for item in value:
-            yield from _walk_detail(item)
-    elif isinstance(value, str) and ("." in value or value.isalpha()):
-        candidate = normalize_symbol(value)
-        if candidate and len(candidate) <= 16:
-            yield candidate
+            if isinstance(item, (dict, list, tuple, set)):
+                yield from _walk_detail(item)
 
 
 def detail_symbols(value: object) -> set[str]:
+    # Some OpenD responses expose the quota window directly as a list of
+    # symbols.  Accept that unambiguous shape while ignoring unlabelled
+    # strings nested among provider metadata and company names.
+    if isinstance(value, (list, tuple, set)) and all(isinstance(item, str) for item in value):
+        return {normalize_symbol(item) for item in value if normalize_symbol(item)}
     return {item for item in _walk_detail(value) if item}
 
 
@@ -287,6 +304,89 @@ class HistoryAdmission:
         self._admitted.add(normalized)
         self.service.mark_attempt(normalized, now=now)
         return {"admitted": True, "access_state": "admitted", "reason_code": None, "symbol": normalized}
+
+    def acquire_many(
+        self,
+        symbols: Iterable[str],
+        *,
+        now: datetime | None = None,
+    ) -> list[dict[str, object]]:
+        """Admit one bounded batch against a single quota snapshot."""
+
+        normalized_symbols = [normalize_symbol(symbol) for symbol in symbols]
+        if not normalized_symbols:
+            return []
+        if self.quota_reader is None:
+            return [
+                {
+                    "admitted": False,
+                    "access_state": "pending_quota",
+                    "reason_code": "quota_unavailable",
+                    "symbol": symbol,
+                }
+                for symbol in normalized_symbols
+            ]
+
+        snapshot = self.service.capture(self.quota_reader, now=now)
+        if not snapshot.get("available"):
+            return [
+                {
+                    "admitted": False,
+                    "access_state": "pending_quota",
+                    "reason_code": "quota_unavailable",
+                    "symbol": symbol,
+                }
+                for symbol in normalized_symbols
+            ]
+
+        remain = snapshot.get("remain")
+        total = snapshot.get("total")
+        reserve = self.service._reserve(total if isinstance(total, int) else None)
+        window = set(snapshot.get("window_symbols", []))
+        locally_spent = len(self._runtime_new_symbols - window)
+        decisions: list[dict[str, object]] = []
+        for symbol in normalized_symbols:
+            if symbol not in self.scope:
+                decision = {
+                    "admitted": False,
+                    "access_state": "pending_quota",
+                    "reason_code": "outside_scope",
+                    "symbol": symbol,
+                }
+            elif symbol in self._admitted:
+                decision = {
+                    "admitted": False,
+                    "access_state": "pending_quota",
+                    "reason_code": "duplicate_request",
+                    "symbol": symbol,
+                }
+            else:
+                consumes_new_quota = symbol not in window and symbol not in self._runtime_new_symbols
+                if consumes_new_quota and (
+                    not isinstance(remain, int)
+                    or reserve is None
+                    or remain - locally_spent <= reserve
+                ):
+                    decision = {
+                        "admitted": False,
+                        "access_state": "pending_quota",
+                        "reason_code": "history_quota_reserve",
+                        "symbol": symbol,
+                    }
+                else:
+                    if consumes_new_quota:
+                        self._runtime_new_symbols.add(symbol)
+                        locally_spent += 1
+                    self._admitted.add(symbol)
+                    self.service.mark_attempt(symbol, now=now)
+                    decision = {
+                        "admitted": True,
+                        "access_state": "admitted",
+                        "reason_code": None,
+                        "symbol": symbol,
+                    }
+            decisions.append(decision)
+        return decisions
 
     def mark_failure(self, symbol: str, message: str, *, now: datetime | None = None) -> None:
         self.service.mark_failure(symbol, message, now=now)

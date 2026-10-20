@@ -4,6 +4,7 @@ import { RouterLink } from 'vue-router'
 
 import { ApiError, api } from '@/api/client'
 import AppShell from '@/components/AppShell.vue'
+import IntradayPoolSettings from '@/components/IntradayPoolSettings.vue'
 import type {
   AssetType,
   HistoryCollectionState,
@@ -274,6 +275,8 @@ onUnmounted(() => {
       </div>
       <RouterLink class="secondary-button" to="/">返回决策工作台</RouterLink>
     </header>
+
+    <IntradayPoolSettings />
 
     <div v-if="loading" class="state-panel">正在读取 Universe…</div>
     <div v-else-if="error && !universe" class="error-banner">{{ error }} <button @click="load">重试</button></div>

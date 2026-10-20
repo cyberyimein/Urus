@@ -40,6 +40,9 @@ from app.models import (  # noqa: F401 - register ORM tables
     RemoteDecisionEventModel,
     RemoteDecisionArtifactModel,
     FocusSymbolModel,
+    IntradaySetupStateModel,
+    IntradayEventModel,
+    IntradayEventIngestCursorModel,
 )
 from app.repositories.runtime_settings import RuntimeSettingsRepository, apply_payload
 from app.repositories.universe import InstrumentUniverseRepository

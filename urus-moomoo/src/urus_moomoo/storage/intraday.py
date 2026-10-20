@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time, timedelta
 import gzip
 import hashlib
 import json
+import math
 from pathlib import Path
 import sqlite3
 from typing import Any
@@ -219,6 +220,14 @@ class CanonicalIntradayStore:
                             option_time=option_time, captured_at=captured_at,
                         )
 
+            states = dict(self.connection.execute(
+                "SELECT data_state, COUNT(*) FROM intraday_option_contract_snapshots "
+                "WHERE capture_attempt_id = ? GROUP BY data_state", (attempt_id,),
+            ).fetchall())
+            total = sum(states.values())
+            quality["quote_states"] = states
+            quality["fresh_quote_coverage"] = states.get("ready", 0) / total if total else 0.0
+
             self.connection.execute(
                 """
                 UPDATE intraday_option_capture_runs
@@ -245,6 +254,66 @@ class CanonicalIntradayStore:
                 (_db_time(datetime.now(UTC)), status, str(raw_path) if raw_path else None, digest, attempt_id),
             )
         return {"run_id": run_id, "attempt_id": attempt_id, "content_sha256": digest}
+
+    def finalize_trading_day(self, trading_date: date, payload: dict[str, Any]) -> int:
+        """Materialize a stored close capture atomically; safe to replay after a crash."""
+        if not payload.get("complete") or str(payload.get("trading_date")) != trading_date.isoformat():
+            raise ValueError("complete close payload for the requested date required")
+        captured_at = _utc(payload["captured_at"], self.market_timezone)
+        if captured_at is None:
+            raise ValueError("close capture timestamp required")
+        closes = {str(k).upper(): float(v) for k, v in payload["official_closes"].items()}
+        requested = {str(s).upper() for s in payload["requested_symbols"]}
+        if not requested or not requested <= closes.keys() or any(not math.isfinite(v) or v <= 0 for v in closes.values()):
+            raise ValueError("close prices must cover requested symbols")
+        start = datetime.combine(trading_date, time.min, self.market_timezone)
+        end = datetime.combine(trading_date + timedelta(days=1), time.min, self.market_timezone)
+        bars = payload.get("underlying_bars", [])
+        if not requested <= {str(bar["symbol"]).upper() for bar in bars}:
+            raise ValueError("close bars must cover requested symbols")
+        for bar in bars:
+            stamp = _utc(bar.get("bar_time"), self.market_timezone)
+            if stamp is None or not start <= stamp < end:
+                raise ValueError("close bars must belong to the requested trading date")
+        count = 0
+        with self.connection:
+            for bar in bars:
+                self._persist_bar("session-close", trading_date.isoformat(), bar, captured_at)
+            rows = self.connection.execute(
+                """SELECT r.id, r.scheduled_at, s.symbol, s.spot
+                   FROM intraday_option_capture_runs r
+                   JOIN intraday_underlying_snapshots s
+                     ON s.capture_attempt_id = r.selected_attempt_id AND s.capture_run_id = r.id
+                   WHERE r.trading_date = ? AND r.status = 'succeeded'""",
+                (trading_date.isoformat(),),
+            ).fetchall()
+            for row in rows:
+                symbol, spot = row["symbol"], float(row["spot"])
+                if symbol not in closes or spot <= 0:
+                    continue
+                extremes = self.connection.execute(
+                    """SELECT MAX(high), MIN(low) FROM intraday_underlying_minute_bars
+                       WHERE symbol = ? AND bar_time >= ? AND bar_time >= ? AND bar_time < ?
+                         AND session = 'regular'""",
+                    (symbol, row["scheduled_at"], _db_time(start), _db_time(end)),
+                ).fetchone()
+                close = closes[symbol]
+                self.connection.execute(
+                    """INSERT INTO intraday_option_outcomes
+                       (capture_run_id, trading_date, symbol, entry_spot, official_close,
+                        close_source, close_return, absolute_move, max_up_move, max_down_move, finalized_at)
+                       VALUES (?, ?, ?, ?, ?, 'moomoo_unadjusted_last_regular_minute', ?, ?, ?, ?, ?)
+                       ON CONFLICT(capture_run_id, symbol) DO UPDATE SET
+                         entry_spot=excluded.entry_spot, official_close=excluded.official_close,
+                         close_source=excluded.close_source, close_return=excluded.close_return,
+                         absolute_move=excluded.absolute_move, max_up_move=excluded.max_up_move,
+                         max_down_move=excluded.max_down_move, finalized_at=excluded.finalized_at""",
+                    (row["id"], trading_date.isoformat(), symbol, spot, close, close / spot - 1,
+                     abs(close - spot), extremes[0] - spot if extremes[0] is not None else None,
+                     extremes[1] - spot if extremes[1] is not None else None, _db_time(captured_at)),
+                )
+                count += 1
+        return count
 
     def _write_raw(
         self, run_id: str, attempt_id: str, captured_at: datetime, encoded: bytes

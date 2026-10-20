@@ -5,6 +5,7 @@ import os
 import logging
 import socket
 import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
@@ -13,12 +14,22 @@ from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
 from urus_moomoo.analytics.technical import calculate_relative_strength, calculate_technical_indicators
+from urus_moomoo.services.intraday_equities import (
+    build_minute_timestamp_policy,
+    build_intraday_equity_plan,
+    normalize_equity_symbol,
+)
 
 logger = logging.getLogger(__name__)
 
 
 DEFAULT_MARKET_SNAPSHOT_SYMBOLS: tuple[str, ...] = ()
 MAX_SNAPSHOT_CODES_PER_REQUEST = 400
+DEFAULT_EQUITY_REQUEST_TIMEOUT_SECONDS = 3.0
+
+
+class _RequestBudgetExceeded(RuntimeError):
+    pass
 
 INSTRUMENT_THEMES_BY_SYMBOL: dict[str, list[str]] = {}
 
@@ -194,6 +205,9 @@ class OpenDMarketAdapter:
         self._last_history_request_at: float | None = None
         self._last_snapshot_request_at: float | None = None
         self._last_trading_calendar_request_at: float | None = None
+        self._active_request_deadline_at: datetime | None = None
+        self._active_request_timeout_seconds = DEFAULT_EQUITY_REQUEST_TIMEOUT_SECONDS
+        self._active_request_budget_exhausted = False
         # Keep one immutable-in-run snapshot projection so repeated reads do
         # not consume another OpenD frequency slot.
         self._snapshot_cache: dict[str, dict[str, Any]] = {}
@@ -587,9 +601,528 @@ class OpenDMarketAdapter:
             "note": "使用 Moomoo OpenD 批量快照和历史日线；未开启实时订阅。",
         }
 
-    def _collect_market_snapshot(self, quote_codes: list[str]) -> dict[str, object]:
+    def capture_intraday_equities(
+        self,
+        *,
+        symbols: list[str] | tuple[str, ...] | None = None,
+        quote_symbols: list[str] | None = None,
+        minute_symbols: list[str] | None = None,
+        trading_date: date | str | None = None,
+        scheduled_at: datetime | None = None,
+        evidence_cutoff: datetime | None = None,
+        groups: dict[str, list[str]] | None = None,
+        group_by_symbol: dict[str, str] | None = None,
+        slot_index: int = 0,
+        interval: str = "K_1M",
+        minute_timestamp_role: str = "start",
+        minute_timestamp_verification: dict[str, Any] | None = None,
+        capture_quotes: bool = True,
+        shard_id: str | None = None,
+        shard_symbols: list[str] | None = None,
+        request_budget_deadline_at: datetime | str | None = None,
+        request_timeout_seconds: float = DEFAULT_EQUITY_REQUEST_TIMEOUT_SECONDS,
+    ) -> dict[str, object]:
+        timeout = min(12.0, max(0.1, float(request_timeout_seconds)))
+        deadline = request_budget_deadline_at
+        if isinstance(deadline, str):
+            try:
+                deadline = datetime.fromisoformat(deadline)
+            except ValueError as exc:
+                raise ValueError("request_budget_deadline_at must be an ISO timestamp") from exc
+        with self._request_budget(deadline, timeout):
+            return self._capture_intraday_equities_impl(
+                symbols=symbols,
+                quote_symbols=quote_symbols,
+                minute_symbols=minute_symbols,
+                trading_date=trading_date,
+                scheduled_at=scheduled_at,
+                evidence_cutoff=evidence_cutoff,
+                groups=groups,
+                group_by_symbol=group_by_symbol,
+                slot_index=slot_index,
+                interval=interval,
+                minute_timestamp_role=minute_timestamp_role,
+                minute_timestamp_verification=minute_timestamp_verification,
+                capture_quotes=capture_quotes,
+                shard_id=shard_id,
+                shard_symbols=shard_symbols,
+            )
+
+    def _capture_intraday_equities_impl(
+        self,
+        *,
+        symbols: list[str] | tuple[str, ...] | None = None,
+        quote_symbols: list[str] | None = None,
+        minute_symbols: list[str] | None = None,
+        trading_date: date | str | None = None,
+        scheduled_at: datetime | None = None,
+        evidence_cutoff: datetime | None = None,
+        groups: dict[str, list[str]] | None = None,
+        group_by_symbol: dict[str, str] | None = None,
+        slot_index: int = 0,
+        interval: str = "K_1M",
+        minute_timestamp_role: str = "start",
+        minute_timestamp_verification: dict[str, Any] | None = None,
+        capture_quotes: bool = True,
+        shard_id: str | None = None,
+        shard_symbols: list[str] | None = None,
+    ) -> dict[str, object]:
+        """Capture bounded US equity quotes and admitted per-symbol minute bars.
+
+        The default ``start`` timestamp role follows the existing collector
+        convention. Moomoo's live-provider boundary semantics are unverified;
+        confirm the role before enabling production capture.
+        """
+
+        if interval != "K_1M":
+            raise ValueError("intraday equity capture currently supports only K_1M")
+        if minute_timestamp_role not in {"start", "end"}:
+            raise ValueError("minute_timestamp_role must be 'start' or 'end'")
+
+        allowed_symbols = (
+            list(dict.fromkeys(normalize_equity_symbol(symbol) for symbol in symbols))
+            if symbols is not None
+            else None
+        )
+        group_by_symbol: dict[str, str] = {}
+        if quote_symbols is not None or minute_symbols is not None:
+            if quote_symbols is None or minute_symbols is None or groups is not None:
+                raise ValueError("supply both quote_symbols and minute_symbols, or supply groups")
+            planned_quotes = list(dict.fromkeys(normalize_equity_symbol(item) for item in quote_symbols))
+            planned_minutes = list(dict.fromkeys(normalize_equity_symbol(item) for item in minute_symbols))
+            if not planned_quotes:
+                raise ValueError("quote_symbols must not be empty")
+            if not set(planned_minutes) <= set(planned_quotes):
+                raise ValueError("minute_symbols must be contained in quote_symbols")
+            if allowed_symbols is not None and not set(planned_quotes) <= set(allowed_symbols):
+                raise ValueError("quote_symbols exceed the task allowed scope")
+            supplied_groups = {
+                normalize_equity_symbol(symbol): str(group).strip().upper()
+                for symbol, group in dict(group_by_symbol or {}).items()
+                if str(symbol).strip()
+            }
+            if not set(supplied_groups) <= set(planned_quotes):
+                raise ValueError("group_by_symbol contains symbols outside quote_symbols")
+            group_by_symbol = supplied_groups
+        else:
+            if groups is None:
+                if allowed_symbols is None:
+                    raise ValueError("symbols or a complete quote/minute plan is required")
+                groups = {"C": allowed_symbols}
+            plan = build_intraday_equity_plan(
+                groups,
+                slot_index=slot_index,
+                allowed_symbols=allowed_symbols,
+            )
+            planned_quotes = list(plan["quote_symbols"])
+            planned_minutes = list(plan["minute_symbols"])
+            group_by_symbol = dict(plan["group_by_symbol"])
+
+        if not planned_quotes:
+            raise ValueError("intraday equity capture requires at least one quote symbol")
+
+        if trading_date is None:
+            if scheduled_at is None:
+                raise ValueError("trading_date or scheduled_at is required")
+            trading_day = scheduled_at.astimezone(ZoneInfo(self.market_timezone)).date()
+        elif isinstance(trading_date, date):
+            trading_day = trading_date
+        else:
+            trading_day = date.fromisoformat(str(trading_date))
+
+        cutoff = evidence_cutoff or scheduled_at
+        if cutoff is not None and cutoff.tzinfo is None:
+            cutoff = cutoff.replace(tzinfo=ZoneInfo(self.market_timezone))
+        cutoff_utc = cutoff.astimezone(UTC) if cutoff is not None else None
+        cutoff_text = cutoff.isoformat() if cutoff is not None else None
+        captured_at = datetime.now(UTC).isoformat()
+        quote_codes = [f"US.{symbol}" for symbol in planned_quotes]
+        if capture_quotes:
+            market_snapshot = self._collect_market_snapshot(
+                quote_codes,
+                raise_on_total_failure=False,
+            )
+        else:
+            cached_rows = {
+                code: self._snapshot_cache[code]
+                for code in quote_codes
+                if code in self._snapshot_cache
+            }
+            market_snapshot = {
+                "rows": cached_rows,
+                "request_batches": [],
+                "quality_status": "ok" if len(cached_rows) == len(quote_codes) else "partial",
+                "quality_warnings": (
+                    []
+                    if len(cached_rows) == len(quote_codes)
+                    else ["本分片未重新请求报价；同槽 G1 快照不可用或尚未捕获。"]
+                ),
+            }
+        quote_rows = market_snapshot.get("rows", {})
+        quotes: list[dict[str, object]] = []
+        unavailable_quote_symbols: list[str] = []
+        for symbol, quote_code in zip(planned_quotes, quote_codes, strict=True):
+            row = quote_rows.get(quote_code) if isinstance(quote_rows, dict) else None
+            if not isinstance(row, dict):
+                unavailable_quote_symbols.append(symbol)
+                continue
+            quotes.append({"symbol": symbol, "quote_code": quote_code, **row})
+
+        history_admissions: list[dict[str, object]] = []
+        admitted_symbols: list[str] = []
+        deferred_symbols: list[str] = []
+        history_batches: list[dict[str, object]] = []
+        minute_bars: list[dict[str, object]] = []
+        history_errors: list[dict[str, str]] = []
+        missing_minute_symbols: list[str] = []
+        budget_skipped_symbols: list[str] = []
+        invalid_minute_bars: list[dict[str, object]] = []
+        filtered_future_bars = 0
+
+        sdk = self._ensure_sdk() if planned_minutes else None
+        quote_context = self._quote_ctx
+        if self._history_admission is None:
+            batch_admissions = [
+                {
+                    "admitted": False,
+                    "access_state": "pending_quota",
+                    "reason_code": "quota_unavailable",
+                    "symbol": normalize_equity_symbol(symbol),
+                }
+                for symbol in planned_minutes
+            ]
+        elif callable(getattr(self._history_admission, "acquire_many", None)):
+            batch_admissions = self._history_admission.acquire_many(
+                [f"US.{symbol}" for symbol in planned_minutes]
+            )
+        else:
+            batch_admissions = [
+                self._history_admission.acquire(f"US.{symbol}")
+                for symbol in planned_minutes
+            ]
+
+        for symbol, admission in zip(planned_minutes, batch_admissions, strict=True):
+            quote_code = f"US.{symbol}"
+            history_admissions.append({"symbol": symbol, **admission})
+            if self._active_request_budget_exhausted:
+                budget_skipped_symbols.extend(planned_minutes[len(history_admissions) - 1 :])
+                missing_minute_symbols.extend(planned_minutes[len(history_admissions) - 1 :])
+                break
+            if not bool(admission.get("admitted")):
+                deferred_symbols.append(symbol)
+                missing_minute_symbols.append(symbol)
+                continue
+
+            admitted_symbols.append(symbol)
+            request_method = getattr(quote_context, "request_history_kline", None)
+            if not callable(request_method) or sdk is None:
+                message = "OpenD minute-history method unavailable"
+                history_errors.append({"symbol": symbol, "error": message})
+                history_batches.append(
+                    {
+                        "code": quote_code,
+                        "ktype": interval,
+                        "start": trading_day.isoformat(),
+                        "end": trading_day.isoformat(),
+                        "records": [],
+                        "error": message,
+                    }
+                )
+                missing_minute_symbols.append(symbol)
+                continue
+
+            series_rows: list[dict[str, Any]] = []
+            page_req_key: Any = None
+            page_index = 0
+            symbol_error: str | None = None
+            while True:
+                request_started_at = datetime.now(UTC)
+                try:
+                    self._pace(
+                        "_last_history_request_at",
+                        self.history_request_interval_seconds,
+                        rate_class="moomoo_quote_history",
+                    )
+                    request_started_at = datetime.now(UTC)
+                    with self._sdk_request_timeout():
+                        response = request_method(
+                            code=quote_code,
+                            start=trading_day.isoformat(),
+                            end=trading_day.isoformat(),
+                            ktype=getattr(getattr(sdk, "KLType", None), interval, interval),
+                            autype=getattr(getattr(sdk, "AuType", None), "NONE", "None"),
+                            max_count=1000,
+                            page_req_key=page_req_key,
+                            extended_time=False,
+                        )
+                    response_received_at = datetime.now(UTC)
+                    if not isinstance(response, tuple) or len(response) < 2:
+                        raise RuntimeError(f"unexpected minute-history response: {response!r}")
+                    ret_code, raw_frame = response[0], response[1]
+                    next_page_req_key = response[2] if len(response) >= 3 else None
+                    if ret_code != getattr(sdk, "RET_OK", 0):
+                        raise RuntimeError(f"request_history_kline({quote_code}, K_1M) failed: {raw_frame}")
+                    rows = _iter_rows(raw_frame)
+                    history_batches.append(
+                        {
+                            "code": quote_code,
+                            "symbol": symbol,
+                            "ktype": interval,
+                            "start": trading_day.isoformat(),
+                            "end": trading_day.isoformat(),
+                            "page_index": page_index,
+                            "request_started_at": request_started_at.isoformat(),
+                            "response_received_at": response_received_at.isoformat(),
+                            "records": rows,
+                        }
+                    )
+                    series_rows.extend(rows)
+                    if next_page_req_key is None:
+                        break
+                    if next_page_req_key == page_req_key:
+                        raise RuntimeError("minute-history pagination key did not advance")
+                    page_req_key = next_page_req_key
+                    page_index += 1
+                except _RequestBudgetExceeded:
+                    budget_skipped_symbols.extend(planned_minutes[len(history_admissions) - 1 :])
+                    missing_minute_symbols.extend(planned_minutes[len(history_admissions) - 1 :])
+                    history_batches.append(
+                        {
+                            "code": quote_code,
+                            "symbol": symbol,
+                            "ktype": interval,
+                            "start": trading_day.isoformat(),
+                            "end": trading_day.isoformat(),
+                            "page_index": page_index,
+                            "request_started_at": request_started_at.isoformat(),
+                            "response_received_at": datetime.now(UTC).isoformat(),
+                            "records": [],
+                            "skipped_reason": "skipped_budget",
+                        }
+                    )
+                    break
+                except Exception as exc:
+                    symbol_error = str(exc)
+                    response_received_at = datetime.now(UTC)
+                    history_batches.append(
+                        {
+                            "code": quote_code,
+                            "symbol": symbol,
+                            "ktype": interval,
+                            "start": trading_day.isoformat(),
+                            "end": trading_day.isoformat(),
+                            "page_index": page_index,
+                            "request_started_at": request_started_at.isoformat(),
+                            "response_received_at": response_received_at.isoformat(),
+                            "records": [],
+                            "error": symbol_error,
+                        }
+                    )
+                    break
+
+            added_bars = 0
+            for row in series_rows:
+                raw_bar_time = str(row.get("time_key") or row.get("bar_time") or "").strip()
+                if not raw_bar_time:
+                    continue
+                try:
+                    bar_time = datetime.fromisoformat(raw_bar_time.replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+                if bar_time.tzinfo is None:
+                    bar_time = bar_time.replace(tzinfo=ZoneInfo(self.market_timezone))
+                source_time_utc = bar_time.astimezone(UTC)
+                if minute_timestamp_role == "start":
+                    bar_start_utc = source_time_utc
+                    bar_end_utc = bar_start_utc + timedelta(minutes=1)
+                else:
+                    bar_end_utc = source_time_utc
+                    bar_start_utc = bar_end_utc - timedelta(minutes=1)
+                local_bar_start = bar_start_utc.astimezone(ZoneInfo(self.market_timezone))
+                if local_bar_start.date() != trading_day:
+                    continue
+                if cutoff_utc is not None and bar_end_utc > cutoff_utc:
+                    filtered_future_bars += 1
+                    continue
+
+                bar_values: dict[str, float] = {}
+                invalid_reasons: list[str] = []
+                for field in ("open", "high", "low", "close", "volume", "turnover"):
+                    try:
+                        value = _number(row, [field])
+                    except (KeyError, TypeError, ValueError, OverflowError):
+                        invalid_reasons.append(f"missing_or_invalid_{field}")
+                        continue
+                    if not math.isfinite(value):
+                        invalid_reasons.append(f"non_finite_{field}")
+                        continue
+                    if field in {"open", "high", "low", "close"} and value <= 0:
+                        invalid_reasons.append(f"non_positive_{field}")
+                        continue
+                    if field in {"volume", "turnover"} and value < 0:
+                        invalid_reasons.append(f"negative_{field}")
+                        continue
+                    bar_values[field] = value
+
+                if not invalid_reasons and not (
+                    bar_values["low"]
+                    <= min(bar_values["open"], bar_values["close"])
+                    <= max(bar_values["open"], bar_values["close"])
+                    <= bar_values["high"]
+                ):
+                    invalid_reasons.append("inconsistent_ohlc")
+
+                if invalid_reasons:
+                    invalid_minute_bars.append(
+                        {
+                            "symbol": symbol,
+                            "bar_time": raw_bar_time,
+                            "bar_start_at": bar_start_utc.isoformat(),
+                            "bar_end_at": bar_end_utc.isoformat(),
+                            "quality_state": "invalid",
+                            "invalid_reasons": invalid_reasons,
+                        }
+                    )
+                    continue
+
+                try:
+                    volume = bar_values["volume"]
+                    turnover = bar_values["turnover"]
+                    minute_bars.append(
+                        {
+                            "symbol": symbol,
+                            "bar_time": raw_bar_time,
+                            "bar_start_at": bar_start_utc.isoformat(),
+                            "bar_end_at": bar_end_utc.isoformat(),
+                            "open": bar_values["open"],
+                            "high": bar_values["high"],
+                            "low": bar_values["low"],
+                            "close": bar_values["close"],
+                            "volume": volume,
+                            "turnover": turnover,
+                            "vwap": turnover / volume if volume else None,
+                            "provider": "moomoo_openapi",
+                            "quality_state": "ready",
+                        }
+                    )
+                    added_bars += 1
+                except (KeyError, TypeError, ValueError):
+                    continue
+            if symbol_error:
+                history_errors.append({"symbol": symbol, "error": symbol_error})
+            if self._active_request_budget_exhausted:
+                break
+            if added_bars == 0:
+                missing_minute_symbols.append(symbol)
+
+        missing_minute_symbols = list(dict.fromkeys(missing_minute_symbols))
+        quote_complete = not capture_quotes or (
+            not unavailable_quote_symbols and market_snapshot.get("quality_status") == "ok"
+        )
+        history_complete = (
+            not deferred_symbols
+            and not history_errors
+            and not missing_minute_symbols
+            and not invalid_minute_bars
+        )
+        complete = quote_complete and history_complete
+        warnings = list(market_snapshot.get("quality_warnings", []))
+        warnings.extend(
+            f"{symbol}：分钟线未准入或没有 cutoff 前的有效 bar。"
+            for symbol in missing_minute_symbols
+        )
+        warnings.extend(f"{item['symbol']}：分钟线请求失败：{item['error']}" for item in history_errors)
+        if invalid_minute_bars:
+            warnings.append(f"{len(invalid_minute_bars)} 根分钟线因数据校验失败而未标记 ready。")
+        if budget_skipped_symbols:
+            warnings.append("采集工作预算已用尽；未在截止后继续发分钟线请求。")
+        timestamp_policy = build_minute_timestamp_policy(
+            minute_timestamp_role,
+            minute_timestamp_verification,
+            market_timezone=self.market_timezone,
+        )
+        slot_shard_status = (
+            "skipped_budget"
+            if budget_skipped_symbols and not minute_bars
+            else "complete"
+            if complete
+            else "partial"
+        )
+        return {
+            "schema_version": "moomoo-intraday-equities-v1",
+            "provider": "moomoo_openapi",
+            "captured_at": captured_at,
+            "trading_date": trading_day.isoformat(),
+            "scheduled_at": scheduled_at.isoformat() if scheduled_at is not None else None,
+            "evidence_cutoff": cutoff_text,
+            "minute_timestamp_role": minute_timestamp_role,
+            "minute_timestamp_policy": timestamp_policy,
+            "slot_index": slot_index,
+            "rotation": slot_index % 3,
+            "shard_id": shard_id,
+            "shard_symbols": list(shard_symbols or planned_minutes),
+            "capture_quotes": capture_quotes,
+            "slot_shard_status": slot_shard_status,
+            "request_budget": {
+                "deadline_at": (
+                    self._active_request_deadline_at.isoformat()
+                    if self._active_request_deadline_at is not None
+                    else None
+                ),
+                "request_timeout_seconds": self._active_request_timeout_seconds,
+                "exhausted": bool(budget_skipped_symbols),
+            },
+            "requested_symbols": list(planned_quotes),
+            "quote_symbols": list(planned_quotes),
+            "minute_symbols": list(planned_minutes),
+            "group_by_symbol": group_by_symbol,
+            "quotes": quotes,
+            "unavailable_quote_symbols": unavailable_quote_symbols,
+            "minute_bars": minute_bars,
+            "invalid_minute_bars": invalid_minute_bars,
+            "minute_bar_unavailable_symbols": missing_minute_symbols,
+            "history_quota": {
+                "available": all(
+                    item.get("reason_code") != "quota_unavailable" for item in history_admissions
+                ),
+                "requested_symbols": list(planned_minutes),
+                "admitted_symbols": admitted_symbols,
+                "deferred_symbols": deferred_symbols,
+                "admissions": history_admissions,
+            },
+            "quality_summary": {
+                "complete": complete,
+                "status": "ok" if complete else "partial",
+                "quote_coverage": len(quotes) / len(planned_quotes) if planned_quotes else 1.0,
+                "minute_symbols_requested": len(planned_minutes),
+                "minute_symbols_admitted": len(admitted_symbols),
+                "minute_bars_returned": len(minute_bars),
+                "invalid_minute_bars": len(invalid_minute_bars),
+                "unavailable_quote_symbols": unavailable_quote_symbols,
+                "unavailable_minute_symbols": missing_minute_symbols,
+                "failed_history_symbols": [item["symbol"] for item in history_errors],
+                "skipped_budget_symbols": list(dict.fromkeys(budget_skipped_symbols)),
+                "filtered_future_bars": filtered_future_bars,
+                "minute_timestamp_role": minute_timestamp_role,
+                "minute_timestamp_policy": timestamp_policy,
+                "evidence_cutoff": cutoff_text,
+                "quality_warnings": warnings,
+            },
+            "provider_raw": {
+                "market_snapshot_batches": market_snapshot.get("request_batches", []),
+                "history_kline_batches": history_batches,
+            },
+        }
+
+    def _collect_market_snapshot(
+        self,
+        quote_codes: list[str],
+        *,
+        raise_on_total_failure: bool = True,
+    ) -> dict[str, object]:
         rows: list[dict[str, Any]] = []
         request_errors: list[str] = []
+        request_batches: list[dict[str, object]] = []
         requested_codes = list(dict.fromkeys(quote_codes))
         missing_codes = [code for code in requested_codes if code not in self._snapshot_cache]
         chunks = [
@@ -597,6 +1130,7 @@ class OpenDMarketAdapter:
             for index in range(0, len(missing_codes), MAX_SNAPSHOT_CODES_PER_REQUEST)
         ]
         for chunk in chunks:
+            request_started_at = datetime.now(UTC)
             try:
                 self._pace(
                     "_last_snapshot_request_at",
@@ -606,14 +1140,46 @@ class OpenDMarketAdapter:
                     # instance. Keep both operations on one durable bucket.
                     rate_class="moomoo_quote_history",
                 )
+                request_started_at = datetime.now(UTC)
                 fetched = _iter_rows(self._call("get_market_snapshot", chunk))
+                response_received_at = datetime.now(UTC)
                 rows.extend(fetched)
+                request_batches.append(
+                    {
+                        "requested_codes": list(chunk),
+                        "request_started_at": request_started_at.isoformat(),
+                        "response_received_at": response_received_at.isoformat(),
+                        "records": fetched,
+                    }
+                )
                 for row in fetched:
                     code = str(row.get("code", "")).strip().upper()
                     if code:
                         self._snapshot_cache[code] = row
+            except _RequestBudgetExceeded as exc:
+                request_batches.append(
+                    {
+                        "requested_codes": list(chunk),
+                        "request_started_at": request_started_at.isoformat(),
+                        "response_received_at": datetime.now(UTC).isoformat(),
+                        "records": [],
+                        "skipped_reason": "skipped_budget",
+                        "error": str(exc),
+                    }
+                )
+                break
             except Exception as exc:
-                request_errors.append(f"{','.join(chunk)}：{exc}")
+                error = f"{','.join(chunk)}：{exc}"
+                request_errors.append(error)
+                request_batches.append(
+                    {
+                        "requested_codes": list(chunk),
+                        "request_started_at": request_started_at.isoformat(),
+                        "response_received_at": datetime.now(UTC).isoformat(),
+                        "records": [],
+                        "error": error,
+                    }
+                )
 
         rows = [self._snapshot_cache[code] for code in requested_codes if code in self._snapshot_cache]
         by_code = {
@@ -627,7 +1193,7 @@ class OpenDMarketAdapter:
             for code in missing
         ]
         warnings.extend(f"Moomoo 批量快照分组请求失败：{error}" for error in request_errors)
-        if not by_code and request_errors:
+        if not by_code and request_errors and raise_on_total_failure:
             raise RuntimeError(f"OpenD 批量快照请求失败：{request_errors[0]}")
         return {
             "is_mock": False,
@@ -636,6 +1202,7 @@ class OpenDMarketAdapter:
             "requested_symbols": [_display_symbol(code) for code in quote_codes],
             "requested_quote_codes": quote_codes,
             "request_count": len(chunks),
+            "request_batches": request_batches,
             "returned_symbols": [_display_symbol(code) for code in by_code],
             "unavailable_symbols": [_display_symbol(code) for code in missing],
             "quality_status": "ok" if not missing and not request_errors else "partial",
@@ -771,24 +1338,53 @@ class OpenDMarketAdapter:
         *,
         rate_class: str | None = None,
     ) -> None:
+        deadline = self._active_request_deadline_at
+        timeout = self._active_request_timeout_seconds
+        latest_start_at = (
+            deadline - timedelta(seconds=timeout)
+            if deadline is not None
+            else None
+        )
         if self._rate_limiter is not None and rate_class:
-            self._rate_limiter.acquire_rate_slot(
+            waited = self._rate_limiter.acquire_rate_slot(
                 rate_class,
                 interval_seconds,
                 now=datetime.now(UTC),
                 sleeper=self._sleeper,
+                latest_start_at=latest_start_at,
             )
+            if waited is not None and not math.isfinite(float(waited)):
+                self._active_request_budget_exhausted = True
+                raise _RequestBudgetExceeded("shared pacing would exceed the request budget")
+            if deadline is not None and datetime.now(UTC) + timedelta(seconds=timeout) > deadline:
+                self._active_request_budget_exhausted = True
+                raise _RequestBudgetExceeded("request timeout would exceed the shard budget")
             setattr(self, attribute, self._monotonic_clock())
             return
         if interval_seconds <= 0:
+            if deadline is not None and datetime.now(UTC) + timedelta(seconds=timeout) > deadline:
+                self._active_request_budget_exhausted = True
+                raise _RequestBudgetExceeded("request timeout would exceed the shard budget")
             setattr(self, attribute, self._monotonic_clock())
             return
         now = self._monotonic_clock()
         previous = getattr(self, attribute)
+        remaining = 0.0
         if previous is not None:
             remaining = interval_seconds - (now - previous)
-            if remaining > 0:
-                self._sleeper(remaining)
+            remaining = max(0.0, remaining)
+        if deadline is not None and (
+            datetime.now(UTC)
+            + timedelta(seconds=remaining + timeout)
+            > deadline
+        ):
+            self._active_request_budget_exhausted = True
+            raise _RequestBudgetExceeded("pacing and request timeout would exceed the shard budget")
+        if remaining > 0:
+            self._sleeper(remaining)
+        if deadline is not None and datetime.now(UTC) + timedelta(seconds=timeout) > deadline:
+            self._active_request_budget_exhausted = True
+            raise _RequestBudgetExceeded("request timeout would exceed the shard budget")
         setattr(self, attribute, self._monotonic_clock())
 
     def _quota_snapshot(self) -> dict[str, object]:
@@ -797,12 +1393,27 @@ class OpenDMarketAdapter:
         try:
             if hasattr(self._ensure_sdk(), "RET_OK") and hasattr(self._quote_ctx, "query_subscription"):
                 try:
+                    self._pace(
+                        "_last_snapshot_request_at",
+                        self.snapshot_request_interval_seconds,
+                        rate_class="moomoo_quote_history",
+                    )
                     subscription = self._call("query_subscription", is_all_conn=True)
                 except TypeError:
+                    self._pace(
+                        "_last_snapshot_request_at",
+                        self.snapshot_request_interval_seconds,
+                        rate_class="moomoo_quote_history",
+                    )
                     subscription = self._call("query_subscription")
                 result["subscription"] = _normalise_subscription_quota(subscription)
                 result["available"] = True
             if hasattr(self._quote_ctx, "get_history_kl_quota"):
+                self._pace(
+                    "_last_snapshot_request_at",
+                    self.snapshot_request_interval_seconds,
+                    rate_class="moomoo_quote_history",
+                )
                 history = self._call("get_history_kl_quota", get_detail=True)
                 result["history"] = _normalise_history_quota(history)
                 result["available"] = True
@@ -851,13 +1462,54 @@ class OpenDMarketAdapter:
     def _call(self, method_name: str, *args: Any, **kwargs: Any) -> Any:
         sdk = self._ensure_sdk()
         method = getattr(self._quote_ctx, method_name)
-        result = method(*args, **kwargs)
+        with self._sdk_request_timeout():
+            result = method(*args, **kwargs)
         if not isinstance(result, tuple) or len(result) < 2:
             return result
         ret, data = result[0], result[1]
         if ret != getattr(sdk, "RET_OK", 0):
             raise RuntimeError(f"OpenD {method_name} failed: {data}")
         return data
+
+    @contextmanager
+    def _request_budget(
+        self,
+        deadline_at: datetime | None,
+        timeout_seconds: float,
+    ):
+        previous_deadline = self._active_request_deadline_at
+        previous_timeout = self._active_request_timeout_seconds
+        previous_exhausted = self._active_request_budget_exhausted
+        if deadline_at is not None and deadline_at.tzinfo is None:
+            deadline_at = deadline_at.replace(tzinfo=ZoneInfo(self.market_timezone))
+        self._active_request_deadline_at = (
+            deadline_at.astimezone(UTC) if deadline_at is not None else None
+        )
+        self._active_request_timeout_seconds = timeout_seconds
+        self._active_request_budget_exhausted = False
+        try:
+            yield
+        finally:
+            self._active_request_deadline_at = previous_deadline
+            self._active_request_timeout_seconds = previous_timeout
+            self._active_request_budget_exhausted = previous_exhausted
+
+    @contextmanager
+    def _sdk_request_timeout(self):
+        context = self._quote_ctx
+        if context is None or self._active_request_deadline_at is None:
+            yield
+            return
+        previous: dict[str, object] = {}
+        for attribute in ("_query_timeout", "_sync_query_connect_timeout"):
+            if hasattr(context, attribute):
+                previous[attribute] = getattr(context, attribute)
+                setattr(context, attribute, self._active_request_timeout_seconds)
+        try:
+            yield
+        finally:
+            for attribute, value in previous.items():
+                setattr(context, attribute, value)
 
 
 def _normalise_quote_code(symbol: str | None) -> str:
