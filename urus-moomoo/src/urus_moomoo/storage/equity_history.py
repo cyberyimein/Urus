@@ -291,6 +291,35 @@ class EquityHistoryStore:
                 valid_dates.add(normalized)
         return sorted(valid_dates)[-requested_count:]
 
+    def read_five_minute_session_bars(
+        self,
+        symbol: str,
+        trading_date: str,
+        *,
+        deadline_check: Callable[[], bool] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Read the latest stored 5m revisions inside one regular session."""
+
+        import exchange_calendars as xcals
+
+        normalized_date = date.fromisoformat(trading_date).isoformat()
+        calendar = xcals.get_calendar(self.market_calendar)
+        opened = calendar.session_open(normalized_date).to_pydatetime()
+        closed = calendar.session_close(normalized_date).to_pydatetime()
+        with self._cleanup_deadline_guard(deadline_check):
+            self._check_cleanup_deadline(deadline_check)
+            rows, _, _ = self._read_bar_rows(
+                provider=EQUITY_PROVIDER,
+                symbols=[str(symbol).strip().upper()],
+                timeframe="5m",
+                adjustment="none",
+                from_time=_utc_text(opened),
+                through_time=_utc_text(closed),
+                watermark=self.latest_watermark(),
+                trading_dates=[normalized_date],
+            )
+        return rows
+
     def upsert_bars(
         self,
         rows: Iterable[Mapping[str, Any]],
@@ -302,6 +331,7 @@ class EquityHistoryStore:
         adjustment: str = "none",
         observed_at: datetime | str | None = None,
         strict: bool = True,
+        deadline_check: Callable[[], bool] | None = None,
     ) -> dict[str, int]:
         if timeframe not in {"1m", "5m"}:
             raise ValueError("equity bar timeframe must be '1m' or '5m'")
@@ -310,77 +340,81 @@ class EquityHistoryStore:
         normalized_date = date.fromisoformat(trading_date).isoformat()
         observed_text = _utc_text(observed_at or datetime.now(UTC))
         counts = {"inserted": 0, "revised": 0, "unchanged": 0}
-        highest_watermark = self.record_trading_session(normalized_date)
-        with self.connection:
-            for raw_row in rows:
-                if not isinstance(raw_row, Mapping):
-                    if strict:
-                        raise TypeError("equity bars must be mappings")
-                    counts["invalid"] = counts.get("invalid", 0) + 1
-                    continue
-                try:
-                    normalized = _normalize_bar(
-                        raw_row,
-                        timeframe=timeframe,
-                        trading_date=normalized_date,
-                        adjustment=adjustment,
-                        market_timezone=self.market_timezone,
-                    )
-                except (TypeError, ValueError):
-                    if strict:
-                        raise
-                    counts["invalid"] = counts.get("invalid", 0) + 1
-                    continue
-                digest = _sha256(normalized)
-                key = (
-                    provider,
-                    normalized["symbol"],
-                    timeframe,
-                    adjustment,
-                    normalized["bar_end_at"],
-                )
-                latest = self.connection.execute(
-                    "SELECT watermark, content_sha256 FROM equity_bar_revisions "
-                    "WHERE provider = ? AND symbol = ? AND timeframe = ? "
-                    "AND adjustment = ? AND bar_end_at = ? "
-                    "ORDER BY watermark DESC LIMIT 1",
-                    key,
-                ).fetchone()
-                if latest is not None and str(latest["content_sha256"]) == digest:
-                    counts["unchanged"] += 1
-                    highest_watermark = max(highest_watermark, int(latest["watermark"]))
-                    continue
-
-                change_kind = "bar_revision" if latest is not None else "bar_insert"
-                cursor = self.connection.execute(
-                    "INSERT INTO equity_data_watermarks(recorded_at, change_kind, trading_date) "
-                    "VALUES (?, ?, ?)",
-                    (observed_text, change_kind, normalized_date),
-                )
-                watermark = int(cursor.lastrowid)
-                self.connection.execute(
-                    """
-                    INSERT INTO equity_bar_revisions
-                      (watermark, provider, symbol, timeframe, adjustment, bar_end_at,
-                       trading_date, bar_json, content_sha256, observed_at, source_capture_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        watermark,
+        with self._cleanup_deadline_guard(deadline_check):
+            self._check_cleanup_deadline(deadline_check)
+            highest_watermark = self.record_trading_session(normalized_date)
+            with self.connection:
+                for raw_row in rows:
+                    self._check_cleanup_deadline(deadline_check)
+                    if not isinstance(raw_row, Mapping):
+                        if strict:
+                            raise TypeError("equity bars must be mappings")
+                        counts["invalid"] = counts.get("invalid", 0) + 1
+                        continue
+                    try:
+                        normalized = _normalize_bar(
+                            raw_row,
+                            timeframe=timeframe,
+                            trading_date=normalized_date,
+                            adjustment=adjustment,
+                            market_timezone=self.market_timezone,
+                        )
+                    except (TypeError, ValueError):
+                        if strict:
+                            raise
+                        counts["invalid"] = counts.get("invalid", 0) + 1
+                        continue
+                    digest = _sha256(normalized)
+                    key = (
                         provider,
                         normalized["symbol"],
                         timeframe,
                         adjustment,
                         normalized["bar_end_at"],
-                        normalized_date,
-                        _canonical_json(normalized),
-                        digest,
-                        observed_text,
-                        str(source_capture_id),
-                    ),
-                )
-                counts["inserted" if latest is None else "revised"] += 1
-                highest_watermark = max(highest_watermark, watermark)
+                    )
+                    latest = self.connection.execute(
+                        "SELECT watermark, content_sha256 FROM equity_bar_revisions "
+                        "WHERE provider = ? AND symbol = ? AND timeframe = ? "
+                        "AND adjustment = ? AND bar_end_at = ? "
+                        "ORDER BY watermark DESC LIMIT 1",
+                        key,
+                    ).fetchone()
+                    if latest is not None and str(latest["content_sha256"]) == digest:
+                        counts["unchanged"] += 1
+                        highest_watermark = max(highest_watermark, int(latest["watermark"]))
+                        continue
+
+                    change_kind = "bar_revision" if latest is not None else "bar_insert"
+                    cursor = self.connection.execute(
+                        "INSERT INTO equity_data_watermarks(recorded_at, change_kind, trading_date) "
+                        "VALUES (?, ?, ?)",
+                        (observed_text, change_kind, normalized_date),
+                    )
+                    watermark = int(cursor.lastrowid)
+                    self.connection.execute(
+                        """
+                        INSERT INTO equity_bar_revisions
+                          (watermark, provider, symbol, timeframe, adjustment, bar_end_at,
+                           trading_date, bar_json, content_sha256, observed_at, source_capture_id)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            watermark,
+                            provider,
+                            normalized["symbol"],
+                            timeframe,
+                            adjustment,
+                            normalized["bar_end_at"],
+                            normalized_date,
+                            _canonical_json(normalized),
+                            digest,
+                            observed_text,
+                            str(source_capture_id),
+                        ),
+                    )
+                    counts["inserted" if latest is None else "revised"] += 1
+                    highest_watermark = max(highest_watermark, watermark)
+                self._check_cleanup_deadline(deadline_check)
         counts["watermark"] = highest_watermark
         return counts
 

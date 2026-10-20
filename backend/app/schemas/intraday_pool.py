@@ -78,3 +78,4 @@ class IntradayCollectionPlanResponse(BaseModel):
     quote_symbols: list[str]
     minute_symbols: list[str]
     display_group_by_symbol: dict[str, str]
+    asset_type_by_symbol: dict[str, str] = Field(default_factory=dict)

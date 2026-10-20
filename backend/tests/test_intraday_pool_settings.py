@@ -13,6 +13,17 @@ from app.decision_harness.contracts import content_sha256
 from app.main import create_app
 
 
+def test_collection_plan_exposes_member_asset_types_for_stock_only_prewarm(pool_client):
+    client, _app = pool_client
+    response = client.get("/api/intraday/collection-plan?trading_date=2026-10-19")
+    assert response.status_code == 200
+    plan = response.json()
+    types = plan["asset_type_by_symbol"]
+    assert set(types) == set(plan["member_symbols"])
+    assert types["INTC"] == "equity"
+    assert types["SMH"] == "etf"
+    assert all(types[symbol] != "equity" for symbol in ("SPY", "QQQ", "IWM"))
+    assert content_sha256({key: value for key, value in plan.items() if key != "plan_id"}) == plan["plan_id"]
 
 
 def _write_legacy_capture(

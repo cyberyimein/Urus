@@ -224,6 +224,123 @@ class OpenDMarketAdapter:
 
         return self._quota_snapshot()
 
+    def fetch_intraday_history_5m(
+        self,
+        symbol: str,
+        trading_date: str,
+        *,
+        deadline_at: datetime,
+        timestamp_role: str = "start",
+    ) -> list[dict[str, object]]:
+        """Fetch one regular-session 5m history page set within a request budget."""
+
+        if timestamp_role not in {"start", "end"}:
+            raise ValueError("timestamp_role must be 'start' or 'end'")
+        session_day = date.fromisoformat(str(trading_date))
+        normalized_symbol = normalize_equity_symbol(symbol)
+        budget_deadline = deadline_at
+        if budget_deadline.tzinfo is None:
+            budget_deadline = budget_deadline.replace(tzinfo=ZoneInfo(self.market_timezone))
+        remaining = (budget_deadline.astimezone(UTC) - datetime.now(UTC)).total_seconds()
+        timeout_seconds = max(0.1, min(DEFAULT_EQUITY_REQUEST_TIMEOUT_SECONDS, remaining))
+        with self._request_budget(deadline_at, timeout_seconds):
+            sdk = self._ensure_sdk()
+            quote_context = self._quote_ctx
+            request_method = getattr(quote_context, "request_history_kline", None)
+            if not callable(request_method):
+                raise RuntimeError("OpenD 5m history method unavailable")
+
+            rows: list[dict[str, object]] = []
+            page_req_key: Any = None
+            while True:
+                self._pace(
+                    "_last_history_request_at",
+                    self.history_request_interval_seconds,
+                    rate_class="moomoo_quote_history",
+                )
+                with self._sdk_request_timeout():
+                    response = request_method(
+                        code=f"US.{normalized_symbol}",
+                        start=session_day.isoformat(),
+                        end=session_day.isoformat(),
+                        ktype=getattr(getattr(sdk, "KLType", None), "K_5M", "K_5M"),
+                        autype=getattr(getattr(sdk, "AuType", None), "NONE", "None"),
+                        max_count=1000,
+                        page_req_key=page_req_key,
+                        extended_time=False,
+                    )
+                if not isinstance(response, tuple) or len(response) < 2:
+                    raise RuntimeError(f"unexpected 5m history response: {response!r}")
+                ret_code, raw_frame = response[0], response[1]
+                next_page_req_key = response[2] if len(response) >= 3 else None
+                if ret_code != getattr(sdk, "RET_OK", 0):
+                    raise RuntimeError(
+                        f"request_history_kline(US.{normalized_symbol}, K_5M) failed: {raw_frame}"
+                    )
+                rows.extend(_iter_rows(raw_frame))
+                if next_page_req_key is None:
+                    break
+                if next_page_req_key == page_req_key:
+                    raise RuntimeError("5m history pagination key did not advance")
+                page_req_key = next_page_req_key
+
+            bars: list[dict[str, object]] = []
+            market_timezone = ZoneInfo(self.market_timezone)
+            for row in rows:
+                raw_time = str(row.get("time_key") or row.get("bar_time") or "").strip()
+                if not raw_time:
+                    continue
+                try:
+                    source_time = datetime.fromisoformat(raw_time.replace("Z", "+00:00"))
+                    if source_time.tzinfo is None:
+                        source_time = source_time.replace(tzinfo=market_timezone)
+                    source_time = source_time.astimezone(UTC)
+                    if timestamp_role == "start":
+                        bar_start = source_time
+                        bar_end = bar_start + timedelta(minutes=5)
+                    else:
+                        bar_end = source_time
+                        bar_start = bar_end - timedelta(minutes=5)
+                    values = {
+                        field: _number(row, [field])
+                        for field in ("open", "high", "low", "close", "volume", "turnover")
+                    }
+                except (TypeError, ValueError, KeyError, OverflowError):
+                    continue
+                if bar_start.astimezone(market_timezone).date() != session_day:
+                    continue
+                if any(
+                    not math.isfinite(value)
+                    for value in values.values()
+                ):
+                    continue
+                if any(values[field] <= 0 for field in ("open", "high", "low", "close")):
+                    continue
+                if values["volume"] < 0 or values["turnover"] < 0:
+                    continue
+                if not (
+                    values["low"]
+                    <= min(values["open"], values["close"])
+                    <= max(values["open"], values["close"])
+                    <= values["high"]
+                ):
+                    continue
+                bars.append(
+                    {
+                        "provider": "moomoo_openapi",
+                        "symbol": normalized_symbol,
+                        "timeframe": "5m",
+                        "adjustment": "none",
+                        "trading_date": session_day.isoformat(),
+                        "bar_start_at": bar_start.isoformat(),
+                        "bar_end_at": bar_end.isoformat(),
+                        **values,
+                        "vwap": _optional_number(row, ["vwap", "wavg"]),
+                        "quality_state": "ready",
+                    }
+                )
+            return bars
+
     def trading_days(self, start: date, end: date) -> list[dict[str, Any]]:
         """Return Moomoo's US trading-date calendar for an inclusive range."""
 

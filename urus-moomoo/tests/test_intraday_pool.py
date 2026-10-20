@@ -51,8 +51,44 @@ def _task() -> CollectionTask:
     )
 
 
+def test_maintenance_prewarm_uses_asset_types_instead_of_shard_members(tmp_path: Path) -> None:
+    from urus_moomoo.intraday_pool import IntradayPoolPlanLoader
+
+    plan = _plan("2026-10-19")
+    plan["asset_type_by_symbol"] = {"AAA": "equity", "SPY": "market", "QQQ": "etf", "IWM": "etf"}
+    definition = {key: value for key, value in plan.items() if key != "plan_id"}
+    plan["plan_id"] = hashlib.sha256(json.dumps(
+        definition, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode()).hexdigest()
+    store = CollectorStore(tmp_path / "collector.sqlite")
+    loader = IntradayPoolPlanLoader(
+        api_url="http://urus:8000", timeout_seconds=5, store=store,
+        get=lambda _url, _timeout: (200, plan),
+    )
+    task = CollectionTask("maintenance", True, "pre-open", (), "maintain_intraday_equities")
+    try:
+        prepared = loader.prepare_task(task, date(2026, 10, 19))
+        assert prepared.symbols == tuple(plan["member_symbols"])
+        assert prepared.params["prewarm_symbols"] == ["AAA"]
+    finally:
+        store.close()
 
 
+def test_legacy_frozen_plan_does_not_guess_stock_prewarm_scope(tmp_path: Path) -> None:
+    from urus_moomoo.intraday_pool import IntradayPoolPlanLoader
+
+    store = CollectorStore(tmp_path / "collector.sqlite")
+    loader = IntradayPoolPlanLoader(
+        api_url="http://urus:8000", timeout_seconds=5, store=store,
+        get=lambda _url, _timeout: (200, _plan("2026-10-19")),
+    )
+    task = CollectionTask("maintenance", True, "pre-open", (), "maintain_intraday_equities")
+    try:
+        prepared = loader.prepare_task(task, date(2026, 10, 19))
+        assert prepared.params["prewarm_symbols"] == []
+        assert prepared.params["prewarm_scope_reason"] == "asset_types_unavailable"
+    finally:
+        store.close()
 
 
 def test_collector_store_freezes_one_plan_per_trading_date(tmp_path: Path) -> None:

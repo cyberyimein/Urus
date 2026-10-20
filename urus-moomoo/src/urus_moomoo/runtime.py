@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
 import hashlib
@@ -15,6 +16,7 @@ from urus_moomoo.contracts import capture_contract
 from urus_moomoo.services.intraday_equities import (
     build_minute_timestamp_policy,
     build_intraday_equity_plan,
+    normalize_equity_symbol,
     normalize_equity_shard_symbols,
 )
 from urus_moomoo.services.calendar import exchange_session_time_calendar
@@ -1277,6 +1279,29 @@ class CollectorRuntime:
 
         self.store.delete_meta("equity_retention_pending_date")
         self.store.delete_meta("equity_retention_pending_reason")
+        try:
+            history_prewarm = self._prewarm_equity_macd_history(
+                task,
+                trading_date,
+                deadline=deadline,
+                deadline_check=deadline_check,
+            )
+        except Exception as exc:
+            logger.exception("intraday MACD history prewarm failed: task=%s", task.name)
+            history_prewarm = {
+                "trading_date": trading_date,
+                "target_bars": 100,
+                "scope_reason": "prewarm_failed",
+                "summary": {
+                    "cache_hit": 0,
+                    "requested": 0,
+                    "completed": 0,
+                    "skipped": 0,
+                    "failed": 1,
+                },
+                "symbols": [],
+                "error": str(exc),
+            }
         return {
             "scheduled_at": scheduled_at.isoformat(),
             "contract": None,
@@ -1286,7 +1311,462 @@ class CollectorRuntime:
             "maintenance_pending": False,
             "trading_date": trading_date,
             "storage_retention": summary or {"enabled": True, "applied": False},
+            "history_prewarm": history_prewarm,
         }
+
+    def _prewarm_equity_macd_history(
+        self,
+        task: CollectionTask,
+        trading_date: str,
+        *,
+        deadline: datetime,
+        deadline_check: Callable[[], bool],
+    ) -> dict[str, Any]:
+        target_bars = 100
+        params = dict(task.params or {})
+        raw_symbols = params.get("prewarm_symbols")
+        scope_reason = str(params.get("prewarm_scope_reason") or "").strip()
+        if scope_reason or not isinstance(raw_symbols, list):
+            return self._save_history_prewarm_audit(
+                trading_date,
+                target_bars=target_bars,
+                symbols=[],
+                scope_reason=scope_reason or "prewarm_scope_unavailable",
+            )
+
+        allowed = set()
+        for raw_symbol in task.symbols:
+            try:
+                allowed.add(normalize_equity_symbol(raw_symbol))
+            except ValueError:
+                continue
+        symbols = []
+        for raw_symbol in raw_symbols:
+            try:
+                symbol = normalize_equity_symbol(raw_symbol)
+            except ValueError:
+                continue
+            if symbol in allowed and symbol not in symbols:
+                symbols.append(symbol)
+        if not symbols:
+            return self._save_history_prewarm_audit(
+                trading_date,
+                target_bars=target_bars,
+                symbols=[],
+                scope_reason="no_equity_symbols",
+            )
+
+        history = self.store.equity_history
+        recent_dates = [
+            item
+            for item in history.recent_trading_dates(trading_date, count=4)
+            if item < trading_date
+        ][-3:]
+        grids = {
+            session_date: self._regular_five_minute_grid(session_date)
+            for session_date in recent_dates
+        }
+        reports: dict[str, dict[str, Any]] = {}
+        cached: dict[str, dict[str, list[dict[str, Any]]]] = {}
+        missing_by_symbol: dict[str, list[str]] = {}
+        for symbol in symbols:
+            try:
+                cached[symbol] = {
+                    session_date: history.read_five_minute_session_bars(
+                        symbol,
+                        session_date,
+                        deadline_check=deadline_check,
+                    )
+                    for session_date in recent_dates
+                }
+            except CleanupDeadlineExceeded:
+                cached[symbol] = {}
+                reports[symbol] = {
+                    "symbol": symbol,
+                    "status": "skipped",
+                    "warmup_bars": 0,
+                    "requested_dates": [],
+                    "attempts": 0,
+                    "reason_code": "maintenance_deadline",
+                }
+                continue
+            except Exception as exc:
+                cached[symbol] = {}
+                reports[symbol] = {
+                    "symbol": symbol,
+                    "status": "failed",
+                    "warmup_bars": 0,
+                    "requested_dates": [],
+                    "attempts": 0,
+                    "reason_code": "storage_error",
+                    "error": str(exc),
+                }
+                continue
+
+            warmup_bars = _history_suffix_count(
+                symbol,
+                recent_dates,
+                cached[symbol],
+                grids,
+                market_timezone=self.config.market_timezone,
+            )
+            if warmup_bars >= target_bars:
+                reports[symbol] = {
+                    "symbol": symbol,
+                    "status": "cache_hit",
+                    "warmup_bars": warmup_bars,
+                    "requested_dates": [],
+                    "attempts": 0,
+                    "reason_code": None,
+                }
+                continue
+            missing_dates = _history_dates_to_fill(
+                symbol,
+                recent_dates,
+                cached[symbol],
+                grids,
+                target_bars=target_bars,
+                market_timezone=self.config.market_timezone,
+            )
+            if not missing_dates:
+                reports[symbol] = {
+                    "symbol": symbol,
+                    "status": "skipped",
+                    "warmup_bars": warmup_bars,
+                    "requested_dates": [],
+                    "attempts": 0,
+                    "reason_code": "insufficient_recent_sessions",
+                }
+                continue
+            missing_by_symbol[symbol] = missing_dates
+            reports[symbol] = {
+                "symbol": symbol,
+                "status": "pending",
+                "warmup_bars": warmup_bars,
+                "requested_dates": [],
+                "attempts": 0,
+                "reason_code": None,
+            }
+
+        missing_symbols = list(missing_by_symbol)
+        if not missing_symbols:
+            return self._save_history_prewarm_audit(
+                trading_date,
+                target_bars=target_bars,
+                symbols=[reports[symbol] for symbol in symbols],
+            )
+
+        projected_metrics = sum(
+            len(grids[session_date]) * 512
+            for session_dates in missing_by_symbol.values()
+            for session_date in session_dates
+        )
+        capacity = history.capacity_policy(
+            history.measure_capacity(),
+            projected_metrics_bytes=projected_metrics,
+        )
+        if capacity["skip_all_equities"] or capacity["defer_warmup"]:
+            for symbol in missing_symbols:
+                reports[symbol].update(status="skipped", reason_code="storage_budget")
+            return self._save_history_prewarm_audit(
+                trading_date,
+                target_bars=target_bars,
+                symbols=[reports[symbol] for symbol in symbols],
+            )
+
+        fetch_history = getattr(self.provider, "fetch_intraday_history_5m", None)
+        if not callable(fetch_history):
+            for symbol in missing_symbols:
+                reports[symbol].update(
+                    status="skipped", reason_code="history_provider_unavailable"
+                )
+            return self._save_history_prewarm_audit(
+                trading_date,
+                target_bars=target_bars,
+                symbols=[reports[symbol] for symbol in symbols],
+            )
+
+        if deadline_check():
+            for symbol in missing_symbols:
+                reports[symbol].update(status="skipped", reason_code="maintenance_deadline")
+            return self._save_history_prewarm_audit(
+                trading_date,
+                target_bars=target_bars,
+                symbols=[reports[symbol] for symbol in symbols],
+            )
+
+        self.history_admission.reset_run()
+        self.history_admission.prepare_symbols([f"US.{symbol}" for symbol in missing_symbols])
+        if not self.coordinator.acquire_with_timeout(0):
+            for symbol in missing_symbols:
+                reports[symbol].update(status="skipped", reason_code="collection_lock_busy")
+            return self._save_history_prewarm_audit(
+                trading_date,
+                target_bars=target_bars,
+                symbols=[reports[symbol] for symbol in symbols],
+            )
+
+        try:
+            request_budget = getattr(self.provider, "_request_budget", None)
+            remaining_seconds = (_aware_utc(deadline) - _aware_utc(self.clock())).total_seconds()
+            timeout_seconds = max(0.1, min(3.0, remaining_seconds))
+            quota_budget = (
+                request_budget(deadline, timeout_seconds)
+                if callable(request_budget)
+                else nullcontext()
+            )
+            try:
+                with quota_budget:
+                    admissions = self.history_admission.acquire_many(
+                        [f"US.{symbol}" for symbol in missing_symbols],
+                        now=_aware_utc(self.clock()),
+                    )
+            except Exception as exc:
+                for symbol in missing_symbols:
+                    reports[symbol].update(
+                        status="skipped",
+                        reason_code="quota_unavailable",
+                        error=str(exc),
+                    )
+                return self._save_history_prewarm_audit(
+                    trading_date,
+                    target_bars=target_bars,
+                    symbols=[reports[symbol] for symbol in symbols],
+                )
+
+            if deadline_check():
+                for symbol in missing_symbols:
+                    reports[symbol].update(status="skipped", reason_code="maintenance_deadline")
+                return self._save_history_prewarm_audit(
+                    trading_date,
+                    target_bars=target_bars,
+                    symbols=[reports[symbol] for symbol in symbols],
+                )
+
+            admission_by_symbol: dict[str, dict[str, Any]] = {}
+            for item in admissions:
+                try:
+                    symbol = normalize_equity_symbol(str(item.get("symbol") or ""))
+                except ValueError:
+                    continue
+                admission_by_symbol[symbol] = item
+            timestamp_role = self._intraday_history_timestamp_role()
+            for symbol in missing_symbols:
+                report = reports[symbol]
+                try:
+                    admission = admission_by_symbol.get(symbol, {})
+                    if not admission.get("admitted"):
+                        report.update(
+                            status="skipped",
+                            reason_code=str(admission.get("reason_code") or "quota_unavailable"),
+                        )
+                        continue
+
+                    for session_date in missing_by_symbol[symbol]:
+                        if deadline_check():
+                            report.update(status="skipped", reason_code="maintenance_deadline")
+                            break
+                        if session_date not in report["requested_dates"]:
+                            report["requested_dates"].append(session_date)
+                        session_complete = False
+                        for _attempt in range(2):
+                            if deadline_check():
+                                report.update(
+                                    status="skipped", reason_code="maintenance_deadline"
+                                )
+                                break
+                            report["attempts"] += 1
+                            try:
+                                provider_bars = fetch_history(
+                                    symbol,
+                                    session_date,
+                                    deadline_at=deadline,
+                                    timestamp_role=timestamp_role,
+                                )
+                            except Exception as exc:
+                                report["error"] = str(exc)
+                                report["reason_code"] = "provider_error"
+                                continue
+
+                            observed_at = _aware_utc(self.clock())
+                            if observed_at >= _aware_utc(deadline):
+                                report.update(
+                                    status="skipped", reason_code="maintenance_deadline"
+                                )
+                                break
+                            accepted = _regular_history_bars(
+                                provider_bars,
+                                symbol=symbol,
+                                expected_grid=grids[session_date],
+                                market_timezone=self.config.market_timezone,
+                            )
+                            if deadline_check():
+                                report.update(
+                                    status="skipped", reason_code="maintenance_deadline"
+                                )
+                                break
+                            if not accepted:
+                                report["reason_code"] = "incomplete_session_history"
+                                continue
+
+                            write = history.upsert_bars(
+                                accepted,
+                                timeframe="5m",
+                                trading_date=session_date,
+                                source_capture_id=(
+                                    f"intraday-macd-prewarm:{trading_date}:{symbol}:{session_date}"
+                                ),
+                                observed_at=observed_at,
+                                strict=False,
+                                deadline_check=deadline_check,
+                            )
+                            report["inserted"] = int(report.get("inserted", 0)) + int(
+                                write.get("inserted", 0)
+                            )
+                            report["unchanged"] = int(report.get("unchanged", 0)) + int(
+                                write.get("unchanged", 0)
+                            )
+                            report["invalid"] = int(report.get("invalid", 0)) + int(
+                                write.get("invalid", 0)
+                            )
+                            cached[symbol][session_date] = history.read_five_minute_session_bars(
+                                symbol,
+                                session_date,
+                                deadline_check=deadline_check,
+                            )
+                            if deadline_check():
+                                report.update(
+                                    status="skipped", reason_code="maintenance_deadline"
+                                )
+                                break
+                            if (
+                                _history_suffix_count(
+                                    symbol,
+                                    recent_dates,
+                                    cached[symbol],
+                                    grids,
+                                    market_timezone=self.config.market_timezone,
+                                )
+                                >= target_bars
+                                or _session_suffix_count(
+                                    symbol,
+                                    cached[symbol][session_date],
+                                    grids[session_date],
+                                    market_timezone=self.config.market_timezone,
+                                )
+                                == len(grids[session_date])
+                            ):
+                                session_complete = True
+                                break
+                            report["reason_code"] = "incomplete_session_history"
+                        if report["status"] == "skipped":
+                            break
+                        if not session_complete:
+                            report.update(
+                                status="failed",
+                                reason_code=report.get("reason_code")
+                                or "incomplete_session_history",
+                            )
+                            break
+
+                    report["warmup_bars"] = _history_suffix_count(
+                        symbol,
+                        recent_dates,
+                        cached[symbol],
+                        grids,
+                        market_timezone=self.config.market_timezone,
+                    )
+                    if report["status"] == "skipped":
+                        continue
+                    if report["warmup_bars"] >= target_bars:
+                        report.update(status="completed", reason_code=None)
+                    elif report["status"] != "failed":
+                        report.update(status="failed", reason_code="insufficient_history")
+                except CleanupDeadlineExceeded as exc:
+                    report.update(
+                        status="skipped",
+                        reason_code="maintenance_deadline",
+                        error=str(exc),
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "intraday MACD history prewarm failed for symbol %s: %s",
+                        symbol,
+                        exc,
+                    )
+                    report.update(status="failed", reason_code="storage_error", error=str(exc))
+        finally:
+            self.coordinator.close()
+
+        return self._save_history_prewarm_audit(
+            trading_date,
+            target_bars=target_bars,
+            symbols=[reports[symbol] for symbol in symbols],
+        )
+
+    def _regular_five_minute_grid(
+        self,
+        trading_date: str,
+    ) -> list[tuple[datetime, datetime]]:
+        session_date = date.fromisoformat(trading_date)
+        calendar = exchange_session_time_calendar(self.config.exchange_calendar)
+        opened = calendar.session_open(session_date)
+        closed = calendar.session_close(session_date)
+        if hasattr(opened, "to_pydatetime"):
+            opened = opened.to_pydatetime()
+        if hasattr(closed, "to_pydatetime"):
+            closed = closed.to_pydatetime()
+        if not isinstance(opened, datetime) or not isinstance(closed, datetime):
+            return []
+        start = _aware_utc(opened)
+        end = _aware_utc(closed)
+        result = []
+        while start + timedelta(minutes=5) <= end:
+            finish = start + timedelta(minutes=5)
+            result.append((start, finish))
+            start = finish
+        return result
+
+    def _intraday_history_timestamp_role(self) -> str:
+        for configured_task in self.config.tasks:
+            if configured_task.operation.strip() != "capture_intraday_equities":
+                continue
+            role = str(dict(configured_task.params or {}).get("minute_timestamp_role") or "start")
+            return role if role in {"start", "end"} else "start"
+        return "start"
+
+    def _save_history_prewarm_audit(
+        self,
+        trading_date: str,
+        *,
+        target_bars: int,
+        symbols: list[dict[str, Any]],
+        scope_reason: str | None = None,
+    ) -> dict[str, Any]:
+        summary = {
+            "cache_hit": sum(item.get("status") == "cache_hit" for item in symbols),
+            "requested": sum(bool(item.get("requested_dates")) for item in symbols),
+            "completed": sum(item.get("status") == "completed" for item in symbols),
+            "skipped": sum(item.get("status") == "skipped" for item in symbols),
+            "failed": sum(item.get("status") == "failed" for item in symbols),
+        }
+        audit = {
+            "trading_date": trading_date,
+            "target_bars": target_bars,
+            "scope_reason": scope_reason,
+            "summary": summary,
+            "symbols": symbols,
+            "recorded_at": _aware_utc(self.clock()).isoformat(),
+        }
+        self.store.set_meta(
+            f"intraday_history_prewarm:{trading_date}",
+            json.dumps(audit, ensure_ascii=False, sort_keys=True),
+        )
+        logger.info(
+            "intraday MACD history prewarm: %s",
+            json.dumps(audit, ensure_ascii=False, sort_keys=True),
+        )
+        return audit
 
     def _equity_maintenance_failure(
         self,
@@ -1563,6 +2043,177 @@ def _aware_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
+
+
+def _history_bar_time(value: object, market_timezone: str) -> datetime | None:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str) and value.strip():
+        try:
+            parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=ZoneInfo(market_timezone))
+    return _aware_utc(parsed)
+
+
+def _session_suffix_count(
+    symbol: str,
+    bars: list[dict[str, Any]],
+    expected_grid: list[tuple[datetime, datetime]],
+    *,
+    market_timezone: str,
+) -> int:
+    actual = set()
+    for bar in _regular_history_bars(
+        bars,
+        symbol=symbol,
+        expected_grid=expected_grid,
+        market_timezone=market_timezone,
+    ):
+        start = _history_bar_time(bar.get("bar_start_at"), "UTC")
+        end = _history_bar_time(bar.get("bar_end_at"), "UTC")
+        if start is not None and end is not None:
+            actual.add((start, end))
+
+    count = 0
+    for expected in reversed(expected_grid):
+        if expected not in actual:
+            break
+        count += 1
+    return count
+
+
+def _history_suffix_count(
+    symbol: str,
+    recent_dates: list[str],
+    cached: dict[str, list[dict[str, Any]]],
+    grids: dict[str, list[tuple[datetime, datetime]]],
+    *,
+    market_timezone: str,
+) -> int:
+    count = 0
+    for session_date in reversed(recent_dates):
+        expected_grid = grids.get(session_date, [])
+        if not expected_grid:
+            break
+        session_count = _session_suffix_count(
+            symbol,
+            cached.get(session_date, []),
+            expected_grid,
+            market_timezone=market_timezone,
+        )
+        count += session_count
+        if session_count < len(expected_grid):
+            break
+    return count
+
+
+def _history_dates_to_fill(
+    symbol: str,
+    recent_dates: list[str],
+    cached: dict[str, list[dict[str, Any]]],
+    grids: dict[str, list[tuple[datetime, datetime]]],
+    *,
+    target_bars: int,
+    market_timezone: str,
+) -> list[str]:
+    dates_to_fill: list[str] = []
+    possible_suffix = 0
+    for session_date in reversed(recent_dates):
+        expected_grid = grids.get(session_date, [])
+        if not expected_grid:
+            break
+        suffix_count = _session_suffix_count(
+            symbol,
+            cached.get(session_date, []),
+            expected_grid,
+            market_timezone=market_timezone,
+        )
+        if suffix_count < len(expected_grid):
+            dates_to_fill.append(session_date)
+            possible_suffix += len(expected_grid)
+        else:
+            possible_suffix += suffix_count
+        if possible_suffix >= target_bars:
+            break
+    return dates_to_fill
+
+
+def _regular_history_bars(
+    provider_bars: object,
+    *,
+    symbol: str,
+    expected_grid: list[tuple[datetime, datetime]],
+    market_timezone: str,
+) -> list[dict[str, Any]]:
+    if not isinstance(provider_bars, list):
+        raise TypeError("5m history provider must return a list of bars")
+    expected = set(expected_grid)
+    accepted: dict[tuple[datetime, datetime], dict[str, Any]] = {}
+    for raw_bar in provider_bars:
+        if not isinstance(raw_bar, dict):
+            continue
+        raw_symbol = raw_bar.get("symbol")
+        try:
+            normalized_symbol = normalize_equity_symbol(raw_symbol)
+        except ValueError:
+            continue
+        if normalized_symbol != symbol:
+            continue
+        if raw_bar.get("provider") not in {None, "moomoo_openapi"}:
+            continue
+        if raw_bar.get("timeframe") not in {None, "5m", "K_5M"}:
+            continue
+        if raw_bar.get("adjustment") not in {None, "none"}:
+            continue
+        if raw_bar.get("quality_state", "ready") != "ready":
+            continue
+        start = _history_bar_time(raw_bar.get("bar_start_at"), market_timezone)
+        end = _history_bar_time(raw_bar.get("bar_end_at"), market_timezone)
+        if start is None or end is None or (start, end) not in expected:
+            continue
+        try:
+            if any(
+                isinstance(raw_bar[field], bool)
+                for field in ("open", "high", "low", "close", "volume", "turnover")
+            ):
+                continue
+            values = {
+                field: float(raw_bar[field])
+                for field in ("open", "high", "low", "close", "volume", "turnover")
+            }
+        except (KeyError, TypeError, ValueError, OverflowError):
+            continue
+        if not all(math.isfinite(value) for value in values.values()):
+            continue
+        if any(values[field] <= 0 for field in ("open", "high", "low", "close")):
+            continue
+        if values["volume"] < 0 or values["turnover"] < 0:
+            continue
+        if not (
+            values["low"]
+            <= min(values["open"], values["close"])
+            <= max(values["open"], values["close"])
+            <= values["high"]
+        ):
+            continue
+        accepted[(start, end)] = {
+            "provider": "moomoo_openapi",
+            "symbol": symbol,
+            "timeframe": "5m",
+            "adjustment": "none",
+            "trading_date": start.astimezone(ZoneInfo(market_timezone)).date().isoformat(),
+            "bar_start_at": start.isoformat(),
+            "bar_end_at": end.isoformat(),
+            **values,
+            "vwap": raw_bar.get("vwap"),
+            "quality_state": "ready",
+        }
+    return [accepted[key] for key in sorted(accepted)]
 
 
 def _as_nonnegative_int(value: object) -> int:

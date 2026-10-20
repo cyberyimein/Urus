@@ -73,6 +73,18 @@ class IntradayPoolPlanLoader:
         params["pool_plan_id"] = str(plan["plan_id"])
         params["pool_revision"] = int(plan["pool_revision"])
         params["display_group_by_symbol"] = dict(plan["display_group_by_symbol"])
+        if task.operation.strip() == "maintain_intraday_equities":
+            asset_types = plan.get("asset_type_by_symbol")
+            types_available = isinstance(asset_types, Mapping) and all(
+                symbol in asset_types for symbol in members
+            )
+            params["prewarm_symbols"] = (
+                [symbol for symbol in members if asset_types[symbol] == "equity"]
+                if types_available else []
+            )
+            params["prewarm_scope_reason"] = (
+                None if types_available else "asset_types_unavailable"
+            )
 
         is_capture = task.operation.strip() in {
             "capture_intraday_equities",

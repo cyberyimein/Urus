@@ -561,6 +561,10 @@ class IntradayPoolRepository:
             "quote_symbols": list(members),
             "minute_symbols": list(members),
             "display_group_by_symbol": dict(chosen["display_group_by_symbol"]),
+            "asset_type_by_symbol": {
+                symbol: catalog[symbol].asset_type if symbol in catalog else "unknown"
+                for symbol in members
+            },
         }
         return IntradayCollectionPlanResponse(
             plan_id=content_sha256(definition), **definition
