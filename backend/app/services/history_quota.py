@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings
 from app.core.time import as_utc, utc_now
+from app.core.symbols import normalize_symbol
 from app.models.market_data_capacity import (
     HistoryCollectionStateModel,
     HistoryQuotaSnapshotModel,
@@ -25,11 +26,6 @@ SNAPSHOT_ID = f"{HISTORY_PROVIDER}:{HISTORY_QUOTA_KIND}"
 
 class QuotaReader(Protocol):
     def __call__(self) -> dict[str, object]: ...
-
-
-def normalize_symbol(value: object) -> str:
-    text = str(value or "").strip().upper()
-    return text.split(".")[-1] if "." in text else text
 
 
 def history_symbols_from_items(items: Iterable[Any]) -> list[str]:

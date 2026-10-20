@@ -7,6 +7,8 @@ import math
 from typing import Any, Callable, Protocol
 from uuid import uuid4
 
+from urus_moomoo.symbols import normalize_symbol
+
 
 HISTORY_PROVIDER = "moomoo_openapi"
 HISTORY_QUOTA_KIND = "history_candlestick"
@@ -18,11 +20,6 @@ _SYMBOL_DETAIL_CONTAINERS = {
 
 class QuotaReader(Protocol):
     def __call__(self) -> dict[str, object]: ...
-
-
-def normalize_symbol(value: object) -> str:
-    text = str(value or "").strip().upper()
-    return text.split(".")[-1] if "." in text else text
 
 
 def history_symbols_from_items(items: Iterable[Any]) -> list[str]:

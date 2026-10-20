@@ -13,6 +13,7 @@ from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
 from app.analytics.technical import calculate_relative_strength, calculate_technical_indicators
+from app.core.symbols import normalize_quote_code, normalize_symbol
 
 logger = logging.getLogger(__name__)
 
@@ -331,7 +332,7 @@ class OpenDMarketAdapter:
             logger.warning("Moomoo OpenD context close timed out; continuing shutdown")
 
     def market_card(self, symbol: str) -> dict[str, object]:
-        display_symbol = symbol.split(".")[-1].upper()
+        display_symbol = _display_symbol(symbol)
         quote_code = _normalise_quote_code(symbol)
         requested_codes = list(self.market_symbols)
         if quote_code not in requested_codes:
@@ -916,10 +917,7 @@ class OpenDMarketAdapter:
 
 
 def _normalise_quote_code(symbol: str | None) -> str:
-    value = str(symbol or "").strip().upper()
-    if not value:
-        raise ValueError("行情代码不能为空")
-    return value if "." in value else f"US.{value}"
+    return normalize_quote_code(symbol)
 
 
 def _unique_quote_codes(symbols: list[str] | tuple[str, ...]) -> list[str]:
@@ -932,7 +930,7 @@ def _unique_quote_codes(symbols: list[str] | tuple[str, ...]) -> list[str]:
 
 
 def _display_symbol(quote_code: str) -> str:
-    return quote_code.split(".")[-1].upper()
+    return normalize_symbol(quote_code)
 
 
 def _instrument_theme(symbol: str) -> str:

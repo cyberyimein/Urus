@@ -92,6 +92,19 @@ class FakeQuoteContext:
         self.closed = True
 
 
+def test_market_card_preserves_share_class_in_card_and_snapshot():
+    context = FakeQuoteContext()
+    adapter = OpenDMarketAdapter("test", 11111, sdk=FakeSdk(), quote_context=context)
+    try:
+        card = adapter.market_card("BRK.A")
+    finally:
+        adapter.close()
+    assert card["symbol"] == "BRK.A"
+    assert card["quote_code"] == "US.BRK.A"
+    assert context.snapshot_calls[0][0] == "US.BRK.A"
+    assert any(row["symbol"] == "BRK.A" for row in card["market_snapshot"]["quotes"])
+
+
 def test_opend_close_returns_when_sdk_close_blocks() -> None:
     release = threading.Event()
 

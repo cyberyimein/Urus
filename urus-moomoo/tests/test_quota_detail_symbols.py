@@ -1,9 +1,42 @@
+import pytest
+
+from urus_moomoo.integrations.moomoo import _display_symbol, _normalise_quote_code
 from urus_moomoo.services.quota import (
     HistoryAdmission,
     HistoryCapacityService,
     detail_symbols,
     normalize_quota_payload,
+    normalize_symbol,
 )
+
+
+@pytest.mark.parametrize("value,ticker,quote_code", [
+    ("BRK.A", "BRK.A", "US.BRK.A"),
+    (" us.brk.b ", "BRK.B", "US.BRK.B"),
+    ("A", "A", "US.A"),
+    ("US.A", "A", "US.A"),
+    ("HK.00700", "00700", "HK.00700"),
+    ("SH.600519", "600519", "SH.600519"),
+])
+def test_share_class_identity_is_preserved_through_quota_and_quotes(value, ticker, quote_code):
+    assert normalize_symbol(value) == ticker
+    assert _display_symbol(value) == ticker
+    assert _normalise_quote_code(value) == quote_code
+
+
+@pytest.mark.parametrize("remaining,expected_admitted", [(0, [False, True]), (2, [True, True])])
+def test_share_class_admission_does_not_borrow_plain_ticker_quota(remaining, expected_admitted):
+    admission = HistoryAdmission(
+        HistoryCapacityService(reserve_absolute=0, reserve_ratio=0),
+        quota_reader=lambda: {
+            "available": True, "used": 1, "remain": remaining,
+            "detail_list": [{"code": "US.A"}],
+        },
+    )
+    admission.prepare_symbols(["BRK.A", "A"])
+    decisions = admission.acquire_many(["US.BRK.A", "US.A"])
+    assert [item["symbol"] for item in decisions] == ["BRK.A", "A"]
+    assert [item["admitted"] for item in decisions] == expected_admitted
 
 
 def test_detail_symbols_uses_code_fields_not_ticker_like_names() -> None:

@@ -31,6 +31,27 @@ collector 测试从 `urus-moomoo` 目录使用 `../backend/.venv/bin/pytest`，�
 
 在静态审查和定向回归中没有发现可复现的 P1/P2 缺陷。Starlette/httpx 的弃用提示仍存在，但不影响本轮行为结果。
 
+## 额度身份修复复核（2026-10-20）
+
+本轮重新复核了 backend 与 collector 的股票身份解析。两侧现在共用“只剥离已知
+市场前缀”的规则：`US.BRK.A` 映射为 `BRK.A`，而 `BRK.A` 内部的类别点会保留；
+`A` 仍是独立的普通 ticker，行情代码分别为 `US.BRK.A` 与 `US.A`。因此 share
+class 不会再与普通股票 A 共用额度或 scope 身份。
+
+定向证据如下：
+
+- backend `test_quota_detail_identity.py` 与 market-card/snapshot 用例通过（20 项文件
+  定向集合通过，独立 scope/window 与 share-class card 断言再次通过）。
+- collector `test_quota_detail_symbols.py::test_share_class_admission_does_not_borrow_plain_ticker_quota`
+  的 `remaining=0` 两种场景通过：`BRK.A` 不会借用 A 的额度而被错误放行，额度明细中
+  独立存在的 `A` 仍可复用；额度剩余时两者都能按各自身份准入。
+- collector quota/budget/boundary 定向集合在补齐 backend `PYTHONPATH` 后为 **43 passed**。
+  初次未设置该路径时有 1 个无关 `ModuleNotFoundError: No module named 'app'`，重跑后
+  排除了命令环境因素。
+
+本地验证未调用 provider 或真实额度接口；“剩余额度为 0”是 fake quota detail 场景，
+用于验证身份隔离和 false-zero/borrow 行为。
+
 ## 定向结果
 
 ### Backend
@@ -73,18 +94,18 @@ Playwright 证据沿用各专项报告。`git diff --check` 通过。
 
 ## 最终工作树全套回归
 
-在 root 完成临时源码拆分、确认当前工作树源码身份未变后，本轮重新执行了完整离线套件。
+在 quota identity 修复落地后，本轮再次执行了完整离线套件。
 两个套件都使用 `/private/tmp/urus-predeploy-20261016/siteguard/sitecustomize.py`，并在
 backend 端通过带 `if __name__ == "__main__"` 的
 `/private/tmp/urus-prewarm-backend-regression.py` 启动 pytest；所有数据库路径均为本轮
-新建的 `/private/tmp/urus-commit-full-20261020/` 临时目录。
+新建的 `/private/tmp/urus-commit-full-20261020-quota/` 临时目录。
 
 | 套件 | 结果 | 日志 |
 | --- | --- | --- |
-| backend | **579 collected，全部通过**；输出到 `[100%]`，仅有下列 warning | `/private/tmp/urus-commit-full-20261020/logs/backend-full.log` |
-| `urus-moomoo` collector | **194 passed in 6.14s** | `/private/tmp/urus-commit-full-20261020/logs/collector-full.log` |
+| backend | **587 collected，全部通过**；输出到 `[100%]`，仅有下列 warning | `/private/tmp/urus-commit-full-20261020-quota/logs/backend-full.log` |
+| `urus-moomoo` collector | **202 passed in 5.98s** | `/private/tmp/urus-commit-full-20261020-quota/logs/collector-full.log` |
 
-network guard marker `/private/tmp/urus-commit-full-20261020/network.log` 为空，没有观察到
+network guard marker `/private/tmp/urus-commit-full-20261020-quota/network.log` 为空，没有观察到
 任何 socket 外连尝试。完整 backend 输出包含两类已有 warning：
 
 - Starlette/httpx `TestClient` 弃用提示；
