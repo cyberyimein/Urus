@@ -39,10 +39,22 @@ class DiscoveryProjectionService:
         comparisons: list[dict[str, Any]] = []
         warnings: list[str] = []
         partial_projection = False
+        context = None
+        context_error = None
+        try:
+            context = self.cross_section.load_context(run.id)
+        except AppError as exc:
+            # Keep the existing per-lens unavailable messages when the run
+            # has no usable contexts, without retrying the same DB reads.
+            context_error = exc
         for definition in self.cross_section.indicator_catalog():
             indicator_id = str(definition["id"])
             try:
-                projection = self.cross_section.indicator_projection(run.id, indicator_id)
+                if context_error is not None:
+                    raise context_error
+                projection = self.cross_section.indicator_projection_from_context(
+                    context, indicator_id
+                )
             except AppError as exc:
                 comparisons.append({"status": "unavailable", "previous_trading_date": None})
                 partial_projection = True

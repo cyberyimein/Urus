@@ -87,7 +87,8 @@ class StrategyDecisionRepository:
         return self.bundle(dataset_id, strategy_set_sha256=strategy_set_sha256)
 
     def bundle(
-        self, dataset_id: str, *, strategy_set_sha256: str | None = None
+        self, dataset_id: str, *, strategy_set_sha256: str | None = None,
+        symbol: str | None = None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         synthesis_query = select(DeterministicSynthesisModel).where(
             DeterministicSynthesisModel.dataset_id == dataset_id
@@ -97,19 +98,19 @@ class StrategyDecisionRepository:
                 DeterministicSynthesisModel.strategy_set_sha256 == strategy_set_sha256
             )
         synthesis_model = self.session.scalars(
-            synthesis_query.order_by(DeterministicSynthesisModel.created_at.desc())
+            synthesis_query.order_by(DeterministicSynthesisModel.created_at.desc()).limit(1)
         ).first()
         if synthesis_model is None:
             return [], {}
+        decision_query = select(StrategyDecisionModel).where(
+            StrategyDecisionModel.dataset_id == dataset_id,
+            StrategyDecisionModel.strategy_set_sha256 == synthesis_model.strategy_set_sha256,
+        )
+        if symbol is not None:
+            decision_query = decision_query.where(StrategyDecisionModel.symbol == symbol)
         decision_models = list(
             self.session.scalars(
-                select(StrategyDecisionModel)
-                .where(
-                    StrategyDecisionModel.dataset_id == dataset_id,
-                    StrategyDecisionModel.strategy_set_sha256
-                    == synthesis_model.strategy_set_sha256,
-                )
-                .order_by(
+                decision_query.order_by(
                     StrategyDecisionModel.symbol.asc(),
                     StrategyDecisionModel.strategy_name.asc(),
                 )

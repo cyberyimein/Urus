@@ -28,6 +28,7 @@ from app.schemas.observation import (
     ObservationRunCreateRequest,
     ObservationOptionsResponse,
     ObservationRunResponse,
+    ObservationRunSummaryResponse,
     ObservationRunGroupSnapshotResponse,
 )
 from app.services.observation import ObservationGroupSyncService, ObservationRunService
@@ -293,6 +294,17 @@ def get_observation_options(
         symbol=symbol,
     )
     return ObservationOptionsResponse(**result)
+
+
+@router.get("/run-summaries", response_model=list[ObservationRunSummaryResponse])
+def list_observation_run_summaries(
+    limit: int = Query(default=30, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> list[ObservationRunSummaryResponse]:
+    return [
+        ObservationRunSummaryResponse(**item)
+        for item in ObservationRepository(db).list_run_summaries(limit)
+    ]
 
 
 @router.get("/runs", response_model=list[ObservationRunResponse])

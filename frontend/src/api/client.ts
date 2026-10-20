@@ -12,6 +12,7 @@ import type {
 } from '@/types/universe'
 import type {
   DailyEvidenceResponse,
+  InstrumentEvidenceResponse,
   DecisionChartProjection,
   DailyDecisionDataset,
   StrategyBundleResponse,
@@ -21,6 +22,7 @@ import type {
   ObservationGroupDetail,
   ObservationGroupSync,
   ObservationRun,
+  ObservationRunSummary,
 } from '@/types/api'
 import type {
   CrossSectionCatalogItem,
@@ -54,7 +56,7 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response
   try {
     response = await fetch(`${baseUrl}${path}`, {
@@ -121,6 +123,11 @@ export const api = {
     request<DailyDecisionDataset>(`/daily-evidence/datasets/${encodeURIComponent(datasetId)}`, { signal }),
   getDailyChart: (datasetId: string, signal?: AbortSignal) =>
     request<DecisionChartProjection>(`/daily-evidence/datasets/${encodeURIComponent(datasetId)}/chart`, { signal }),
+  getDailyInstrumentEvidence: (datasetId: string, symbol: string, signal?: AbortSignal) =>
+    request<InstrumentEvidenceResponse>(
+      `/daily-evidence/datasets/${encodeURIComponent(datasetId)}/instruments/${encodeURIComponent(symbol.trim().toUpperCase())}/evidence`,
+      { signal },
+    ),
   getDailyStrategies: (datasetId: string, signal?: AbortSignal) =>
     request<StrategyBundleResponse>(`/daily-evidence/datasets/${encodeURIComponent(datasetId)}/strategies`, { signal }),
   getDailyOpportunityView: (datasetId: string, symbol?: string, signal?: AbortSignal) =>
@@ -150,13 +157,15 @@ export const api = {
   }),
   listObservationRuns: (limit = 30) =>
     request<ObservationRun[]>(`/observation/runs?limit=${encodeURIComponent(String(limit))}`),
+  listObservationRunSummaries: (limit = 30) =>
+    request<ObservationRunSummary[]>(`/observation/run-summaries?limit=${encodeURIComponent(String(limit))}`),
   getObservationOptions: (tradingDate: string, symbol?: string) => {
     const params = new URLSearchParams({ trading_date: tradingDate })
     if (symbol) params.set('symbol', symbol)
     return request<ObservationOptionsResponse>(`/observation/options?${params.toString()}`)
   },
-  getObservationRun: (runId: string) =>
-    request<ObservationRun>(`/observation/runs/${encodeURIComponent(runId)}`),
+  getObservationRun: (runId: string, signal?: AbortSignal) =>
+    request<ObservationRun>(`/observation/runs/${encodeURIComponent(runId)}`, { signal }),
   listFocusSymbols: () => request<FocusSymbol[]>('/focus-symbols'),
   addFocusSymbol: (symbol: string) =>
     request<FocusSymbol>(`/focus-symbols/${encodeURIComponent(symbol)}`, { method: 'PUT' }),

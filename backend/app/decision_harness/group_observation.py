@@ -5,7 +5,7 @@ from statistics import median, pstdev
 from typing import Any
 
 from app.analytics.technical import calculate_relative_strength, calculate_technical_indicators
-from app.decision_harness.contracts import FEATURE_VERSION, content_sha256
+from app.decision_harness.contracts import FEATURE_VERSION, MACD_MOMENTUM_VERSION, content_sha256
 from app.decision_harness.group_phase import evaluate_group_phase, sample_support
 from app.decision_harness.setup_projection import project_symbol_setups
 
@@ -85,6 +85,7 @@ def build_group_snapshot(
     payload = {
         "schema_version": GROUP_SNAPSHOT_SCHEMA,
         "feature_version": FEATURE_VERSION,
+        "macd_momentum_version": dataset.get("macd_momentum_version", MACD_MOMENTUM_VERSION),
         "dataset_id": dataset["dataset_id"],
         "indicator_snapshot_ids": list(dataset.get("indicator_snapshot_ids") or []),
         "group": {
@@ -245,7 +246,8 @@ def _symbol_row(
     latest = closes[-1] if closes else None
     averages = indicators.get("moving_average") or {}
     rsi = _metric(indicators.get("rsi14"))
-    macd = _metric(indicators.get("macd_12_26_9"), "histogram")
+    macd_indicators = indicators.get("macd_12_26_9") or {}
+    macd = _metric(macd_indicators, "histogram")
     volume = indicators.get("volume_effort_result") or {}
     excess = (relative.get("excess_returns_percent") or {}) if isinstance(relative, dict) else {}
     return {
@@ -260,6 +262,8 @@ def _symbol_row(
         "trend": _trend_state(latest, averages),
         "rsi14": rsi,
         "macd_histogram": macd,
+        "macd_histogram_delta": _metric(macd_indicators, "histogram_delta"),
+        "macd_histogram_delta2": _metric(macd_indicators, "histogram_delta2"),
         "relative_excess_percent": {
             key: _number(value) for key, value in excess.items() if key in {"5d", "20d", "60d"}
         },

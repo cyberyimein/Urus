@@ -16,6 +16,7 @@ changed anchor/base and level set.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from bisect import bisect_left, bisect_right
 from datetime import date, datetime
 from typing import Any, Literal
 
@@ -346,7 +347,7 @@ def _scan_candidate(
         and (bar.session_close_at is None or bar.session_close_at <= knowledge_at)
     ]
     window = _evidence_window(evidence, bounded_bars, knowledge_at=knowledge_at)
-    reader = InMemoryDailyEvidenceReader({evidence.symbol: window})
+    reader = _ReplayEvidenceReader(window)
     scan_item = universe_item or {
         "symbol": evidence.symbol,
         "asset_type": evidence.asset_type,
@@ -387,6 +388,44 @@ def _scan_candidate(
         failed_payload["content_sha256"] = _digest(failed_payload)
         return ScanRecord(**failed_payload), None
     return _rebind_daily_setup_scan(scan, daily_setup)
+
+
+class _ReplayEvidenceReader:
+    """Reuse the validated window within one scan, without re-freezing its bars.
+
+    _scan_candidate already filters visibility and constructs FrozenEvidence,
+    which validates the selected bars and their manifest. The scanner can read
+    that exact window directly when its manifest is already canonical. Legacy
+    or noncanonical references use the normal reader to rebuild them from bars.
+    """
+
+    def __init__(self, evidence: FrozenEvidence):
+        self.evidence = evidence
+        # FrozenEvidence validates references by date, allowing a different
+        # order, duplicates, or a session_id different from the bar. The normal
+        # reader rebuilds one reference per bar in bar order; only bypass it
+        # when that reconstruction would preserve the existing manifest.
+        self._canonical_manifest = (
+            len(evidence.source_manifest) == len(evidence.bars)
+            and all(
+                ref.bar_date == bar.date and ref.session_id == bar.session_id
+                for ref, bar in zip(evidence.source_manifest, evidence.bars)
+            )
+        )
+
+    def load(self, symbol: str, *, knowledge_at: datetime) -> FrozenEvidence:
+        evidence = self.evidence
+        if (
+            normalise_symbol(symbol) == evidence.symbol
+            and knowledge_at == evidence.knowledge_at
+            and self._canonical_manifest
+            and (evidence.bars or evidence.quality_status in {"unavailable", "failed"})
+            and len(evidence.warnings) == len(set(evidence.warnings))
+        ):
+            return evidence
+        return InMemoryDailyEvidenceReader({evidence.symbol: evidence}).load(
+            symbol, knowledge_at=knowledge_at
+        )
 
 
 def _trigger_record(
@@ -735,17 +774,31 @@ def replay_daily_opportunities(
     scan_order: list[str] = []
     evaluations: list[TriggerEvaluation] = []
     steps: list[DailyReplayStep] = []
+    ordered_bars = list(bars_by_date.values())
+    ordered_dates = [bar.date for bar in ordered_bars]
+    cached_prefix_end = -1
+    cached_candidate: tuple[ScanRecord, SetupRecord | None] | None = None
+
+    def scan_prefix(end: int) -> tuple[ScanRecord, SetupRecord | None]:
+        nonlocal cached_prefix_end, cached_candidate
+        # A closing scan and the next session's opening scan often consume
+        # the same prefix. Retain one result, never every historical window.
+        if end != cached_prefix_end:
+            cached_candidate = _scan_candidate(
+                evidence=replay_evidence,
+                bars=ordered_bars[:end],
+                pool_version=pool_version,
+                knowledge_at=cutoff,
+                universe_item=universe_item,
+                include_scan_manifests=include_scan_manifests,
+            )
+            cached_prefix_end = end
+        assert cached_candidate is not None
+        return cached_candidate
 
     for session_date in session_dates:
-        prior_bars = [bar for bar in bars_by_date.values() if bar.date < session_date]
-        scan, candidate = _scan_candidate(
-            evidence=replay_evidence,
-            bars=prior_bars,
-            pool_version=pool_version,
-            knowledge_at=cutoff,
-            universe_item=universe_item,
-            include_scan_manifests=include_scan_manifests,
-        )
+        prior_end = bisect_left(ordered_dates, session_date)
+        scan, candidate = scan_prefix(prior_end)
         _register_scan(scan_by_id, scan_order, scan)
         # Keep a candidate that is not yet allowed to replace the active
         # lifecycle.  It is an explicit, inspectable scan candidate rather
@@ -772,7 +825,7 @@ def replay_daily_opportunities(
                 completed_sessions_since_close=_count_complete_sessions_after(
                     closed_date=closed_date,
                     through_date=(
-                        prior_bars[-1].date if prior_bars else closed_date
+                        ordered_dates[prior_end - 1] if prior_end else closed_date
                     ),
                     calendar=calendar,
                     bars_by_date=bars_by_date,
@@ -852,15 +905,7 @@ def replay_daily_opportunities(
             # The start-of-session scan may be rejected even though today's
             # close creates a new valid structure; build the post-close scan
             # only for this already closed lifecycle boundary.
-            end_bars = [bar for bar in bars_by_date.values() if bar.date <= session_date]
-            end_scan, end_candidate = _scan_candidate(
-                evidence=replay_evidence,
-                bars=end_bars,
-                pool_version=pool_version,
-                knowledge_at=cutoff,
-                universe_item=universe_item,
-                include_scan_manifests=include_scan_manifests,
-            )
+            end_scan, end_candidate = scan_prefix(bisect_right(ordered_dates, session_date))
             _register_scan(scan_by_id, scan_order, end_scan)
             if end_candidate is not None and end_candidate.setup_id not in setup_by_id:
                 _register_setup(setup_by_id, setup_order, end_candidate)

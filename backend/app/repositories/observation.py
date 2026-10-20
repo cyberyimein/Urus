@@ -6,7 +6,7 @@ from datetime import date, datetime
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -357,6 +357,46 @@ class ObservationRepository:
             )
         )
 
+    def list_run_summaries(self, limit: int = 30) -> list[dict[str, Any]]:
+        """Select small metadata columns and counts without loading run payloads."""
+
+        model = ObservationRunModel
+        snapshots = model.payload_json["group_snapshots"]
+        snapshot_count = func.json_array_length(snapshots)
+        if self.session.get_bind().dialect.name == "postgresql":
+            snapshot_count = case(
+                (func.json_typeof(snapshots) == "array", snapshot_count), else_=0
+            )
+        statement = select(
+            model.id.label("run_id"),
+            model.status,
+            model.trigger_mode,
+            model.trading_date,
+            model.universe_revision_id,
+            model.universe_freshness,
+            model.group_ids,
+            func.coalesce(
+                model.payload_json["successful_group_count"].as_integer(),
+                snapshot_count,
+                0,
+            ).label("successful_group_count"),
+            func.coalesce(
+                model.payload_json["failed_group_count"].as_integer(), 0
+            ).label("failed_group_count"),
+            func.coalesce(
+                model.payload_json["report"]["summary"]["quality_issue_count"].as_integer(), 0
+            ).label("quality_issue_count"),
+            model.created_at,
+            model.completed_at,
+            model.error_message,
+        ).order_by(model.created_at.desc()).limit(limit)
+        result = []
+        for row in self.session.execute(statement).mappings():
+            summary = dict(row)
+            summary["group_count"] = len(summary.pop("group_ids") or [])
+            result.append(summary)
+        return result
+
     def latest_completed_run(self, trading_date: date) -> ObservationRunModel | None:
         """Return the latest usable Observation Run for one trading date."""
 
@@ -454,6 +494,7 @@ class ObservationRepository:
             select(GroupDailySnapshotModel)
             .where(*filters)
             .order_by(GroupDailySnapshotModel.trading_date.desc(), GroupDailySnapshotModel.created_at.desc())
+            .limit(1)
         )
 
     def previous_snapshot(
@@ -471,6 +512,7 @@ class ObservationRepository:
                 GroupDailySnapshotModel.trading_date < trading_date,
             )
             .order_by(GroupDailySnapshotModel.trading_date.desc(), GroupDailySnapshotModel.created_at.desc())
+            .limit(1)
         )
 
     def finish_run(

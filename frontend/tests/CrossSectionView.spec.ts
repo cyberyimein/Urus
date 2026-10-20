@@ -344,7 +344,7 @@ describe('CrossSectionView', () => {
 
   it('keeps named feature versions free of a synthetic v prefix', async () => {
     vi.spyOn(api, 'listIndicatorCatalog').mockResolvedValue([projection.indicator!])
-    vi.spyOn(api, 'listObservationRuns').mockResolvedValue([run])
+    vi.spyOn(api, 'listObservationRunSummaries').mockResolvedValue([run])
     vi.spyOn(api, 'getIndicatorCrossSection').mockResolvedValue(projection)
 
     await router.push('/indicators/rsi14?run=run-1')
@@ -368,7 +368,7 @@ describe('CrossSectionView', () => {
       source_path: 'symbols[].macd_histogram',
     }
     vi.spyOn(api, 'listIndicatorCatalog').mockResolvedValue([projection.indicator!, macd])
-    vi.spyOn(api, 'listObservationRuns').mockResolvedValue([run])
+    vi.spyOn(api, 'listObservationRunSummaries').mockResolvedValue([run])
     const getProjection = vi.spyOn(api, 'getIndicatorCrossSection').mockImplementation(
       async (_runId, indicatorId) => indicatorId === 'rsi14' ? projection : { ...projection, lens: { ...projection.lens, id: indicatorId }, indicator: macd },
     )
@@ -399,7 +399,15 @@ describe('CrossSectionView', () => {
     expect(wrapper.text()).toContain('前一交易日 2026-08-20')
     expect(wrapper.find('.cross-section-ai-button').attributes('disabled')).toBeDefined()
     expect(wrapper.findAll('.cross-section-table-row')).toHaveLength(3)
-    expect(wrapper.findAll('.cross-section-symbol-card')).toHaveLength(0)
+    expect(wrapper.findAll('.cross-section-symbol-card')).toHaveLength(3)
+    expect(wrapper.findAll('.cross-section-symbol-card.is-discovery-highlight')).toHaveLength(0)
+    expect(wrapper.get('.cross-section-symbol-card[data-symbol="INTC"] .cross-section-card-plot').attributes('aria-label')).toContain('当前28.00，前日35.00')
+    expect(wrapper.get('.cross-section-symbol-card[data-symbol="INTC"] .cross-section-card-marker.current').attributes('style')).toContain('28%')
+    expect(wrapper.get('.cross-section-distribution-track').attributes('aria-label')).toContain('超卖 1')
+    expect(wrapper.get('.cross-section-table-shell').attributes('style')).toContain('display: none')
+    await wrapper.get('.cross-section-table-toggle').trigger('click')
+    expect(wrapper.get('.cross-section-table-toggle').attributes('aria-expanded')).toBe('true')
+    expect(wrapper.get('.cross-section-table-shell').attributes('style') ?? '').not.toContain('display: none')
     expect(wrapper.find('.cross-section-table-row[data-symbol="INTC"]').text()).toContain('平衡 → 超卖')
     expect(wrapper.find('.cross-section-table-row[data-symbol="INTC"]').text()).toContain('状态变化')
 
@@ -410,7 +418,7 @@ describe('CrossSectionView', () => {
 
   it('deduplicates overlapping group facts and applies search, group, and indicator sorting', async () => {
     vi.spyOn(api, 'listIndicatorCatalog').mockResolvedValue([projection.indicator!])
-    vi.spyOn(api, 'listObservationRuns').mockResolvedValue([run])
+    vi.spyOn(api, 'listObservationRunSummaries').mockResolvedValue([run])
     vi.spyOn(api, 'getIndicatorCrossSection').mockResolvedValue(overlappingProjection)
 
     await router.push('/indicators/rsi14?run=run-1')
@@ -444,10 +452,49 @@ describe('CrossSectionView', () => {
     expect(wrapper.text()).toContain('关注列表已加载 · 0 个')
   })
 
+  it('uses distinct plots for RSI, volume ratio, zero-centered values, and binary moving averages', async () => {
+    const ids = ['rsi14', 'volume_ratio_20d', 'macd_histogram', 'above_ma20']
+    const items = ids.map((id) => ({ ...projection.indicator!, id, name: id }))
+    vi.spyOn(api, 'listIndicatorCatalog').mockResolvedValue(items)
+    vi.spyOn(api, 'listObservationRunSummaries').mockResolvedValue([run])
+    vi.spyOn(api, 'getIndicatorCrossSection').mockImplementation(async (_runId, id) => ({
+      ...projection,
+      lens: { ...projection.lens, id },
+      indicator: items.find((item) => item.id === id),
+      rows: projection.rows.map((row) => ({ ...row, value: id === 'volume_ratio_20d' ? 1.3 : id === 'above_ma20' ? 1 : row.value, previous_value: id === 'volume_ratio_20d' ? 0.9 : id === 'above_ma20' ? 0 : row.previous_value })),
+    }))
+
+    await router.push('/indicators/rsi14?run=run-1')
+    await router.isReady()
+    const wrapper = mount(CrossSectionView, {
+      props: { lensType: 'indicator' },
+      global: { plugins: [router], stubs: { AppShell: true, RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await flushPromises()
+    expect(wrapper.get('.cross-section-card-plot').attributes('data-visual-kind')).toBe('rsi')
+    expect(wrapper.findAll('.cross-section-card-zone')).toHaveLength(9)
+
+    await wrapper.findAll('.cross-section-lens-tab')[1].trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.cross-section-card-plot').attributes('data-visual-kind')).toBe('volume')
+    expect(wrapper.findAll('.cross-section-volume-fill')).toHaveLength(3)
+
+    await wrapper.findAll('.cross-section-lens-tab')[2].trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.cross-section-card-plot').attributes('data-visual-kind')).toBe('zero')
+    expect(wrapper.findAll('.cross-section-zero-bar')).toHaveLength(3)
+
+    await wrapper.findAll('.cross-section-lens-tab')[3].trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.cross-section-card-plot').attributes('data-visual-kind')).toBe('binary')
+    expect(wrapper.findAll('.cross-section-binary-choices')).toHaveLength(3)
+    expect(wrapper.findAll('.cross-section-card-track')).toHaveLength(0)
+  })
+
   it('loads focus symbols and filters focused and unfocused rows without writes', async () => {
     vi.mocked(api.listFocusSymbols).mockResolvedValue([{ symbol: 'AMD', created_at: '2026-09-19T00:00:00Z' }])
     vi.spyOn(api, 'listIndicatorCatalog').mockResolvedValue([projection.indicator!])
-    vi.spyOn(api, 'listObservationRuns').mockResolvedValue([run])
+    vi.spyOn(api, 'listObservationRunSummaries').mockResolvedValue([run])
     vi.spyOn(api, 'getIndicatorCrossSection').mockResolvedValue(projection)
 
     await router.push('/indicators/rsi14?run=run-1')
@@ -477,7 +524,7 @@ describe('CrossSectionView', () => {
       .mockRejectedValueOnce(new Error('focus read failed'))
       .mockResolvedValueOnce([{ symbol: 'AMD', created_at: '2026-09-19T00:00:00Z' }])
     vi.spyOn(api, 'listIndicatorCatalog').mockResolvedValue([projection.indicator!])
-    vi.spyOn(api, 'listObservationRuns').mockResolvedValue([run])
+    vi.spyOn(api, 'listObservationRunSummaries').mockResolvedValue([run])
     vi.spyOn(api, 'getIndicatorCrossSection').mockResolvedValue(projection)
 
     await router.push('/indicators/rsi14?run=run-1')
@@ -504,7 +551,7 @@ describe('CrossSectionView', () => {
   it('keeps relative-strength benchmark identities separate and highlights a discovery target', async () => {
     const relativeCatalog = [{ ...projection.indicator!, id: 'relative_strength_20d', name: 'Relative Strength 20D' }]
     vi.spyOn(api, 'listIndicatorCatalog').mockResolvedValue(relativeCatalog)
-    vi.spyOn(api, 'listObservationRuns').mockResolvedValue([run])
+    vi.spyOn(api, 'listObservationRunSummaries').mockResolvedValue([run])
     vi.spyOn(api, 'getIndicatorCrossSection').mockResolvedValue(relativeStrengthProjection)
 
     await router.push('/indicators/relative_strength_20d?run=run-1&discoveryEvent=indicator_transition:event-1&symbol=INTC&lens=relative_strength_20d')
@@ -526,7 +573,7 @@ describe('CrossSectionView', () => {
   it('ignores a failed latest run and selects the latest completed run', async () => {
     const failed = { ...run, run_id: 'run-failed', status: 'failed', trading_date: '2026-08-22' }
     vi.spyOn(api, 'listIndicatorCatalog').mockResolvedValue([projection.indicator!])
-    vi.spyOn(api, 'listObservationRuns').mockResolvedValue([failed, run])
+    vi.spyOn(api, 'listObservationRunSummaries').mockResolvedValue([failed, run])
     const getProjection = vi.spyOn(api, 'getIndicatorCrossSection').mockResolvedValue(projection)
 
     await router.push('/indicators/rsi14?run=run-failed')
@@ -566,7 +613,7 @@ describe('CrossSectionView', () => {
       transitions: [],
     }
     vi.spyOn(api, 'listIndicatorCatalog').mockResolvedValue([projection.indicator!])
-    vi.spyOn(api, 'listObservationRuns').mockResolvedValue([run])
+    vi.spyOn(api, 'listObservationRunSummaries').mockResolvedValue([run])
     vi.spyOn(api, 'getIndicatorCrossSection').mockResolvedValue(recommendationProjection)
 
     await router.push('/indicators/rsi14?run=run-1')
@@ -590,7 +637,7 @@ describe('CrossSectionView', () => {
 
   it('uses strategy-specific stance, setup stage, and zero-centered score visuals', async () => {
     vi.spyOn(api, 'listStrategyCatalog').mockResolvedValue([strategyCatalog])
-    vi.spyOn(api, 'listObservationRuns').mockResolvedValue([run])
+    vi.spyOn(api, 'listObservationRunSummaries').mockResolvedValue([run])
     const getStrategyProjection = vi.spyOn(api, 'getStrategyCrossSection').mockResolvedValue(strategyProjection)
 
     await router.push('/strategies/trend_momentum_v1?run=run-1')
@@ -616,7 +663,11 @@ describe('CrossSectionView', () => {
     expect(wrapper.findAll('.cross-section-table-row')).toHaveLength(3)
     expect(wrapper.find('.cross-section-table-row[data-symbol="INTC"]').text()).toContain('偏多')
     expect(wrapper.find('.cross-section-table-row[data-symbol="INTC"]').text()).toContain('已确认')
-    expect(wrapper.findAll('.cross-section-symbol-card')).toHaveLength(0)
+    expect(wrapper.findAll('.cross-section-symbol-card')).toHaveLength(3)
+    expect(wrapper.get('.cross-section-symbol-card[data-symbol="INTC"] .cross-section-card-reading').text()).toContain('70')
+    expect(wrapper.get('.cross-section-symbol-card[data-symbol="INTC"] .cross-section-card-marker.current').attributes('style')).toContain('85%')
+    expect(wrapper.get('.cross-section-card-plot').attributes('data-visual-kind')).toBe('strategy')
+    expect(wrapper.findAll('.cross-section-stage-ladder')).toHaveLength(3)
     expect(wrapper.findAll('.cross-section-table-row').map((row) => row.attributes('data-symbol'))[0]).toBe('INTC')
     await wrapper.get('[data-testid="cross-section-sort"]').setValue('score')
     expect(wrapper.findAll('.cross-section-table-row').map((row) => row.attributes('data-symbol'))).toEqual(['INTC', 'NVDA', 'AMD'])
@@ -627,7 +678,7 @@ describe('CrossSectionView', () => {
   it('reloads the strategy catalog when the shared route changes from indicators', async () => {
     const listIndicators = vi.spyOn(api, 'listIndicatorCatalog').mockResolvedValue([projection.indicator!])
     const listStrategies = vi.spyOn(api, 'listStrategyCatalog').mockResolvedValue([strategyCatalog])
-    vi.spyOn(api, 'listObservationRuns').mockResolvedValue([run])
+    vi.spyOn(api, 'listObservationRunSummaries').mockResolvedValue([run])
     vi.spyOn(api, 'getIndicatorCrossSection').mockResolvedValue(projection)
     const getStrategyProjection = vi.spyOn(api, 'getStrategyCrossSection').mockResolvedValue(strategyProjection)
 
@@ -658,7 +709,7 @@ describe('CrossSectionView', () => {
   it('uses the current route surface even if a shared view instance is reused', async () => {
     const listIndicators = vi.spyOn(api, 'listIndicatorCatalog').mockResolvedValue([projection.indicator!])
     const listStrategies = vi.spyOn(api, 'listStrategyCatalog').mockResolvedValue([strategyCatalog])
-    vi.spyOn(api, 'listObservationRuns').mockResolvedValue([run])
+    vi.spyOn(api, 'listObservationRunSummaries').mockResolvedValue([run])
     vi.spyOn(api, 'getIndicatorCrossSection').mockResolvedValue(projection)
     const getStrategyProjection = vi.spyOn(api, 'getStrategyCrossSection').mockResolvedValue(strategyProjection)
 
@@ -719,7 +770,7 @@ describe('CrossSectionView', () => {
       },
     }
     vi.spyOn(api, 'listIndicatorCatalog').mockResolvedValue([projection.indicator!])
-    vi.spyOn(api, 'listObservationRuns').mockResolvedValue([staleRun, run])
+    vi.spyOn(api, 'listObservationRunSummaries').mockResolvedValue([staleRun, run])
     vi.spyOn(api, 'listRemoteDecisions').mockResolvedValue([])
     vi.spyOn(api, 'preflightRemoteDecision').mockResolvedValue({
       enabled: true,

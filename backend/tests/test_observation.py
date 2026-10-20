@@ -1658,6 +1658,12 @@ class _DiscoveryCrossSectionFake:
             },
         ]
 
+    def load_context(self, run_id: str):
+        return run_id
+
+    def indicator_projection_from_context(self, context, indicator_id: str) -> dict:
+        return self.indicator_projection(context, indicator_id)
+
     def indicator_projection(self, run_id: str, indicator_id: str) -> dict:
         rows = list(self.rows_by_indicator.get(indicator_id, []))
         if self.reverse:

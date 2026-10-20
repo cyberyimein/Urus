@@ -86,6 +86,37 @@ const snapshot = {
 afterEach(() => vi.restoreAllMocks())
 
 describe('GroupObservationView', () => {
+  it.each(['latest', 'exact-run', 'missing-run', 'no-snapshot'])('links to instruments with the loaded context (%s)', async (mode) => {
+    vi.spyOn(api, 'listObservationGroups').mockResolvedValue([group])
+    vi.spyOn(api, 'getObservationGroup').mockResolvedValue({ group, latest_snapshot: mode === 'no-snapshot' ? null : snapshot })
+    const exact = vi.spyOn(api, 'getObservationRunGroupSnapshot')
+    if (mode === 'exact-run') {
+      exact.mockResolvedValue({ observation_run_id: 'run-exact', group_id: group.group_id,
+        snapshot_id: 'snapshot-exact', dataset_id: 'dataset-exact', group_version_id: group.version_id,
+        snapshot: { ...snapshot, dataset_id: 'dataset-exact' } })
+    } else {
+      exact.mockRejectedValue(new Error('run does not contain this group'))
+    }
+    await router.push({ name: 'group-observation', params: { groupId: group.group_id },
+      query: mode.endsWith('run') ? { run: 'run-exact' } : {} })
+    await router.isReady()
+    const wrapper = mount(GroupObservationView, { global: { plugins: [router],
+      stubs: { AppShell: true, RemoteDecisionPanel: true } } })
+    await flushPromises()
+    const query = mode === 'no-snapshot' ? {} : {
+      dataset: mode === 'exact-run' ? 'dataset-exact' : 'dataset-1',
+      ...(mode === 'exact-run' ? { run: 'run-exact' } : {}),
+    }
+    const expected = (symbol: string) => router.resolve({ name: 'instrument-decision', params: { symbol }, query }).href
+    const links = wrapper.findAll('.observation-instrument-links a')
+    expect(links.map(link => link.attributes('href'))).toEqual(group.symbols.map(expected))
+    if (mode !== 'no-snapshot') {
+      expect(wrapper.findAll('a.observation-small-card').map(link => link.attributes('href'))).toEqual(['AMD', 'INTC'].map(expected))
+      expect(wrapper.find('.observation-symbol-focus a').attributes('href')).toBe(expected('AMD'))
+    }
+    wrapper.unmount()
+  })
+
   it('renders the group snapshot and starts a manual observation run', async () => {
     vi.spyOn(api, 'listObservationGroups').mockResolvedValue([group])
     vi.spyOn(api, 'getObservationGroup').mockResolvedValue({ group, latest_snapshot: snapshot })

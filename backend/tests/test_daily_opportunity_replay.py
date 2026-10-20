@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
 
+import pytest
+
 from app.buy_opportunities.daily_replay import (
     _digest,
     _setup_with_status,
@@ -9,7 +11,10 @@ from app.buy_opportunities.daily_replay import (
     replay_daily_views,
 )
 from app.buy_opportunities.evidence import freeze_daily_evidence
+from app.buy_opportunities.contracts import FrozenEvidence
 from app.buy_opportunities.lifecycle import TradingSessionCalendar
+from app.buy_opportunities.evidence import InMemoryDailyEvidenceReader
+from app.buy_opportunities.daily_replay import _ReplayEvidenceReader
 
 
 START = date(2026, 1, 1)
@@ -375,3 +380,91 @@ def test_replay_daily_views_returns_strict_view_rows_for_quality_and_core() -> N
     assert [row["trigger"].trigger_id for row in repeated["views"]] == [
         row["trigger"].trigger_id for row in result["views"]
     ]
+
+
+@pytest.mark.parametrize("quality", ["ok", "partial", "failed"])
+@pytest.mark.parametrize("legacy", [False, True])
+def test_replay_window_reader_matches_reconstruction_for_quality_and_cutoffs(quality, legacy):
+    evidence = _evidence(_history()).model_copy(update={"quality_status": quality})
+    if legacy:
+        evidence = evidence.model_copy(update={"source_manifest": [], "warnings": ["legacy", "legacy"]})
+    reference = InMemoryDailyEvidenceReader({"AAA": evidence})
+    fast = _ReplayEvidenceReader(evidence)
+    for cutoff in [evidence.knowledge_at, evidence.knowledge_at - timedelta(days=5)]:
+        assert fast.load(" aaa ", knowledge_at=cutoff) == reference.load("AAA", knowledge_at=cutoff)
+    if not legacy:
+        assert fast.load("AAA", knowledge_at=evidence.knowledge_at) is evidence
+
+
+@pytest.mark.parametrize("quality", ["ok", "partial", "unavailable", "failed"])
+def test_empty_replay_reader_preserves_normal_quality_merge(quality):
+    raw = _evidence(_history()).model_dump(mode="python")
+    raw.update(bars=[], source_manifest=[], quality_status=quality)
+    evidence = FrozenEvidence.model_validate(raw)
+    fast = _ReplayEvidenceReader(evidence)
+    reference = InMemoryDailyEvidenceReader({"AAA": evidence})
+    assert fast.load("AAA", knowledge_at=evidence.knowledge_at) == reference.load(
+        "AAA", knowledge_at=evidence.knowledge_at
+    )
+
+
+@pytest.mark.parametrize("manifests", [False, True])
+def test_replay_matches_normal_reader_and_scans_each_prefix_once(monkeypatch, manifests):
+    from app.buy_opportunities import daily_replay
+
+    rows = _history(count=90)
+    evidence = _evidence(rows)
+    calendar = _calendar(rows)
+    calls = []
+    original_scan = daily_replay._scan_candidate
+
+    def counted_scan(**kwargs):
+        calls.append(len(kwargs["bars"]))
+        return original_scan(**kwargs)
+
+    monkeypatch.setattr(daily_replay, "_scan_candidate", counted_scan)
+    optimized = replay_daily_opportunities(evidence, calendar, include_scan_manifests=manifests)
+    assert len(calls) == len(set(calls))
+
+    class NormalReader:
+        def __init__(self, value):
+            self.reader = InMemoryDailyEvidenceReader({value.symbol: value})
+
+        def load(self, *args, **kwargs):
+            return self.reader.load(*args, **kwargs)
+
+    monkeypatch.setattr(daily_replay, "_ReplayEvidenceReader", NormalReader)
+    reference = replay_daily_opportunities(evidence, calendar, include_scan_manifests=manifests)
+    assert optimized.model_dump(mode="json") == reference.model_dump(mode="json")
+
+
+@pytest.mark.parametrize("manifest_variant", ["reverse", "duplicate", "session_id"])
+@pytest.mark.parametrize("manifests", [False, True])
+def test_replay_reader_normalizes_valid_noncanonical_manifests(monkeypatch, manifest_variant, manifests):
+    from app.buy_opportunities import daily_replay
+
+    rows = _history()
+    raw = _evidence(rows).model_dump(mode="python")
+    if manifest_variant == "reverse":
+        raw["source_manifest"].reverse()
+    elif manifest_variant == "duplicate":
+        raw["source_manifest"].append(dict(raw["source_manifest"][0]))
+    else:
+        raw["source_manifest"][0]["session_id"] = "different-session"
+    evidence = FrozenEvidence.model_validate(raw)
+    original = InMemoryDailyEvidenceReader({"AAA": evidence})
+    assert _ReplayEvidenceReader(evidence).load("AAA", knowledge_at=evidence.knowledge_at) == original.load(
+        "AAA", knowledge_at=evidence.knowledge_at
+    )
+    optimized = replay_daily_opportunities(evidence, _calendar(rows), include_scan_manifests=manifests)
+
+    class NormalReader:
+        def __init__(self, value):
+            self.reader = InMemoryDailyEvidenceReader({value.symbol: value})
+
+        def load(self, *args, **kwargs):
+            return self.reader.load(*args, **kwargs)
+
+    monkeypatch.setattr(daily_replay, "_ReplayEvidenceReader", NormalReader)
+    reference = replay_daily_opportunities(evidence, _calendar(rows), include_scan_manifests=manifests)
+    assert optimized.model_dump(mode="json") == reference.model_dump(mode="json")

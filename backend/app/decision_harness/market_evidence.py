@@ -12,6 +12,8 @@ from app.decision_harness.contracts import (
     BAR_COMPLETION_POLICY,
     DAILY_DATASET_SCHEMA,
     FEATURE_VERSION,
+    INDICATOR_SNAPSHOT_FEATURE_VERSION,
+    MACD_MOMENTUM_VERSION,
     SUPPORTED_SCOPE_TYPES,
     compact_bar,
     content_sha256,
@@ -140,6 +142,7 @@ class DailyMarketEvidenceService:
         payload_without_id = {
             "schema_version": DAILY_DATASET_SCHEMA,
             "feature_version": FEATURE_VERSION,
+            "macd_momentum_version": MACD_MOMENTUM_VERSION,
             "trading_date": target_date.isoformat(),
             "cutoff_time": effective_cutoff.isoformat(),
             "market_timezone": self.market_timezone,
@@ -314,6 +317,39 @@ class DailyMarketEvidenceService:
             "deterministic_synthesis": synthesis,
         }
 
+    def get_instrument_evidence(self, dataset_id: str, symbol: str) -> dict[str, Any] | None:
+        """Return a selected chart and its exact strategy bundle in one response."""
+
+        dataset = self.get_dataset(dataset_id)
+        if dataset is None:
+            return None
+        symbol = normalise_symbol(symbol)
+        scope = dataset.get("scope") or {}
+        allowed = set(scope.get("symbols") or []) | set(scope.get("benchmark_symbols") or [])
+        allowed.update(scope.get("auxiliary_symbols") or [])
+        if symbol not in allowed:
+            raise ValueError(f"symbol {symbol} 不属于该 Daily Decision Dataset")
+        chart = self.repository.chart_instrument(dataset_id, symbol)
+        if chart is None:
+            return None
+        decisions, synthesis = self.strategy_repository.bundle(dataset_id, symbol=symbol)
+        if decisions or synthesis:
+            # A selected bundle can omit this symbol. Its empty decision set
+            # must still remove stored graphics from an older strategy set.
+            chart = self.strategy_registry.with_overlays(chart, decisions)
+        chart["strategy_set_sha256"] = synthesis.get("strategy_set_sha256")
+        chart["content_sha256"] = content_sha256(chart)
+        return {
+            "dataset": dataset, "chart": chart,
+            "strategy_decisions": decisions, "deterministic_synthesis": synthesis,
+        }
+
+    def get_replay_chart(self, dataset_id: str, symbol: str | None) -> dict[str, Any] | None:
+        if symbol is None:
+            # Preserve the existing explicit all-symbol research request.
+            return self.get_chart(dataset_id)
+        return self.repository.chart_instrument(dataset_id, symbol, replay_only=True)
+
     def _build_symbol_evidence(
         self,
         grouped: dict[str, list[Any]],
@@ -369,7 +405,7 @@ class DailyMarketEvidenceService:
                 snapshot = self.repository.save_indicator(
                     symbol=symbol,
                     bar_date=target_date,
-                    feature_version=FEATURE_VERSION,
+                    feature_version=INDICATOR_SNAPSHOT_FEATURE_VERSION,
                     input_bar_hash=bar_hash or "",
                     payload=indicators,
                     quality=indicator_quality,
@@ -379,6 +415,7 @@ class DailyMarketEvidenceService:
                     "symbol": symbol,
                     "bars": bars,
                     "technical_series": calculate_technical_series(bars, source="daily_bars"),
+                    "macd_momentum": indicators.get("macd_12_26_9"),
                     "indicator_snapshot_id": snapshot.id,
                     "quality": quality_symbols[symbol],
                 }
@@ -387,6 +424,7 @@ class DailyMarketEvidenceService:
                     "symbol": symbol,
                     "bars": [],
                     "technical_series": {"available": False, "series": []},
+                    "macd_momentum": None,
                     "indicator_snapshot_id": None,
                     "quality": quality_symbols[symbol],
                 }
@@ -443,6 +481,7 @@ class DailyMarketEvidenceService:
         output: dict[str, Any] = {
             "schema_version": CHART_PROJECTION_SCHEMA,
             "dataset_id": dataset["dataset_id"],
+            "macd_momentum_version": dataset.get("macd_momentum_version"),
             "scope": scope,
             "timezone": self.market_timezone,
             "instruments": {},
@@ -476,6 +515,7 @@ class DailyMarketEvidenceService:
                     "bars": item["bars"],
                 },
                 "series": series,
+                "macd_momentum": item.get("macd_momentum"),
                 "indicator_snapshot_id": item["indicator_snapshot_id"],
                 "quality": item["quality"],
             }

@@ -161,7 +161,7 @@ def _worker_entry(
             dataset = daily.get_dataset(dataset_id)
             if dataset is None:
                 raise OpportunityReplayError("找不到 Daily Decision Dataset")
-            chart = daily.get_chart(dataset_id)
+            chart = daily.get_replay_chart(dataset_id, symbol)
             payload = build_dataset_opportunity_view(
                 dataset,
                 chart,

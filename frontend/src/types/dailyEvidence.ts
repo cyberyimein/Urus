@@ -17,12 +17,44 @@ export interface ChartPoint {
   value: number | null
 }
 
+export type MacdSign = 'positive' | 'negative' | 'zero' | 'unavailable'
+export type MacdTransition =
+  | 'negative_to_positive'
+  | 'positive_to_negative'
+  | 'zero_to_positive'
+  | 'zero_to_negative'
+  | 'to_zero'
+  | 'none'
+  | 'unavailable'
+
+export interface MacdTransitionMarker {
+  time: string
+  type: MacdTransition
+  label: string
+  from_sign: Exclude<MacdSign, 'unavailable'>
+  to_sign: Exclude<MacdSign, 'unavailable'>
+  value: number
+}
+
+export interface MacdHistogramSignal {
+  sign: MacdSign
+  transition: MacdTransition
+  label: string
+}
+
+export interface MacdHistogramSignals {
+  histogram: MacdHistogramSignal
+  histogram_delta: MacdHistogramSignal
+  histogram_delta2: MacdHistogramSignal
+}
+
 export interface ChartSeries {
   series_id: string
   pane: 'price' | 'volume' | 'momentum' | 'volatility' | 'relative_strength' | string
   kind: 'line' | 'bar' | 'histogram' | string
   unit: string
   points: ChartPoint[]
+  markers?: MacdTransitionMarker[]
   bounds?: {
     min?: number
     max?: number
@@ -72,6 +104,7 @@ export interface DailyBarManifest {
 export interface DailyDecisionDataset {
   schema_version: string
   feature_version: string
+  macd_momentum_version?: string
   dataset_id: string
   trading_date: string
   cutoff_time: string
@@ -102,12 +135,22 @@ export interface ChartInstrument {
     bars: DailyBar[]
   }
   series: ChartSeries[]
+  macd_momentum?: {
+    available: boolean
+    quality_status: string
+    histogram: number | null
+    histogram_delta?: number | null
+    histogram_delta2?: number | null
+    histogram_signals?: Partial<MacdHistogramSignals> | null
+    momentum_context?: { label: string } | null
+  } | null
   indicator_snapshot_id: string | null
   quality: DailyInstrumentQuality
 }
 
 export interface DecisionChartProjection {
   schema_version: string
+  macd_momentum_version?: string | null
   dataset_id: string
   scope: DailyDecisionDataset['scope']
   timezone: string
@@ -127,6 +170,15 @@ export interface DailyEvidenceResponse {
   chart: DecisionChartProjection
   strategy_decisions: StrategyDecision[]
   deterministic_synthesis: DeterministicSynthesis
+}
+
+export interface InstrumentEvidenceResponse extends DailyEvidenceResponse {
+  chart: DecisionChartProjection & {
+    schema_version: 'urus.instrument_chart_projection.v1'
+    symbol: string
+    parent_stored_content_sha256: string
+    strategy_set_sha256: string | null
+  }
 }
 
 export type StrategyStance = 'bullish' | 'bearish' | 'neutral' | 'insufficient_data' | string

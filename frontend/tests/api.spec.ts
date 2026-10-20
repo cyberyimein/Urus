@@ -5,6 +5,28 @@ import { api, ApiError } from '@/api/client'
 afterEach(() => vi.unstubAllGlobals())
 
 describe('api client', () => {
+  it('requests lightweight run summaries and passes cancellation to run details', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify([])))
+    vi.stubGlobal('fetch', fetchMock)
+    await api.listObservationRunSummaries(10)
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/observation/run-summaries?limit=10', expect.anything())
+    const controller = new AbortController()
+    await api.getObservationRun('run/1', controller.signal)
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      '/api/observation/runs/run%2F1', expect.objectContaining({ signal: controller.signal }),
+    )
+  })
+
+  it('reads selected chart and strategies together with an encoded symbol', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({})))
+    vi.stubGlobal('fetch', fetchMock)
+    const controller = new AbortController()
+    await api.getDailyInstrumentEvidence('dataset/1', ' brk.b ', controller.signal)
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      '/api/daily-evidence/datasets/dataset%2F1/instruments/BRK.B/evidence',
+      expect.objectContaining({ signal: controller.signal }),
+    )
+  })
   it('limits opportunity requests to the selected symbol and supports cancellation', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ views: [] })))
     vi.stubGlobal('fetch', fetchMock)

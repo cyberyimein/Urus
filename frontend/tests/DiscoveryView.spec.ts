@@ -114,7 +114,7 @@ function mountDiscovery() {
 
 describe('DiscoveryView', () => {
   it('selects the latest completed run without falling back from the latest ready result', async () => {
-    vi.spyOn(api, 'listObservationRuns').mockResolvedValue([
+    vi.spyOn(api, 'listObservationRunSummaries').mockResolvedValue([
       observationRun('run-pending', 'running', '2026-09-20'),
       observationRun('run-old-ready', 'succeeded', '2026-09-18'),
       observationRun('run-latest-ready', 'mixed', '2026-09-19'),
@@ -133,7 +133,7 @@ describe('DiscoveryView', () => {
   })
 
   it('keeps the frozen run and dataset identity in both discovery links', async () => {
-    vi.spyOn(api, 'listObservationRuns').mockResolvedValue([observationRun('run-42', 'succeeded', '2026-09-19')])
+    vi.spyOn(api, 'listObservationRunSummaries').mockResolvedValue([observationRun('run-42', 'succeeded', '2026-09-19')])
     vi.spyOn(api, 'getObservationDiscovery').mockResolvedValue(discoveryProjection('run-42') as DiscoveryProjection)
 
     const wrapper = mountDiscovery()
@@ -159,7 +159,7 @@ describe('DiscoveryView', () => {
   })
 
   it('renders group phase signals before individual changes and keeps them outside focus filtering', async () => {
-    vi.spyOn(api, 'listObservationRuns').mockResolvedValue([observationRun('run-mixed', 'succeeded', '2026-09-19')])
+    vi.spyOn(api, 'listObservationRunSummaries').mockResolvedValue([observationRun('run-mixed', 'succeeded', '2026-09-19')])
     const projection = discoveryProjection('run-mixed')
     projection.quality.status = 'partial'
     projection.events.unshift(groupPhaseEvent('run-mixed'))
@@ -189,7 +189,7 @@ describe('DiscoveryView', () => {
 
   it('switches indicator scope before applying focus filters and keeps counts explicit', async () => {
     vi.spyOn(api, 'listFocusSymbols').mockResolvedValue([{ symbol: 'AMD', created_at: '2026-09-19T00:00:00Z' }])
-    vi.spyOn(api, 'listObservationRuns').mockResolvedValue([observationRun('run-indicators', 'succeeded', '2026-09-19')])
+    vi.spyOn(api, 'listObservationRunSummaries').mockResolvedValue([observationRun('run-indicators', 'succeeded', '2026-09-19')])
     const projection = discoveryProjection('run-indicators')
     projection.events.push(
       {
@@ -267,7 +267,7 @@ describe('DiscoveryView', () => {
   })
 
   it('shows separate empty states for missing group and indicator signals', async () => {
-    vi.spyOn(api, 'listObservationRuns').mockResolvedValue([observationRun('run-group-only', 'succeeded', '2026-09-19')])
+    vi.spyOn(api, 'listObservationRunSummaries').mockResolvedValue([observationRun('run-group-only', 'succeeded', '2026-09-19')])
     const groupOnly = discoveryProjection('run-group-only', false)
     groupOnly.events.push(groupPhaseEvent('run-group-only'))
     vi.spyOn(api, 'getObservationDiscovery').mockResolvedValue(groupOnly)
@@ -279,7 +279,7 @@ describe('DiscoveryView', () => {
 
     vi.restoreAllMocks()
     vi.spyOn(api, 'listFocusSymbols').mockResolvedValue([])
-    vi.spyOn(api, 'listObservationRuns').mockResolvedValue([observationRun('run-indicator-only', 'succeeded', '2026-09-19')])
+    vi.spyOn(api, 'listObservationRunSummaries').mockResolvedValue([observationRun('run-indicator-only', 'succeeded', '2026-09-19')])
     vi.spyOn(api, 'getObservationDiscovery').mockResolvedValue(discoveryProjection('run-indicator-only'))
 
     const indicatorWrapper = mountDiscovery()
@@ -289,7 +289,7 @@ describe('DiscoveryView', () => {
   })
 
   it('distinguishes no comparable history from a failed request', async () => {
-    vi.spyOn(api, 'listObservationRuns').mockResolvedValue([observationRun('run-no-history', 'succeeded', '2026-09-19')])
+    vi.spyOn(api, 'listObservationRunSummaries').mockResolvedValue([observationRun('run-no-history', 'succeeded', '2026-09-19')])
     vi.spyOn(api, 'getObservationDiscovery').mockResolvedValue(
       discoveryProjection('run-no-history', false, 'unavailable') as DiscoveryProjection,
     )
@@ -300,7 +300,7 @@ describe('DiscoveryView', () => {
     expect(noHistoryWrapper.get('[data-testid="discovery-no-events"]').text()).not.toContain('本次没有指标状态变化')
 
     vi.restoreAllMocks()
-    vi.spyOn(api, 'listObservationRuns').mockRejectedValue(new Error('observation service unavailable'))
+    vi.spyOn(api, 'listObservationRunSummaries').mockRejectedValue(new Error('observation service unavailable'))
     const failureWrapper = mountDiscovery()
     await flushPromises()
     expect(failureWrapper.get('[data-testid="discovery-error"]').text()).toContain('发现数据加载失败')
@@ -309,7 +309,7 @@ describe('DiscoveryView', () => {
   })
 
   it('filters only the current discovery events and makes an empty focus filter explicit', async () => {
-    vi.spyOn(api, 'listObservationRuns').mockResolvedValue([observationRun('run-filter', 'succeeded', '2026-09-19')])
+    vi.spyOn(api, 'listObservationRunSummaries').mockResolvedValue([observationRun('run-filter', 'succeeded', '2026-09-19')])
     const projection = discoveryProjection('run-filter')
     projection.events.push({
       ...projection.events[0],
@@ -344,7 +344,7 @@ describe('DiscoveryView', () => {
 
   it('separates focused and unfocused events without changing the discovery payload', async () => {
     vi.spyOn(api, 'listFocusSymbols').mockResolvedValue([{ symbol: 'INTC', created_at: '2026-09-19T00:00:00Z' }])
-    vi.spyOn(api, 'listObservationRuns').mockResolvedValue([observationRun('run-split', 'succeeded', '2026-09-19')])
+    vi.spyOn(api, 'listObservationRunSummaries').mockResolvedValue([observationRun('run-split', 'succeeded', '2026-09-19')])
     const projection = discoveryProjection('run-split')
     projection.events.push({
       ...projection.events[0],
@@ -375,7 +375,7 @@ describe('DiscoveryView', () => {
     const listFocus = vi.spyOn(api, 'listFocusSymbols')
       .mockRejectedValueOnce(new Error('focus read failed'))
       .mockResolvedValueOnce([{ symbol: 'INTC', created_at: '2026-09-19T00:00:00Z' }])
-    vi.spyOn(api, 'listObservationRuns').mockResolvedValue([observationRun('run-unknown', 'succeeded', '2026-09-19')])
+    vi.spyOn(api, 'listObservationRunSummaries').mockResolvedValue([observationRun('run-unknown', 'succeeded', '2026-09-19')])
     const projection = discoveryProjection('run-unknown')
     projection.events.push({
       ...projection.events[0],
@@ -409,7 +409,7 @@ describe('DiscoveryView', () => {
   })
 
   it('updates focus state only after success and keeps it unchanged on failure', async () => {
-    vi.spyOn(api, 'listObservationRuns').mockResolvedValue([observationRun('run-focus', 'succeeded', '2026-09-19')])
+    vi.spyOn(api, 'listObservationRunSummaries').mockResolvedValue([observationRun('run-focus', 'succeeded', '2026-09-19')])
     vi.spyOn(api, 'getObservationDiscovery').mockResolvedValue(discoveryProjection('run-focus'))
     const addFocus = vi.spyOn(api, 'addFocusSymbol').mockRejectedValue(new Error('focus write failed'))
 

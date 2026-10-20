@@ -156,6 +156,24 @@ class ObservationCollectionPlanResponse(BaseModel):
     created_at: datetime
 
 
+class ObservationRunSummaryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str
+    status: str
+    trigger_mode: str
+    trading_date: date
+    universe_revision_id: str | None = None
+    universe_freshness: str = "unknown"
+    group_count: int
+    successful_group_count: int
+    failed_group_count: int
+    quality_issue_count: int
+    created_at: datetime
+    completed_at: datetime | None = None
+    error_message: str | None = None
+
+
 class ObservationRunResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

@@ -26,6 +26,7 @@ const group = computed(() => detail.value?.group ?? groups.value.find((item) => 
 const indicatorGroups = computed(() => groups.value.filter(isIndicatorGroup))
 const themeGroups = computed(() => groups.value.filter((item) => !isIndicatorGroup(item)))
 const snapshot = computed(() => detail.value?.latest_snapshot ?? null)
+const memberSymbols = computed(() => snapshot.value?.group.symbols ?? group.value?.symbols ?? [])
 const groupAiSource = computed<RemoteDecisionSource>(() => ({
   observation_run_id: exactRunId.value || undefined,
   snapshot_id: exactSnapshotId.value || undefined,
@@ -103,6 +104,13 @@ function formatRatio(value: number | null | undefined) {
   return value === null || value === undefined || !Number.isFinite(value) ? '—' : `${(value * 100).toFixed(0)}%`
 }
 
+function macdMemberValue(row: Record<string, any>, key: string) {
+  if (!Object.prototype.hasOwnProperty.call(row, key)) return '未计算此版本'
+  const value = row[key]
+  const precision = key === 'macd_histogram_delta' || key === 'macd_histogram_delta2' ? 6 : 3
+  return typeof value === 'number' && Number.isFinite(value) ? `${value >= 0 ? '+' : ''}${value.toFixed(precision)}` : '样本不足'
+}
+
 function linePath(points: Array<{ time: string; value: number | null; benchmark_value?: number | null }>, key: 'value' | 'benchmark_value' = 'value', minOverride?: number, maxOverride?: number) {
   const values = points.map((point) => point[key]).filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
   if (values.length < 2) return ''
@@ -154,6 +162,17 @@ function heatTone(value: unknown) {
   if (value === 'weak' || value === 'lagging' || value === 'volume_down_distribution') return 'negative'
   if (value === 'oversold') return 'warning'
   return 'neutral'
+}
+
+function instrumentLink(symbol: string) {
+  return {
+    name: 'instrument-decision',
+    params: { symbol },
+    query: {
+      ...(snapshot.value?.dataset_id ? { dataset: snapshot.value.dataset_id } : {}),
+      ...(exactRunId.value ? { run: exactRunId.value } : {}),
+    },
+  }
 }
 
 function selectSymbol(symbol: string) {
@@ -301,6 +320,11 @@ onMounted(() => { void load() })
         </div>
       </section>
 
+      <nav v-if="memberSymbols.length" class="observation-instrument-links" aria-label="组内个股">
+        <span>组内个股</span>
+        <RouterLink v-for="symbol in memberSymbols" :key="symbol" :to="instrumentLink(symbol)">{{ symbol }} ↗</RouterLink>
+      </nav>
+
       <section v-if="snapshot" class="observation-dashboard">
         <div class="observation-stat-strip">
           <div><span>LEVEL × IMPULSE × SETUP</span><strong :data-tone="decision?.stance">{{ levelLabels[decision?.level ?? ''] ?? stateLabels[decision?.state ?? ''] ?? decision?.state ?? '—' }}</strong><small>{{ impulseLabels[decision?.impulse ?? ''] ?? decision?.impulse ?? '—' }} · {{ setupLabels[decision?.setup ?? ''] ?? decision?.setup ?? '—' }}</small></div>
@@ -349,10 +373,11 @@ onMounted(() => { void load() })
         </div>
 
         <section v-if="selectedSymbolRow" class="observation-card observation-symbol-focus">
-          <div class="observation-card-head"><div><span class="section-kicker">SELECTED SYMBOL / FROZEN EVIDENCE</span><h3>{{ selectedSymbol }}</h3></div><RouterLink class="text-link" :to="{ name: 'instrument-decision', params: { symbol: selectedSymbol }, query: { dataset: snapshot.dataset_id } }">打开完整个股 →</RouterLink></div>
+          <div class="observation-card-head"><div><span class="section-kicker">SELECTED SYMBOL / FROZEN EVIDENCE</span><h3>{{ selectedSymbol }}</h3></div><RouterLink class="text-link" :to="instrumentLink(selectedSymbol)">打开完整个股 →</RouterLink></div>
           <div class="observation-focus-grid">
             <div class="observation-focus-chart"><svg v-if="selectedMultiple" viewBox="0 0 360 120" role="img" :aria-label="`${selectedSymbol} 冻结形态`"><path :d="miniPath(selectedMultiple.points, 'value')" class="small-close-line" /><path :d="miniPath(selectedMultiple.points, 'ma20')" class="small-ma20-line" /><path :d="miniPath(selectedMultiple.points, 'ma50')" class="small-ma50-line" /></svg></div>
-            <dl><div><dt>CLOSE</dt><dd>{{ selectedSymbolRow.latest_close ?? '—' }}</dd></div><div><dt>20D</dt><dd>{{ formatPercent(selectedSymbolRow.returns_percent?.['20']) }}</dd></div><div><dt>RSI</dt><dd>{{ typeof selectedSymbolRow.rsi14 === 'number' ? `RSI ${selectedSymbolRow.rsi14.toFixed(1)}` : '—' }}</dd></div><div><dt>RELATIVE</dt><dd>{{ formatPercent(selectedSymbolRow.relative_excess_percent?.['20d']) }}</dd></div><div><dt>QUALITY</dt><dd>{{ selectedSymbolRow.quality_status }}</dd></div></dl>
+            <dl><div><dt>CLOSE</dt><dd>{{ selectedSymbolRow.latest_close ?? '—' }}</dd></div><div><dt>20D</dt><dd>{{ formatPercent(selectedSymbolRow.returns_percent?.['20']) }}</dd></div><div><dt>RSI</dt><dd>{{ typeof selectedSymbolRow.rsi14 === 'number' ? `RSI ${selectedSymbolRow.rsi14.toFixed(1)}` : '—' }}</dd></div><div><dt>MACD H</dt><dd>{{ macdMemberValue(selectedSymbolRow, 'macd_histogram') }}</dd></div><div><dt>ΔH</dt><dd>{{ macdMemberValue(selectedSymbolRow, 'macd_histogram_delta') }}</dd></div><div><dt>Δ²H</dt><dd>{{ macdMemberValue(selectedSymbolRow, 'macd_histogram_delta2') }}</dd></div><div><dt>RELATIVE</dt><dd>{{ formatPercent(selectedSymbolRow.relative_excess_percent?.['20d']) }}</dd></div><div><dt>QUALITY</dt><dd>{{ selectedSymbolRow.quality_status }}</dd></div></dl>
+            <p class="observation-macd-note">H 是 MACD 柱值；ΔH 表示柱值每根日 K 的变化；Δ²H 表示 ΔH 的变化。判断恶化或修复时要结合 ΔH 与 Δ²H。</p>
             <div class="observation-focus-strategies"><p v-if="!selectedStrategies.length">没有可用策略判断。</p><article v-for="item in selectedStrategies" :key="item.decision_id"><strong>{{ item.strategy?.name }}</strong><span>{{ item.stance }} · {{ item.action }} · {{ item.setup_plan?.stage ?? item.setup_progress?.stage }}</span><small v-if="item.setup_plan">触发 {{ item.setup_plan.confirmation_operator }} {{ item.setup_plan.confirmation_price ?? '—' }} · 距离 {{ item.setup_plan.remaining_atr ?? '—' }} ATR · 失效 {{ item.setup_plan.invalidation_operator }} {{ item.setup_plan.invalidation_price ?? '—' }}</small><small v-else>{{ item.confirmation_conditions?.[0] ?? item.reasons?.[0]?.detail ?? '等待更多证据。' }}</small></article></div>
           </div>
         </section>
@@ -365,10 +390,10 @@ onMounted(() => { void load() })
         <section class="observation-card observation-small-multiples">
           <div class="observation-card-head"><div><span class="section-kicker">SMALL MULTIPLES</span><h3>个股形态速览</h3></div><small>60D normalized · 点击进入个股</small></div>
           <div class="observation-small-grid">
-            <button v-for="item in smallMultiples" :key="item.symbol" class="observation-small-card" :class="{ active: item.symbol === selectedSymbol }" type="button" @click="selectSymbol(item.symbol)">
+            <RouterLink v-for="item in smallMultiples" :key="item.symbol" class="observation-small-card" :class="{ active: item.symbol === selectedSymbol }" :to="instrumentLink(item.symbol)">
               <div><strong>{{ item.symbol }}</strong><b :data-tone="(item.return_20d ?? 0) >= 0 ? 'positive' : 'negative'">{{ formatPercent(item.return_20d) }}</b></div>
               <svg viewBox="0 0 180 64" role="img" :aria-label="`${item.symbol} 60 日形态`"><path :d="miniPath(item.points, 'value')" class="small-close-line" /><path :d="miniPath(item.points, 'ma20')" class="small-ma20-line" /><path :d="miniPath(item.points, 'ma50')" class="small-ma50-line" /></svg>
-            </button>
+            </RouterLink>
           </div>
         </section>
       </section>

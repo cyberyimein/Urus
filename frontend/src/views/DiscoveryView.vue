@@ -4,7 +4,7 @@ import { RouterLink } from 'vue-router'
 
 import { api } from '@/api/client'
 import AppShell from '@/components/AppShell.vue'
-import type { ObservationRun } from '@/types/api'
+import type { ObservationRunSummary } from '@/types/api'
 import type {
   DiscoveryEvent,
   DiscoveryProjection,
@@ -15,7 +15,7 @@ import type {
 
 const loading = ref(true)
 const error = ref('')
-const selectedRun = ref<ObservationRun | null>(null)
+const selectedRun = ref<ObservationRunSummary | null>(null)
 const discovery = ref<DiscoveryProjection | null>(null)
 type FocusFilter = 'all' | 'focused' | 'unfocused'
 
@@ -100,11 +100,11 @@ const qualityLabel = computed(() => {
 const warnings = computed(() => discovery.value?.quality.warnings ?? [])
 const noComparableHistory = computed(() => discovery.value?.comparison.status === 'unavailable')
 
-function isReadyRun(run: ObservationRun) {
+function isReadyRun(run: ObservationRunSummary) {
   return run.status === 'succeeded' || run.status === 'mixed'
 }
 
-function runSortKey(run: ObservationRun) {
+function runSortKey(run: ObservationRunSummary) {
   return [run.trading_date, run.completed_at ?? '', run.created_at, run.run_id].join('|')
 }
 
@@ -243,7 +243,7 @@ async function load() {
 
   try {
     const [runItems] = await Promise.all([
-      api.listObservationRuns(30),
+      api.listObservationRunSummaries(30),
       loadFocusSymbols(),
     ])
     const readyRuns = runItems

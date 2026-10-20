@@ -5,7 +5,7 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 import AppShell from '@/components/AppShell.vue'
 import RemoteDecisionPanel from '@/components/decision/RemoteDecisionPanel.vue'
 import { api } from '@/api/client'
-import type { ObservationRun } from '@/types/api'
+import type { ObservationRunSummary } from '@/types/api'
 import type {
   CrossSectionCatalogItem,
   CrossSectionComparison,
@@ -20,7 +20,7 @@ const route = useRoute()
 const router = useRouter()
 
 const catalog = ref<CrossSectionCatalogItem[]>([])
-const runs = ref<ObservationRun[]>([])
+const runs = ref<ObservationRunSummary[]>([])
 const projection = ref<CrossSectionProjection | null>(null)
 const selectedRunId = ref('')
 const selectedLensId = ref('')
@@ -91,6 +91,7 @@ const focusState = ref<FocusState>('loading')
 const focusError = ref('')
 const focusSymbols = ref<Set<string>>(new Set())
 const groupFilter = ref('')
+const stateFilter = ref('')
 const sortKey = ref<SortKey>('new_changes')
 const sortDirection = ref<'asc' | 'desc'>('desc')
 let focusRequestSequence = 0
@@ -98,6 +99,9 @@ let focusRequestSequence = 0
 const focusFilterAvailable = computed(() => focusState.value === 'available')
 const stateLabels: Record<string, string> = {
   oversold: '超卖', overbought: '超买', balanced: '平衡', positive: '正值', negative: '负值', zero: '零轴',
+  histogram_rising: 'MACD 柱值上升（ΔH > 0）', histogram_falling: 'MACD 柱值下降（ΔH < 0）', histogram_flat: 'MACD 柱值持平（ΔH = 0）',
+  slope_increasing: 'MACD 柱值斜率向上变化（Δ²H > 0）', slope_decreasing: 'MACD 柱值斜率向下变化（Δ²H < 0）', slope_unchanged: 'MACD 柱值斜率变化为零（Δ²H = 0）',
+  not_computed: '未计算此版本', insufficient_sample: '样本不足',
   leading: '相对领先', lagging: '相对落后', inline: '接近基准', expanding: '放量', contracting: '缩量', normal: '正常', flat: '持平',
   above: '线上', below: '线下', missing: '缺失', forming: '形成中', near_confirmation: '接近确认', watching: '观察中', armed: '待确认',
   confirmed: '已确认', invalidated: '已失效', no_setup: '无形态', ineligible: '不适用', insufficient_data: '数据不足',
@@ -105,7 +109,7 @@ const stateLabels: Record<string, string> = {
 }
 const actionLabels: Record<string, string> = { prioritize: '优先关注', watch: '观察', avoid: '回避', wait: '等待', no_action: '不行动' }
 const lensNameLabels: Record<string, string> = {
-  rsi14: '相对强弱指标 RSI 14', macd_histogram: 'MACD 柱体', relative_strength_20d: '20 日相对强弱', volume_ratio_20d: '20 日成交量比',
+  rsi14: '相对强弱指标 RSI 14', macd_histogram: 'MACD 柱体', macd_histogram_delta: 'MACD 柱值变化 ΔH', macd_histogram_delta2: 'MACD 柱值变化的变化 Δ²H', relative_strength_20d: '20 日相对强弱', volume_ratio_20d: '20 日成交量比',
   return_20d: '20 日收益率', above_ma20: '站上 20 日均线', above_ma50: '站上 50 日均线', above_ma200: '站上 200 日均线',
   trend_momentum_v1: '趋势动量策略', mean_reversion_v1: '均值回归策略', breakout_volume_v1: '突破量能策略',
   relative_strength_rotation_v1: '相对强弱轮动策略', quality_left_side_reversal_v1: '优质资产左侧反转策略',
@@ -113,16 +117,19 @@ const lensNameLabels: Record<string, string> = {
 const strategyStageOrder: Record<string, number> = { confirmed: 6, near_confirmation: 5, armed: 4, watching: 3, forming: 2, invalidated: 1, insufficient_data: 0 }
 const activeLensId = computed(() => projection.value?.lens.id ?? selectedLensId.value)
 const isRelativeStrength = computed(() => activeLensId.value === 'relative_strength_20d')
+const isRawMacdMomentum = computed(() => ['macd_histogram_delta', 'macd_histogram_delta2'].includes(activeLensId.value))
 const sortOptions = computed(() => isIndicator.value
-  ? [
-      { value: 'new_changes', label: '新变化优先' }, { value: 'change', label: '变化幅度' }, { value: 'value', label: '当前值' }, { value: 'symbol', label: 'symbol' },
-    ]
+  ? isRawMacdMomentum.value
+    ? [{ value: 'new_changes', label: '状态变化优先' }, { value: 'symbol', label: 'symbol' }]
+    : [
+        { value: 'new_changes', label: '新变化优先' }, { value: 'change', label: '变化幅度' }, { value: 'value', label: '当前值' }, { value: 'symbol', label: 'symbol' },
+      ]
   : [
       { value: 'stage_change', label: '阶段变化优先' }, { value: 'stage', label: '阶段' }, { value: 'score', label: 'score' }, { value: 'symbol', label: 'symbol' },
     ])
 const sortLabel = computed(() => sortOptions.value.find((option) => option.value === sortKey.value)?.label ?? '—')
 const lensDisplayName = computed(() => lensNameLabels[activeLensId.value] ?? activeItem.value?.name ?? (isIndicator.value ? projection.value?.indicator?.name : projection.value?.strategy?.name) ?? activeLensId.value)
-const lensImplementationLabel = computed(() => `${activeLensId.value || '—'} · ${formatLensVersion(projection.value?.lens.version ?? activeItem.value?.version)}`)
+const lensImplementationLabel = computed(() => `${activeLensId.value || '—'} · ${formatLensVersion(projection.value?.lens.version ?? activeItem.value?.version)}${isRawMacdMomentum.value ? ' · 原始价格尺度，不跨标的比较' : ''}`)
 
 function formatLensVersion(value: string | null | undefined) {
   const version = value?.trim()
@@ -200,6 +207,21 @@ const tableRows = computed<ComparisonTableRow[]>(() => {
   }
   return [...deduped.values()]
 })
+function stateFilterToken(row: CrossSectionRow) {
+  if (row.valid) return String(row.state ?? 'missing')
+  if (row.state_label === '未计算此版本') return 'not_computed'
+  if (row.state_label === '样本不足') return 'insufficient_sample'
+  return 'missing'
+}
+const stateFilterOptions = computed(() => {
+  const options = new Map<string, string>()
+  for (const row of tableRows.value) {
+    const token = stateFilterToken(row)
+    const label = row.valid ? row.state_label ?? stateLabels[token] ?? token : row.state_label ?? stateLabels[token] ?? '数据缺失'
+    options.set(token, label)
+  }
+  return [...options.entries()].map(([value, label]) => ({ value, label }))
+})
 const uniqueValidRowCount = computed(() => tableRows.value.filter((row) => row.valid).length)
 
 function tableStageOf(row: CrossSectionRow) {
@@ -253,10 +275,115 @@ const filteredTableRows = computed(() => {
     if (focusFilter.value === 'focused' && focusFilterAvailable.value && !isFocused(row.symbol)) return false
     if (focusFilter.value === 'unfocused' && focusFilterAvailable.value && isFocused(row.symbol)) return false
     if (groupFilter.value && !row.group_ids.includes(groupFilter.value)) return false
+    if (stateFilter.value && stateFilterToken(row) !== stateFilter.value) return false
     if (!query) return true
     return row.symbol.toLocaleLowerCase().includes(query) || row.group_names.some((name) => name.toLocaleLowerCase().includes(query))
   })
 })
+
+type VisualKind = 'rsi' | 'volume' | 'zero' | 'binary' | 'strategy' | 'categorical'
+const visualKind = computed<VisualKind>(() => {
+  if (!isIndicator.value) return 'strategy'
+  if (isRawMacdMomentum.value) return 'categorical'
+  if (activeLensId.value === 'rsi14') return 'rsi'
+  if (activeLensId.value === 'volume_ratio_20d') return 'volume'
+  if (activeLensId.value.startsWith('above_ma')) return 'binary'
+  return 'zero'
+})
+const visualScale = computed(() => {
+  if (visualKind.value === 'categorical') return { min: 0, max: 1 }
+  if (visualKind.value === 'rsi') return { min: 0, max: 100 }
+  if (visualKind.value === 'binary') return { min: 0, max: 1 }
+  if (visualKind.value === 'strategy') return { min: -100, max: 100 }
+  const values = tableRows.value.flatMap((row) => [row.value, row.previous_value]).filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
+  if (visualKind.value === 'volume') return { min: 0, max: Math.max(1.5, ...values) }
+  const bound = Math.max(1, ...values.map(Math.abs))
+  return { min: -bound, max: bound }
+})
+function visualZonesFor(row: CrossSectionRow) {
+  if (visualKind.value === 'rsi') {
+    const thresholds = row.thresholds ?? activeItem.value?.thresholds ?? projection.value?.indicator?.thresholds ?? {}
+    const low = Math.min(100, Math.max(0, Number(thresholds.oversold ?? 30)))
+    const high = Math.min(100, Math.max(low, Number(thresholds.overbought ?? 70)))
+    return [{ label: '超卖', tone: 'attention', from: 0, to: low }, { label: '平衡', tone: 'neutral', from: low, to: high }, { label: '超买', tone: 'negative', from: high, to: 100 }]
+  }
+  if (visualKind.value === 'volume') {
+    const thresholds = row.thresholds ?? activeItem.value?.thresholds ?? projection.value?.indicator?.thresholds ?? {}
+    const low = Number(thresholds.contraction ?? thresholds.contracting ?? 0.8)
+    const high = Number(thresholds.expansion ?? thresholds.expanding ?? 1.2)
+    return [{ label: '缩量', tone: 'negative', from: 0, to: low }, { label: '正常', tone: 'neutral', from: low, to: high }, { label: '放量', tone: 'positive', from: high, to: visualScale.value.max }]
+  }
+  if (visualKind.value === 'strategy') return [{ label: '偏空', tone: 'negative', from: -100, to: -25 }, { label: '中性', tone: 'neutral', from: -25, to: 25 }, { label: '偏多', tone: 'positive', from: 25, to: 100 }]
+  if (visualKind.value === 'binary') return [{ label: '线下', tone: 'negative', from: 0, to: .5 }, { label: '线上', tone: 'positive', from: .5, to: 1 }]
+  return [{ label: '负值', tone: 'negative', from: visualScale.value.min, to: 0 }, { label: '正值', tone: 'positive', from: 0, to: visualScale.value.max }]
+}
+function visualTicksFor(row: CrossSectionRow) {
+  if (visualKind.value === 'rsi' || visualKind.value === 'volume') return visualZonesFor(row).slice(0, 2).map((zone) => zone.to)
+  if (visualKind.value === 'strategy') return [-25, 0, 25]
+  return [0]
+}
+
+function plotLabel() {
+  if (visualKind.value === 'categorical') return '状态，不比较原始数值尺度'
+  if (visualKind.value === 'rsi') return 'RSI 区间'
+  if (visualKind.value === 'volume') return '成交量比区间'
+  if (visualKind.value === 'strategy') return '策略方向 / SCORE'
+  if (visualKind.value === 'binary') return '均线位置'
+  return '零轴位置'
+}
+
+function scaleLabel(value: number) {
+  return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(2)))
+}
+const stateDistribution = computed(() => {
+  const counts = new Map<string, { label: string; tone: string; count: number }>()
+  for (const row of filteredTableRows.value) {
+    const key = row.valid ? (isIndicator.value ? row.state : row.stance ?? 'neutral') : stateFilterToken(row)
+    const current = counts.get(key)
+    if (current) current.count += 1
+    else counts.set(key, { label: row.valid ? stateLabels[key] ?? key : row.state_label ?? stateLabels[key] ?? '数据缺失', tone: row.valid ? toneOf(row) : 'attention', count: 1 })
+  }
+  return [...counts.values()].sort((a, b) => b.count - a.count)
+})
+const changedRowCount = computed(() => filteredTableRows.value.filter((row) => row.transition).length)
+const showTable = ref(false)
+
+function visualPosition(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return null
+  const { min, max } = visualScale.value
+  return Number(Math.max(0, Math.min(100, (value - min) / (max - min) * 100)).toFixed(2))
+}
+
+function visualZoneStyle(from: number, to: number) {
+  const start = visualPosition(from) ?? 0
+  const end = visualPosition(to) ?? 100
+  return { left: `${start}%`, width: `${Math.max(0, end - start)}%` }
+}
+
+function visualMarkerStyle(value: number | null | undefined) {
+  const position = visualPosition(value)
+  return position === null ? {} : { left: `${position}%` }
+}
+
+function zeroBarStyle(value: number | null | undefined) {
+  const position = visualPosition(value)
+  const zero = visualPosition(0) ?? 50
+  return position === null ? {} : { left: `${Math.min(position, zero)}%`, width: `${Math.abs(position - zero)}%` }
+}
+
+function ratioFillStyle(value: number | null | undefined) {
+  const position = visualPosition(value)
+  return position === null ? {} : { width: `${position}%` }
+}
+
+const strategyStages = ['forming', 'watching', 'armed', 'near_confirmation', 'confirmed'] as const
+function strategyStageIndex(row: CrossSectionRow) {
+  return strategyStages.findIndex((stage) => stage === tableStageOf(row))
+}
+
+function visualValue(row: CrossSectionRow) {
+  return isIndicator.value ? row.value : row.score
+}
 
 const discoveryEventId = computed(() => typeof route.query.discoveryEvent === 'string' ? route.query.discoveryEvent : '')
 const discoveryLensId = computed(() => typeof route.query.lens === 'string' ? route.query.lens : '')
@@ -267,6 +394,7 @@ const discoveryTargetSymbol = computed(() => {
   return transition?.symbol ? normalizeSymbol(transition.symbol) : ''
 })
 const highlightedTableKeys = computed(() => {
+  if (!discoveryEventId.value && !discoveryTargetSymbol.value) return []
   if (discoveryLensId.value && discoveryLensId.value !== activeLensId.value) return []
   return tableRows.value.filter((row) => {
     if (discoveryTargetSymbol.value && normalizeSymbol(row.symbol) !== discoveryTargetSymbol.value) return false
@@ -294,7 +422,7 @@ function transitionCaption(row: CrossSectionRow) {
 }
 
 function tableQualityLabel(row: CrossSectionRow) {
-  if (!row.valid || row.status === 'missing') return '数据缺失'
+  if (!row.valid || row.status === 'missing') return row.state_label === '未计算此版本' || row.state_label === '样本不足' ? row.state_label : '数据缺失'
   return row.quality_status || row.status || '—'
 }
 
@@ -329,7 +457,7 @@ function indexRouteName(lensType: CrossSectionLensType = activeLensType.value) {
   return lensType === 'indicator' ? 'indicators' : 'strategies'
 }
 
-function isReadyRun(run: ObservationRun) {
+function isReadyRun(run: ObservationRunSummary) {
   return run.status === 'succeeded' || run.status === 'mixed'
 }
 
@@ -410,7 +538,7 @@ function instrumentLink(symbol: string, datasetId: string) {
 }
 
 function statusOf(row: CrossSectionRow) {
-  if (row.status === 'missing' || !row.valid) return '数据缺失'
+  if (row.status === 'missing' || !row.valid) return row.state_label === '未计算此版本' || row.state_label === '样本不足' ? row.state_label : '数据缺失'
   return stateOf(row)
 }
 
@@ -471,7 +599,7 @@ async function loadPage(lensType: CrossSectionLensType = activeLensType.value) {
   selectedLensId.value = ''
   selectedRunId.value = ''
   try {
-    const [items, runItems] = await Promise.all([lensType === 'indicator' ? api.listIndicatorCatalog() : api.listStrategyCatalog(), api.listObservationRuns(30)])
+    const [items, runItems] = await Promise.all([lensType === 'indicator' ? api.listIndicatorCatalog() : api.listStrategyCatalog(), api.listObservationRunSummaries(30)])
     if (requestId !== requestSequence || activeLensType.value !== lensType) return
     catalog.value = items
     runs.value = runItems
@@ -507,6 +635,13 @@ watch(activeLensType, (lensType, previousLensType) => {
   updateSortDefaults(lensType)
   if (previousLensType !== undefined && lensType !== previousLensType) void loadPage(lensType)
 }, { immediate: true })
+
+watch(activeLensId, () => {
+  stateFilter.value = ''
+  if (isRawMacdMomentum.value && (sortKey.value === 'value' || sortKey.value === 'change')) {
+    sortKey.value = 'new_changes'
+  }
+})
 
 watch(
   () => [activeLensType.value, route.name, route.params.indicatorId, route.params.strategyId, route.query.run],
@@ -553,7 +688,7 @@ onMounted(() => {
           <select v-model="selectedRunId" :disabled="!readyRuns.length" @change="selectRun">
             <option v-if="!readyRuns.length" value="">暂无已完成观察</option>
             <option v-for="run in readyRuns" :key="run.run_id" :value="run.run_id">
-              {{ run.trading_date }} · {{ run.status }}{{ run.report?.summary?.quality_issue_count ? ` · ${run.report.summary.quality_issue_count} quality issues` : '' }}
+              {{ run.trading_date }} · {{ run.status }}{{ run.quality_issue_count ? ` · ${run.quality_issue_count} quality issues` : '' }}
             </option>
           </select>
         </label>
@@ -640,6 +775,13 @@ onMounted(() => {
               <option v-for="group in visibleGroups" :key="group.group_id" :value="group.group_id">{{ groupNameOf(group) }}</option>
             </select>
           </label>
+          <label v-if="isIndicator" class="cross-section-control">
+            <span>指标状态</span>
+            <select v-model="stateFilter" data-testid="cross-section-state-filter">
+              <option value="">全部状态</option>
+              <option v-for="option in stateFilterOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+            </select>
+          </label>
           <label class="cross-section-control">
             <span>排序</span>
             <select v-model="sortKey" data-testid="cross-section-sort">
@@ -663,7 +805,94 @@ onMounted(() => {
           <span>组级摘要：{{ visibleGroups.map((group) => `${groupNameOf(group)} ${group.valid_symbol_count}/${group.symbol_count}`).join(' · ') || '—' }}</span>
         </div>
 
-        <section class="cross-section-table-shell" aria-label="横向比较表">
+        <section class="cross-section-visual-summary" aria-label="当前筛选的状态分布">
+          <div class="cross-section-visual-summary-head">
+            <div><span class="section-kicker">CROSS-SECTION MAP</span><h3>状态分布与个股位置</h3></div>
+            <p>{{ changedRowCount }} 项状态切换 · {{ filteredTableRows.length }} 项当前事实</p>
+          </div>
+          <div v-if="stateDistribution.length" class="cross-section-distribution-track" role="img" :aria-label="stateDistribution.map((item) => `${item.label} ${item.count}`).join('，')">
+            <span v-for="item in stateDistribution" :key="item.label" :data-tone="item.tone" :style="{ flexGrow: item.count }" :title="`${item.label} ${item.count}`"></span>
+          </div>
+          <div class="cross-section-distribution-legend">
+            <span v-for="item in stateDistribution" :key="item.label" :data-tone="item.tone"><i></i>{{ item.label }} <strong>{{ item.count }}</strong></span>
+            <span class="cross-section-marker-key">实心为当前 · 暗标记为前日</span>
+          </div>
+        </section>
+
+        <section class="cross-section-card-grid" aria-label="个股可视化卡片" data-testid="cross-section-cards">
+          <RouterLink
+            v-for="row in filteredTableRows"
+            :key="row.table_key"
+            class="cross-section-symbol-card"
+            :class="{ 'is-discovery-highlight': highlightedTableKeys.includes(row.table_key), 'is-transition': !!row.transition }"
+            :data-symbol="row.symbol"
+            :data-tone="toneOf(row)"
+            :data-benchmark="row.benchmark_key || undefined"
+            :data-focused="focusState === 'available' ? (isFocused(row.symbol) ? 'true' : 'false') : 'unknown'"
+            :to="instrumentLink(row.symbol, row.dataset_id)"
+          >
+            <div class="cross-section-card-top">
+              <div><strong>{{ row.symbol }}</strong><small>{{ row.group_names.join(' / ') }}</small></div>
+              <span class="cross-section-card-state" :data-tone="toneOf(row)">{{ currentStateLabel(row) }}</span>
+            </div>
+            <div class="cross-section-card-reading">
+              <div><span>{{ isIndicator ? '当前值' : '策略 score' }}</span><strong>{{ isIndicator ? valueOf(row) : scoreOf(row) }}</strong></div>
+              <div><span>{{ isIndicator ? '较前日' : '执行阶段' }}</span><strong>{{ isIndicator ? formatChange(row) : stageOf(row) }}</strong></div>
+            </div>
+            <div class="cross-section-card-plot" :data-visual-kind="visualKind" role="img" :aria-label="`${row.symbol} 当前${isIndicator ? valueOf(row) : scoreOf(row)}，前日${previousValueOf(row)}；${currentStateLabel(row)}`">
+              <div class="cross-section-plot-caption"><span>{{ plotLabel() }}</span><span>当前 ● <i></i> 前日</span></div>
+              <template v-if="visualKind === 'categorical'">
+                <div class="cross-section-categorical-state" :data-tone="toneOf(row)">{{ row.state_label || '状态不可用' }}</div>
+              </template>
+              <template v-else-if="visualKind === 'binary'">
+                <div class="cross-section-binary-choices">
+                  <span :class="{ active: row.value === 0 }" data-position="below">线下<i v-if="row.previous_value === 0" class="cross-section-binary-previous"></i></span>
+                  <span :class="{ active: row.value === 1 }" data-position="above">线上<i v-if="row.previous_value === 1" class="cross-section-binary-previous"></i></span>
+                </div>
+                <div class="cross-section-card-scale"><span>前日 {{ previousValueOf(row) }}</span><span>均线位置 · 0 / 1</span></div>
+              </template>
+              <template v-else>
+                <div class="cross-section-card-track">
+                  <template v-if="visualKind === 'rsi'">
+                    <span v-for="zone in visualZonesFor(row)" :key="zone.label" class="cross-section-card-zone" :data-tone="zone.tone" :style="visualZoneStyle(zone.from, zone.to)"></span>
+                  </template>
+                  <template v-else-if="visualKind === 'volume'">
+                    <span v-for="zone in visualZonesFor(row)" :key="zone.label" class="cross-section-card-zone volume-zone" :data-tone="zone.tone" :style="visualZoneStyle(zone.from, zone.to)"></span>
+                    <span class="cross-section-volume-fill" :data-tone="toneOf(row)" :style="ratioFillStyle(row.value)"></span>
+                  </template>
+                  <template v-else-if="visualKind === 'zero'">
+                    <span class="cross-section-zero-line"></span>
+                    <span class="cross-section-zero-bar" :data-tone="toneOf(row)" :style="zeroBarStyle(row.value)"></span>
+                  </template>
+                  <template v-else-if="visualKind === 'strategy'">
+                    <span v-for="zone in visualZonesFor(row)" :key="zone.label" class="cross-section-card-zone strategy-zone" :data-tone="zone.tone" :style="visualZoneStyle(zone.from, zone.to)"></span>
+                    <span class="cross-section-zero-line"></span>
+                  </template>
+                  <i v-if="row.previous_value !== null && row.previous_value !== undefined" class="cross-section-card-marker previous" :style="visualMarkerStyle(row.previous_value)"></i>
+                  <i v-if="visualValue(row) !== null && visualValue(row) !== undefined" class="cross-section-card-marker current" :data-tone="toneOf(row)" :style="visualMarkerStyle(visualValue(row))"></i>
+                </div>
+                <div class="cross-section-card-scale">
+                  <span class="cross-section-scale-start">{{ scaleLabel(visualScale.min) }}</span>
+                  <span v-for="tick in visualTicksFor(row)" :key="tick" class="cross-section-scale-tick" :style="visualMarkerStyle(tick)">{{ scaleLabel(tick) }}</span>
+                  <span class="cross-section-scale-end">{{ scaleLabel(visualScale.max) }}</span>
+                </div>
+                <div v-if="visualKind === 'strategy'" class="cross-section-stage-ladder" :aria-label="`策略阶段 ${stageOf(row)}`">
+                  <span v-for="(stage, index) in strategyStages" :key="stage" :class="{ reached: strategyStageIndex(row) >= index, current: strategyStageIndex(row) === index }" :title="stateLabels[stage]"></span>
+                </div>
+              </template>
+            </div>
+            <div class="cross-section-card-bottom">
+              <span>{{ row.transition ? transitionText(row) : `前日 ${previousValueOf(row)}` }}</span>
+              <em>{{ row.transition ? '状态切换' : tableQualityLabel(row) }}</em>
+            </div>
+            <small v-if="isRelativeStrength" class="cross-section-card-benchmark">基准 {{ row.benchmark_key }}</small>
+          </RouterLink>
+          <div v-if="!filteredTableRows.length" class="cross-section-table-empty"><strong>{{ tableRows.length ? '没有匹配的比较事实' : '当前 Run 没有可展示的横向事实' }}</strong><span>请调整筛选条件或选择其他 Observation Run。</span></div>
+        </section>
+
+        <button class="cross-section-table-toggle" type="button" :aria-expanded="showTable" @click="showTable = !showTable">{{ showTable ? '收起明细表' : '展开完整明细表' }} <span aria-hidden="true">{{ showTable ? '↑' : '↓' }}</span></button>
+
+        <section v-show="showTable" class="cross-section-table-shell" aria-label="横向比较表">
           <table class="cross-section-table" data-testid="cross-section-table">
             <thead>
               <tr>

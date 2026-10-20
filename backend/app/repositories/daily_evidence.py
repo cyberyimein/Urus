@@ -5,7 +5,9 @@ from math import isfinite
 from typing import Any, Iterable
 from uuid import uuid4
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, insert, select, tuple_
+from sqlalchemy.dialects.postgresql import insert as postgres_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from app.core.time import as_utc, utc_now
@@ -17,6 +19,13 @@ from app.models.daily_evidence import (
     DecisionChartProjectionModel,
 )
 from app.models.market_data_capacity import HistoryCollectionStateModel
+
+
+BAR_IDENTITY_COLUMNS = (
+    "symbol", "exchange", "bar_date", "adjustment", "source", "source_revision"
+)
+BAR_BATCH_SIZE = 100  # Six parameters per key, below older SQLite's 999 limit.
+BarIdentity = tuple[str, str, date, str, str, str]
 
 
 class DailyEvidenceRepository:
@@ -38,7 +47,8 @@ class DailyEvidenceRepository:
     ) -> list[DailyBarModel]:
         collected_at = collected_at or utc_now()
         default_adjustment = adjustment
-        result: list[DailyBarModel] = []
+        ordered_keys: list[BarIdentity] = []
+        prepared: dict[BarIdentity, dict[str, Any]] = {}
         for raw in bars:
             row = self._normalise_bar(raw)
             symbol = normalise_symbol(str(raw.get("symbol") or ""))
@@ -46,19 +56,11 @@ class DailyEvidenceRepository:
             source_revision = content_sha256(
                 {**row, "date": row["date"].isoformat(), "adjustment": row_adjustment}
             )
-            statement = select(DailyBarModel).where(
-                DailyBarModel.symbol == symbol,
-                DailyBarModel.exchange == exchange,
-                DailyBarModel.bar_date == row["date"],
-                DailyBarModel.adjustment == row_adjustment,
-                DailyBarModel.source == source,
-                DailyBarModel.source_revision == source_revision,
-            )
-            existing = self.session.scalar(statement)
-            if existing is not None:
-                result.append(existing)
+            key = (symbol, exchange, row["date"], row_adjustment, source, source_revision)
+            ordered_keys.append(key)
+            if key in prepared:
                 continue
-            model = DailyBarModel(
+            prepared[key] = dict(
                 id=str(uuid4()),
                 symbol=symbol,
                 exchange=exchange,
@@ -79,10 +81,29 @@ class DailyEvidenceRepository:
                 quality_status="ok",
                 content_sha256=source_revision,
             )
-            self.session.add(model)
-            result.append(model)
+        # Make earlier pending ORM writes visible to the Core batch insert.
+        # This remains inside the caller's transaction; no batch commits.
         self.session.flush()
-        return result
+        keys = list(prepared)
+        models: dict[BarIdentity, DailyBarModel] = {}
+        identity = tuple_(*(getattr(DailyBarModel, name) for name in BAR_IDENTITY_COLUMNS))
+        dialect = self.session.get_bind().dialect.name
+        insert_factory = {"sqlite": sqlite_insert, "postgresql": postgres_insert}.get(dialect, insert)
+        for start in range(0, len(keys), BAR_BATCH_SIZE):
+            batch = keys[start:start + BAR_BATCH_SIZE]
+            for model in self.session.scalars(select(DailyBarModel).where(identity.in_(batch))):
+                models[tuple(getattr(model, name) for name in BAR_IDENTITY_COLUMNS)] = model
+            missing = [key for key in batch if key not in models]
+            if not missing:
+                continue
+            statement = insert_factory(DailyBarModel.__table__)
+            if dialect in {"sqlite", "postgresql"}:
+                statement = statement.on_conflict_do_nothing(index_elements=BAR_IDENTITY_COLUMNS)
+            self.session.execute(statement, [prepared[key] for key in missing])
+            # Read back both inserted rows and rows won by a concurrent writer.
+            for model in self.session.scalars(select(DailyBarModel).where(identity.in_(missing))):
+                models[tuple(getattr(model, name) for name in BAR_IDENTITY_COLUMNS)] = model
+        return [models[key] for key in ordered_keys]
 
     @staticmethod
     def _normalise_bar(raw: dict[str, Any]) -> dict[str, Any]:
@@ -361,6 +382,7 @@ class DailyEvidenceRepository:
             select(DailyDecisionDatasetModel)
             .where(*filters)
             .order_by(DailyDecisionDatasetModel.created_at.desc())
+            .limit(1)
         )
 
     def previous_dataset(
@@ -387,12 +409,67 @@ class DailyEvidenceRepository:
                 DailyDecisionDatasetModel.trading_date.desc(),
                 DailyDecisionDatasetModel.created_at.desc(),
             )
+            .limit(1)
         )
 
     def chart(self, dataset_id: str) -> DecisionChartProjectionModel | None:
         return self.session.scalar(
             select(DecisionChartProjectionModel).where(DecisionChartProjectionModel.dataset_id == dataset_id)
         )
+
+    def chart_instrument(
+        self, dataset_id: str, symbol: str, *, replay_only: bool = False
+    ) -> dict[str, Any] | None:
+        """Project JSON paths in SQL so other instruments never enter Python."""
+
+        payload = DecisionChartProjectionModel.payload_json
+        instrument = payload["instruments"][symbol]
+        if replay_only:
+            # The opportunity adapter consumes only these instrument fields.
+            fields = {
+                "instrument_type": (
+                    func.json_typeof(instrument)
+                    if self.session.get_bind().dialect.name == "postgresql"
+                    else func.json_type(instrument)
+                ),
+                "bars": instrument["price"]["bars"],
+                "quality": instrument["quality"],
+                "asset_type": instrument["asset_type"],
+            }
+        else:
+            fields = {
+                "instrument": instrument,
+                **{name: payload[name] for name in (
+                    "scope", "timezone", "quality", "overlays", "state_segments", "events"
+                )},
+            }
+        row = self.session.execute(
+            select(
+                DecisionChartProjectionModel.content_sha256.label("parent_stored_content_sha256"),
+                *(expression.label(name) for name, expression in fields.items()),
+            ).where(DecisionChartProjectionModel.dataset_id == dataset_id)
+        ).mappings().first()
+        if row is None:
+            return None
+        if replay_only:
+            if row["instrument_type"] != "object":
+                return {"dataset_id": dataset_id, "instruments": {}}
+            return {"dataset_id": dataset_id, "instruments": {
+                symbol: {"price": {"bars": row["bars"]}, "quality": row["quality"],
+                         "asset_type": row["asset_type"]}
+            }}
+        if not isinstance(row["instrument"], dict):
+            return None
+        return {
+            "schema_version": "urus.instrument_chart_projection.v1",
+            "dataset_id": dataset_id,
+            "symbol": symbol,
+            "parent_stored_content_sha256": row["parent_stored_content_sha256"],
+            "scope": row["scope"], "timezone": row["timezone"], "quality": row["quality"],
+            "instruments": {symbol: row["instrument"]},
+            **{name: [item for item in (row[name] or []) if item.get("symbol") in {None, symbol}]
+               for name in ("overlays", "state_segments", "events")},
+        }
 
     def save_chart(
         self,

@@ -145,8 +145,8 @@ describe('InstrumentDecisionView', () => {
 
   it('loads the immutable dataset from a cross-section link instead of refreezing current data', async () => {
     const create = vi.spyOn(api, 'createDailyDataset')
-    const getDataset = vi.spyOn(api, 'getDailyDataset').mockResolvedValue({ dataset_id: 'frozen-1' } as never)
-    const getChart = vi.spyOn(api, 'getDailyChart').mockResolvedValue({
+    const fixtureDataset = { dataset_id: 'frozen-1' }
+    const fixtureChart = {
       dataset_id: 'frozen-1',
       instruments: {
         INTC: {
@@ -157,12 +157,18 @@ describe('InstrumentDecisionView', () => {
           quality: { status: 'ok', warnings: [] },
         },
       },
-    } as never)
-    const getStrategies = vi.spyOn(api, 'getDailyStrategies').mockResolvedValue({
+    }
+    const fixtureStrategies = {
       dataset_id: 'frozen-1',
       strategy_decisions: [],
       deterministic_synthesis: {},
-    })
+    }
+    const instrumentEvidence = vi.spyOn(api, 'getDailyInstrumentEvidence').mockResolvedValue({
+      dataset: fixtureDataset,
+      chart: { ...fixtureChart, schema_version: 'urus.instrument_chart_projection.v1', symbol: 'INTC', parent_stored_content_sha256: 'parent-hash', strategy_set_sha256: null },
+      strategy_decisions: fixtureStrategies.strategy_decisions,
+      deterministic_synthesis: fixtureStrategies.deterministic_synthesis,
+    } as never)
     vi.spyOn(api, 'listObservationGroups').mockResolvedValue([])
 
     await router.push('/instruments/INTC?dataset=frozen-1&run=run-1')
@@ -180,28 +186,77 @@ describe('InstrumentDecisionView', () => {
     await flushPromises()
 
     expect(create).not.toHaveBeenCalled()
-    expect(getDataset).toHaveBeenCalledWith('frozen-1', expect.any(AbortSignal))
-    expect(getChart).toHaveBeenCalledWith('frozen-1', expect.any(AbortSignal))
-    expect(getStrategies).toHaveBeenCalledWith('frozen-1', expect.any(AbortSignal))
+    expect(instrumentEvidence).toHaveBeenCalledWith('frozen-1', 'INTC', expect.any(AbortSignal))
     expect(wrapper.find('.demo-banner').exists()).toBe(false)
     expect(wrapper.find('.connection-state').text()).toContain('EVIDENCE API')
 
-    // A new route context for the same immutable dataset reuses the large
-    // chart payload, while strategy results are still refreshed.
-    const firstSignal = getChart.mock.calls[0]?.[1]
+    // Refresh the selected chart and strategy bundle together, with cancellation.
+    const firstSignal = instrumentEvidence.mock.calls[0]?.[2]
     await router.push('/instruments/INTC?dataset=frozen-1&run=run-2')
     await flushPromises()
-    expect(getChart).toHaveBeenCalledTimes(1)
-    expect(getDataset).toHaveBeenCalledTimes(1)
-    expect(getStrategies).toHaveBeenCalledTimes(2)
+    expect(instrumentEvidence).toHaveBeenCalledTimes(2)
     expect(firstSignal?.aborted).toBe(true)
-    const activeSignal = getStrategies.mock.calls[1]?.[1]
+    const activeSignal = instrumentEvidence.mock.calls[1]?.[2]
     wrapper.unmount()
     expect(activeSignal?.aborted).toBe(true)
   })
 
+  it('clears the selected chart on switch and ignores a cancelled historical response that arrives late', async () => {
+    const evidence = (symbol: string, datasetId = 'frozen-switch') => ({
+      dataset: { dataset_id: datasetId },
+      chart: {
+        schema_version: 'urus.instrument_chart_projection.v1', dataset_id: datasetId, symbol,
+        parent_stored_content_sha256: 'parent', strategy_set_sha256: null,
+        instruments: { [symbol]: {
+          symbol, price: { symbol, bars: [{ date: '2026-08-21', open: 20, high: 21, low: 19, close: 20.5, volume: 1000 }] },
+          series: [], indicator_snapshot_id: null, quality: { status: 'ok', warnings: [] },
+        } },
+      },
+      strategy_decisions: [], deterministic_synthesis: {},
+    })
+    let resolveB!: (value: never) => void
+    let resolveC!: (value: never) => void
+    const selected = vi.spyOn(api, 'getDailyInstrumentEvidence')
+      .mockResolvedValueOnce(evidence('AAA') as never)
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveB = resolve }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveC = resolve }))
+      .mockResolvedValueOnce(evidence('AAA', 'frozen-return') as never)
+    vi.spyOn(api, 'listObservationGroups').mockResolvedValue([])
+    const create = vi.spyOn(api, 'createDailyDataset')
+    await router.push('/instruments/AAA?dataset=frozen-switch')
+    await router.isReady()
+    const wrapper = mount(InstrumentDecisionView, {
+      global: {
+        plugins: [router],
+        stubs: {
+          AppShell: true, RemoteDecisionPanel: true, RouterLink: true,
+          DecisionChartWorkspace: { props: ['projection'], template: '<div data-testid="selected-chart">{{ projection?.symbol }}</div>' },
+        },
+      },
+    })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="selected-chart"]').text()).toBe('AAA')
+    await router.push('/instruments/BBB?dataset=frozen-switch')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="selected-chart"]').text()).toBe('')
+    await router.push('/instruments/CCC?dataset=frozen-switch')
+    await flushPromises()
+    expect(selected.mock.calls[1]?.[2]?.aborted).toBe(true)
+    resolveC(evidence('CCC') as never)
+    await flushPromises()
+    expect(wrapper.find('[data-testid="selected-chart"]').text()).toBe('CCC')
+    resolveB(evidence('BBB') as never)
+    await flushPromises()
+    expect(wrapper.find('[data-testid="selected-chart"]').text()).toBe('CCC')
+    await router.push('/instruments/AAA?dataset=frozen-return')
+    await flushPromises()
+    expect(selected).toHaveBeenLastCalledWith('frozen-return', 'AAA', expect.any(AbortSignal))
+    expect(wrapper.find('[data-testid="selected-chart"]').text()).toBe('AAA')
+    expect(create).not.toHaveBeenCalled()
+  })
+
   it('renders the backend setup plan values instead of recomputing setup distances in the browser', async () => {
-    vi.spyOn(api, 'getDailyDataset').mockResolvedValue({
+    const fixtureDataset = {
       dataset_id: 'frozen-plan-1',
       schema_version: 'urus.daily_decision_dataset.v1',
       feature_version: 'technical_v5',
@@ -216,8 +271,8 @@ describe('InstrumentDecisionView', () => {
       quality: { status: 'ok', symbols: {}, requested_symbol_count: 1, available_symbol_count: 1, errors: [], warnings: [] },
       status: 'ok',
       content_sha256: 'dataset-plan-hash',
-    })
-    vi.spyOn(api, 'getDailyChart').mockResolvedValue({
+    }
+    const fixtureChart = {
       dataset_id: 'frozen-plan-1',
       instruments: {
         AAA: {
@@ -228,8 +283,8 @@ describe('InstrumentDecisionView', () => {
           quality: { status: 'ok', bar_count: 1, latest_bar_date: '2026-08-21', input_bar_hash: null, warnings: [] },
         },
       },
-    } as never)
-    vi.spyOn(api, 'getDailyStrategies').mockResolvedValue({
+    }
+    const fixtureStrategies = {
       dataset_id: 'frozen-plan-1',
       strategy_decisions: [{
         decision_id: 'aaa-plan-decision',
@@ -270,6 +325,12 @@ describe('InstrumentDecisionView', () => {
         horizon: { value: 5, unit: 'trading_day' },
       }],
       deterministic_synthesis: { consensus_state: 'aligned', suggested_action: 'prioritize' },
+    }
+    const instrumentEvidence = vi.spyOn(api, 'getDailyInstrumentEvidence').mockResolvedValue({
+      dataset: fixtureDataset,
+      chart: { ...fixtureChart, schema_version: 'urus.instrument_chart_projection.v1', symbol: 'AAA', parent_stored_content_sha256: 'parent-hash', strategy_set_sha256: null },
+      strategy_decisions: fixtureStrategies.strategy_decisions,
+      deterministic_synthesis: fixtureStrategies.deterministic_synthesis,
     } as never)
     vi.spyOn(api, 'listObservationGroups').mockResolvedValue([{
       version_id: 'fixture-v1',
@@ -704,9 +765,15 @@ describe('InstrumentDecisionView', () => {
       makeStrategy('breakout_volume_v1', 'not_applicable', 'neutral', 'no_action', null, 'confirmed', '不适用支持', ''),
       makeStrategy('relative_strength_rotation_v1', 'error', 'bullish', 'wait', null, 'watching', '错误状态支持', ''),
     ]
-    vi.spyOn(api, 'getDailyDataset').mockResolvedValue(dataset as never)
-    vi.spyOn(api, 'getDailyChart').mockResolvedValue(chart as never)
-    vi.spyOn(api, 'getDailyStrategies').mockResolvedValue({ dataset_id: datasetId, strategy_decisions: strategies, deterministic_synthesis: { consensus_state: 'aligned', suggested_action: 'prioritize', strongest_supporting_strategy_ids: ['trend_momentum_v1-decision'] } } as never)
+    const fixtureDataset = dataset
+    const fixtureChart = chart
+    const fixtureStrategies = { dataset_id: datasetId, strategy_decisions: strategies, deterministic_synthesis: { consensus_state: 'aligned', suggested_action: 'prioritize', strongest_supporting_strategy_ids: ['trend_momentum_v1-decision'] } }
+    const instrumentEvidence = vi.spyOn(api, 'getDailyInstrumentEvidence').mockResolvedValue({
+      dataset: fixtureDataset,
+      chart: { ...fixtureChart, schema_version: 'urus.instrument_chart_projection.v1', symbol: 'AAA', parent_stored_content_sha256: 'parent-hash', strategy_set_sha256: null },
+      strategy_decisions: fixtureStrategies.strategy_decisions,
+      deterministic_synthesis: fixtureStrategies.deterministic_synthesis,
+    } as never)
     vi.spyOn(api, 'listObservationGroups').mockResolvedValue([])
     vi.spyOn(api, 'getObservationOptions').mockResolvedValue({ run_id: null, status: 'unavailable', trading_date: '2026-08-21', cutoff_time: null, available: false, options: { is_mock: true, status: 'not_collected', available: false, data_state: 'placeholder' }, alignment: null, message: null })
     const opportunityRequest = vi.spyOn(api, 'getDailyOpportunityView')

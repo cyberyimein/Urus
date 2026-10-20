@@ -1,20 +1,25 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 
 import AppShell from '@/components/AppShell.vue'
 import { api } from '@/api/client'
-import type { ObservationRun } from '@/types/api'
+import type { ObservationRun, ObservationRunSummary } from '@/types/api'
 
-const runs = ref<ObservationRun[]>([])
+const runs = ref<ObservationRunSummary[]>([])
 const selectedRunId = ref('')
+const selectedRun = ref<ObservationRun | null>(null)
+const detailLoading = ref(false)
+let detailGeneration = 0
+let listGeneration = 0
+let detailController: AbortController | null = null
 const loading = ref(true)
 const running = ref(false)
 const syncing = ref(false)
 const error = ref('')
 const notice = ref('')
 
-const selectedRun = computed(() => runs.value.find(item => item.run_id === selectedRunId.value) ?? runs.value[0] ?? null)
+const selectedSummary = computed(() => runs.value.find(item => item.run_id === selectedRunId.value) ?? null)
 const report = computed(() => selectedRun.value?.report ?? null)
 
 const stateLabels: Record<string, string> = {
@@ -50,18 +55,51 @@ function instrumentLink(item: Record<string, any>) {
   }
 }
 
+async function loadSelectedRun() {
+  const generation = ++detailGeneration
+  detailController?.abort()
+  selectedRun.value = null
+  error.value = ''
+  const runId = selectedRunId.value
+  if (!runId) {
+    detailLoading.value = false
+    return
+  }
+  const controller = new AbortController()
+  detailController = controller
+  detailLoading.value = true
+  try {
+    const detail = await api.getObservationRun(runId, controller.signal)
+    if (generation !== detailGeneration || controller.signal.aborted) return
+    if (detail.run_id !== runId) throw new Error('运行详情身份不一致，已拒绝加载。')
+    selectedRun.value = detail
+  } catch (reason) {
+    if (generation === detailGeneration && !controller.signal.aborted) {
+      error.value = reason instanceof Error ? reason.message : 'Observation Run 详情加载失败。'
+    }
+  } finally {
+    if (generation === detailGeneration) detailLoading.value = false
+  }
+}
+
 async function load(preferredRunId = selectedRunId.value) {
+  const generation = ++listGeneration
   loading.value = true
   error.value = ''
   try {
-    runs.value = await api.listObservationRuns()
+    const summaries = await api.listObservationRunSummaries()
+    if (generation !== listGeneration) return
+    runs.value = summaries
     selectedRunId.value = runs.value.some(item => item.run_id === preferredRunId)
       ? preferredRunId
       : runs.value.find(item => item.status === 'succeeded' || item.status === 'mixed')?.run_id ?? runs.value[0]?.run_id ?? ''
+    await loadSelectedRun()
   } catch (reason) {
-    error.value = reason instanceof Error ? reason.message : 'Observation Run 列表加载失败。'
+    if (generation === listGeneration) {
+      error.value = reason instanceof Error ? reason.message : 'Observation Run 列表加载失败。'
+    }
   } finally {
-    loading.value = false
+    if (generation === listGeneration) loading.value = false
   }
 }
 
@@ -100,6 +138,11 @@ async function runAllGroups() {
 }
 
 onMounted(() => { void load() })
+onBeforeUnmount(() => {
+  listGeneration += 1
+  detailGeneration += 1
+  detailController?.abort()
+})
 </script>
 
 <template>
@@ -121,7 +164,7 @@ onMounted(() => { void load() })
     <div v-if="error" class="error-banner" role="alert">{{ error }}</div>
     <div v-if="notice" class="observation-notice">{{ notice }}</div>
     <section v-if="loading" class="empty-panel"><p>正在读取收市观察…</p></section>
-    <section v-else-if="!selectedRun" class="empty-panel observation-empty">
+    <section v-else-if="!selectedSummary" class="empty-panel observation-empty">
       <p class="eyebrow">NO OBSERVATION RUN</p><h2>还没有收市观察。</h2>
       <p>同步实际关注列表并执行一次观察后，这里会显示完整确定性报告。</p>
       <button class="primary-button" type="button" :disabled="running" @click="runAllGroups">执行第一次观察</button>
@@ -129,11 +172,12 @@ onMounted(() => { void load() })
 
     <template v-else>
       <section class="observation-run-toolbar">
-        <label><span>OBSERVATION RUN</span><select v-model="selectedRunId"><option v-for="run in runs" :key="run.run_id" :value="run.run_id">{{ run.trading_date }} · {{ run.status }} · {{ run.trigger_mode }}</option></select></label>
+        <label><span>OBSERVATION RUN</span><select v-model="selectedRunId" @change="loadSelectedRun"><option v-for="run in runs" :key="run.run_id" :value="run.run_id">{{ run.trading_date }} · {{ run.status }} · {{ run.trigger_mode }}</option></select></label>
         <div><span>REPORT HASH</span><strong>{{ shortHash(report?.content_sha256) }}</strong></div>
       </section>
 
-      <section class="observation-stat-strip observation-run-stat-strip">
+      <section v-if="detailLoading" class="empty-panel"><p>正在读取运行报告…</p></section>
+      <section v-if="selectedRun" class="observation-stat-strip observation-run-stat-strip">
         <div><span>RUN STATUS</span><strong :data-tone="selectedRun.status === 'succeeded' ? 'bullish' : selectedRun.status === 'failed' ? 'bearish' : 'neutral'">{{ selectedRun.status }}</strong><small>{{ selectedRun.run_id.slice(0, 12) }}…</small></div>
         <div><span>TRADING DATE</span><strong>{{ selectedRun.trading_date }}</strong><small>{{ selectedRun.trigger_mode }}</small></div>
         <div><span>GROUPS</span><strong>{{ selectedRun.successful_group_count ?? selectedRun.group_count }} / {{ selectedRun.group_count }}</strong><small>successful</small></div>
@@ -141,7 +185,7 @@ onMounted(() => { void load() })
         <div><span>UNIVERSE</span><strong>{{ selectedRun.universe_freshness }}</strong><small>{{ selectedRun.universe_revision_id ? shortHash(selectedRun.universe_revision_id) : 'not attached' }}</small></div>
       </section>
 
-      <template v-if="report">
+      <template v-if="report && selectedRun">
         <section class="observation-card observation-provenance-card">
           <div class="observation-card-head"><div><span class="section-kicker">UNIVERSE PROVENANCE</span><h3>本次运行的关注列表来源</h3></div><small>{{ report.provenance?.universe_freshness ?? selectedRun.universe_freshness }}</small></div>
           <p class="observation-muted-row">{{ report.provenance?.universe_source_url ?? selectedRun.universe_source_url ?? '本地 Universe' }} · Revision {{ report.provenance?.universe_revision_id ?? selectedRun.universe_revision_id ?? '—' }}</p>

@@ -9,6 +9,8 @@ from typing import Any
 DAILY_DATASET_SCHEMA = "urus.daily_decision_dataset.v1"
 CHART_PROJECTION_SCHEMA = "urus.decision_chart_projection.v1"
 FEATURE_VERSION = "technical_v5"
+MACD_MOMENTUM_VERSION = "macd_histogram_momentum_v2"
+INDICATOR_SNAPSHOT_FEATURE_VERSION = f"{FEATURE_VERSION}:{MACD_MOMENTUM_VERSION}"
 BAR_COMPLETION_POLICY = "official_exchange_close_only_v1"
 SUPPORTED_SCOPE_TYPES = {"instrument", "group", "observation_run"}
 

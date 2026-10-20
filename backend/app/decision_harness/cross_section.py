@@ -40,6 +40,26 @@ INDICATOR_DEFINITIONS: tuple[dict[str, Any], ...] = (
         "thresholds": {"zero": 0},
     },
     {
+        "id": "macd_histogram_delta",
+        "name": "MACD 柱值变化 ΔH",
+        "description": "单根日 K 上 MACD 柱值的变化；正值表示 H 上升，负值表示 H 下降。原始价格尺度，仅用于个股筛选。",
+        "feature_version": FEATURE_VERSION,
+        "unit": "price_per_bar",
+        "source_path": "symbols[].macd_histogram_delta",
+        "thresholds": {"zero": 0},
+        "comparable_across_symbols": False,
+    },
+    {
+        "id": "macd_histogram_delta2",
+        "name": "MACD 柱值变化的变化 Δ²H",
+        "description": "单根日 K 上 ΔH 的变化；正值表示 H 的斜率向上变化，不单独代表动量已经改善。原始价格尺度，仅用于个股筛选。",
+        "feature_version": FEATURE_VERSION,
+        "unit": "price_per_bar_squared",
+        "source_path": "symbols[].macd_histogram_delta2",
+        "thresholds": {"zero": 0},
+        "comparable_across_symbols": False,
+    },
+    {
         "id": "relative_strength_20d",
         "name": "Relative Strength 20D",
         "description": "个股相对该观察组基准的 20 日超额收益。",
@@ -105,6 +125,15 @@ class _SnapshotContext:
     previous_payload: dict[str, Any] | None
 
 
+@dataclass(frozen=True)
+class CrossSectionContext:
+    """Request-owned frozen inputs shared by multiple projection lenses."""
+
+    run: ObservationRunModel
+    snapshots: tuple[_SnapshotContext, ...]
+    failed_groups: tuple[dict[str, Any], ...]
+
+
 class CrossSectionService:
     """Build read-only indicator/strategy views from one frozen Observation Run.
 
@@ -142,9 +171,25 @@ class CrossSectionService:
 
     def indicator_projection(self, run_id: str, indicator_id: str) -> dict[str, Any]:
         definition = _find_catalog_item(self.indicator_catalog(), indicator_id, "指标")
+        return self._indicator_projection(self.load_context(run_id), definition)
+
+    def load_context(self, run_id: str) -> CrossSectionContext:
         run, contexts, failed_groups = self._load_contexts(run_id)
+        return CrossSectionContext(run, tuple(contexts), tuple(failed_groups))
+
+    def indicator_projection_from_context(
+        self, context: CrossSectionContext, indicator_id: str
+    ) -> dict[str, Any]:
+        definition = _find_catalog_item(self.indicator_catalog(), indicator_id, "指标")
+        return self._indicator_projection(context, definition)
+
+    def _indicator_projection(
+        self, context: CrossSectionContext, definition: dict[str, Any]
+    ) -> dict[str, Any]:
+        run, contexts = context.run, context.snapshots
+        failed_groups = list(context.failed_groups)
         _ensure_feature_version(contexts)
-        if indicator_id == "relative_strength_20d":
+        if definition["id"] == "relative_strength_20d":
             _ensure_benchmark_identity(contexts)
         rows: list[dict[str, Any]] = []
         groups: list[dict[str, Any]] = []
@@ -169,16 +214,28 @@ class CrossSectionService:
                 rows.append(row)
                 if row["transition"] is not None:
                     transitions.append(_transition_row(row))
-            groups.append(_group_summary(group, context, group_rows, value_key="value"))
+            groups.append(
+                _group_summary(
+                    group,
+                    context,
+                    group_rows,
+                    value_key="value",
+                    comparable_across_symbols=bool(definition.get("comparable_across_symbols", True)),
+                )
+            )
 
         rows.sort(key=_row_sort_key)
-        _attach_attention_features(rows, kind="indicator")
+        if definition.get("comparable_across_symbols", True):
+            _attach_attention_features(rows, kind="indicator")
+        else:
+            _attach_noncomparable_attention_features(rows)
         transitions.sort(key=_transition_sort_key)
         payload = _base_projection(run, contexts, failed_groups, lens={
             "type": "indicator",
             "id": definition["id"],
             "version": definition["feature_version"],
             "feature_version": definition["feature_version"],
+            "comparable_across_symbols": bool(definition.get("comparable_across_symbols", True)),
         })
         payload.update(
             {
@@ -353,6 +410,7 @@ def _catalog_item(item: dict[str, Any], *, kind: str = "indicator") -> dict[str,
         "feature_version": item.get("feature_version"),
         "unit": item.get("unit"),
         "source_path": item.get("source_path"),
+        "comparable_across_symbols": bool(item.get("comparable_across_symbols", True)),
         "thresholds": dict(item.get("thresholds") or {}),
     }
     for key in ("implementation_sha256",):
@@ -402,6 +460,10 @@ def _indicator_value(indicator_id: str, row: dict[str, Any] | None) -> float | N
         return _number(row.get("rsi14"))
     if indicator_id == "macd_histogram":
         return _number(row.get("macd_histogram"))
+    if indicator_id == "macd_histogram_delta":
+        return _number(row.get("macd_histogram_delta"))
+    if indicator_id == "macd_histogram_delta2":
+        return _number(row.get("macd_histogram_delta2"))
     if indicator_id == "relative_strength_20d":
         return _number((row.get("relative_excess_percent") or {}).get("20d"))
     if indicator_id == "volume_ratio_20d":
@@ -449,7 +511,17 @@ def _indicator_row(
         "display_value": _display_indicator_value(indicator_id, value),
         "previous_display_value": _display_indicator_value(indicator_id, previous_value),
         "state": state,
-        "state_label": _state_label(indicator_id, state),
+        "state_label": (
+            "未计算此版本"
+            if indicator_id in {"macd_histogram_delta", "macd_histogram_delta2"}
+            and symbol_row.get("valid")
+            and indicator_id not in symbol_row
+            else "样本不足"
+            if indicator_id in {"macd_histogram_delta", "macd_histogram_delta2"}
+            and symbol_row.get("valid")
+            and value is None
+            else _state_label(indicator_id, state)
+        ),
         "previous_state": previous_state,
         "previous_state_label": _state_label(indicator_id, previous_state),
         "threshold_distance": _threshold_distance(indicator_id, value),
@@ -618,6 +690,18 @@ def _indicator_state(indicator_id: str, value: float | None) -> str:
         if value < 0:
             return "negative"
         return "zero"
+    if indicator_id == "macd_histogram_delta":
+        if value > 0:
+            return "histogram_rising"
+        if value < 0:
+            return "histogram_falling"
+        return "histogram_flat"
+    if indicator_id == "macd_histogram_delta2":
+        if value > 0:
+            return "slope_increasing"
+        if value < 0:
+            return "slope_decreasing"
+        return "slope_unchanged"
     if indicator_id == "relative_strength_20d":
         if value > 0.5:
             return "leading"
@@ -649,6 +733,12 @@ def _state_label(indicator_id: str, state: str) -> str:
         "positive": "正值",
         "negative": "负值",
         "zero": "零轴",
+        "histogram_rising": "MACD 柱值上升（ΔH > 0）",
+        "histogram_falling": "MACD 柱值下降（ΔH < 0）",
+        "histogram_flat": "MACD 柱值持平（ΔH = 0）",
+        "slope_increasing": "MACD 柱值斜率向上变化（Δ²H > 0）",
+        "slope_decreasing": "MACD 柱值斜率向下变化（Δ²H < 0）",
+        "slope_unchanged": "MACD 柱值斜率变化为零（Δ²H = 0）",
         "leading": "相对领先",
         "lagging": "相对落后",
         "inline": "接近基准",
@@ -720,6 +810,7 @@ def _group_summary(
     rows: list[dict[str, Any]],
     *,
     value_key: str,
+    comparable_across_symbols: bool = True,
 ) -> dict[str, Any]:
     values = [_number(row.get(value_key)) for row in rows]
     numeric_values = [value for value in values if value is not None]
@@ -736,8 +827,14 @@ def _group_summary(
             stance_counts[stance_key] = stance_counts.get(stance_key, 0) + 1
     quality = dict(context.payload.get("quality") or {})
     valid_count = sum(bool(row.get("valid")) for row in rows)
-    distribution = _distribution(numeric_values)
-    previous_distribution = _distribution(previous_numeric_values)
+    if comparable_across_symbols:
+        distribution = _distribution(numeric_values)
+        previous_distribution = _distribution(previous_numeric_values)
+        distribution_median_change = _delta(distribution.get("median"), previous_distribution.get("median"))
+    else:
+        distribution = _noncomparable_distribution(len(numeric_values))
+        previous_distribution = _noncomparable_distribution(len(previous_numeric_values))
+        distribution_median_change = None
     return {
         **group,
         "snapshot_id": context.snapshot.id,
@@ -750,12 +847,16 @@ def _group_summary(
         "quality_status": "ok" if valid_count == len(rows) and rows else "partial" if valid_count else "missing",
         "state_counts": state_counts,
         "stance_counts": stance_counts,
+        "comparable_across_symbols": comparable_across_symbols,
         "distribution": distribution,
         "previous_distribution": previous_distribution,
-        "distribution_median_change": _delta(distribution.get("median"), previous_distribution.get("median")),
+        "distribution_median_change": distribution_median_change,
         "previous_valid_symbol_count": len(previous_numeric_values),
         "previous_symbol_count": len(_symbol_map(context.previous_payload)),
-        "warnings": list(quality.get("warnings") or []),
+        "warnings": [
+            *list(quality.get("warnings") or []),
+            *([] if comparable_across_symbols else ["MACD 原始差分带有价格尺度，不提供跨标的数值分布。"]),
+        ],
     }
 
 
@@ -826,12 +927,13 @@ def _ensure_feature_version(contexts: list[_SnapshotContext]) -> None:
         for payload in (context.payload, context.previous_payload)
         if payload and (version := payload.get("feature_version"))
     }
-    if observed != {FEATURE_VERSION}:
+    supported_versions = {"technical_v5", FEATURE_VERSION}
+    if not observed or not observed.issubset(supported_versions):
         raise AppError(
             "冻结快照的指标计算版本与当前横向投影实现不一致。",
             code="cross_section_feature_version_conflict",
             status_code=409,
-            details={"expected": FEATURE_VERSION, "observed": sorted(observed)},
+            details={"supported": sorted(supported_versions), "observed": sorted(observed)},
         )
 
 
@@ -898,6 +1000,10 @@ def _distribution(values: list[float]) -> dict[str, Any]:
     }
 
 
+def _noncomparable_distribution(count: int) -> dict[str, Any]:
+    return {"count": count, "median": None, "q1": None, "q3": None, "min": None, "max": None}
+
+
 def _percentile(values: list[float], fraction: float) -> float:
     if len(values) == 1:
         return values[0]
@@ -915,6 +1021,8 @@ def _display_indicator_value(indicator_id: str, value: float | None) -> str:
         return "线上" if value >= 1 else "线下"
     if indicator_id == "volume_ratio_20d":
         return f"{value:.2f}x"
+    if indicator_id in {"macd_histogram_delta", "macd_histogram_delta2"}:
+        return f"{value:+.6f}"
     return f"{value:+.2f}%" if indicator_id in {"relative_strength_20d", "return_20d"} else f"{value:.2f}"
 
 
@@ -1033,6 +1141,22 @@ def _attach_attention_features(rows: list[dict[str, Any]], *, kind: str) -> None
     invalid = [row for row in rows if not row.get("valid")]
     for row in invalid:
         row["attention_features"] = _empty_attention_features(row, kind=kind)
+
+
+def _attach_noncomparable_attention_features(rows: list[dict[str, Any]]) -> None:
+    """Keep transition and quality facts while withholding raw-scale ranks."""
+    for row in rows:
+        row["attention_features"] = {
+            "global_percentile": None,
+            "within_group_percentile": None,
+            "change_percentile": None,
+            "absolute_change_percentile": None,
+            "threshold_distance": _number(row.get("threshold_distance")),
+            "threshold_distance_percentile": None,
+            "is_transition": bool(row.get("transition")),
+            "quality_flag": "ok" if row.get("valid") else "missing",
+            "comparable_across_symbols": False,
+        }
 
 
 def _empty_attention_features(row: dict[str, Any], *, kind: str) -> dict[str, Any]:

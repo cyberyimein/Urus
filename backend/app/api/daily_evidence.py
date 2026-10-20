@@ -122,6 +122,25 @@ def get_daily_chart_projection(
 
 
 @router.get(
+    "/datasets/{dataset_id}/instruments/{symbol}/evidence",
+    response_model=DailyEvidenceResponse,
+)
+def get_daily_instrument_evidence(
+    dataset_id: str,
+    symbol: str,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> DailyEvidenceResponse:
+    try:
+        payload = DailyMarketEvidenceService(db, settings).get_instrument_evidence(dataset_id, symbol)
+    except ValueError as exc:
+        raise AppError(str(exc), code="daily_dataset_symbol_invalid", status_code=422) from exc
+    if payload is None:
+        raise AppError("找不到指定标的的冻结图表", code="daily_chart_not_found", status_code=404)
+    return DailyEvidenceResponse(**payload)
+
+
+@router.get(
     "/datasets/{dataset_id}/opportunity-view",
     response_model=dict[str, object],
 )

@@ -350,30 +350,7 @@ def calculate_technical_series(
             }
         )
 
-    fast = _ema_series(closes, MACD_FAST_WINDOW)
-    slow = _ema_series(closes, MACD_SLOW_WINDOW)
-    dif: list[float | None] = [
-        fast[index] - slow[index]
-        if fast[index] is not None and slow[index] is not None
-        else None
-        for index in range(len(closes))
-    ]
-    valid_dif = [value for value in dif if value is not None]
-    dea: list[float | None] = [None] * len(closes)
-    if len(valid_dif) >= MACD_SIGNAL_WINDOW:
-        first = next(index for index, value in enumerate(dif) if value is not None)
-        current = fmean(valid_dif[:MACD_SIGNAL_WINDOW])
-        dea[first + MACD_SIGNAL_WINDOW - 1] = current
-        alpha = 2 / (MACD_SIGNAL_WINDOW + 1)
-        for offset, value in enumerate(valid_dif[MACD_SIGNAL_WINDOW:], start=MACD_SIGNAL_WINDOW):
-            current = (value - current) * alpha + current
-            dea[first + offset] = current
-    histogram = [
-        dif[index] - dea[index]
-        if dif[index] is not None and dea[index] is not None
-        else None
-        for index in range(len(closes))
-    ]
+    dif, dea, histogram, histogram_delta, histogram_delta2 = _macd_series(closes)
     series.extend(
         [
             {
@@ -396,6 +373,23 @@ def calculate_technical_series(
                 "kind": "histogram",
                 "unit": "price",
                 "points": points(histogram),
+                "markers": _macd_transition_markers(dates, histogram),
+            },
+            {
+                "series_id": "macd_histogram_delta",
+                "pane": "momentum",
+                "kind": "histogram",
+                "unit": "price_per_bar",
+                "points": points(histogram_delta),
+                "markers": _macd_transition_markers(dates, histogram_delta),
+            },
+            {
+                "series_id": "macd_histogram_delta2",
+                "pane": "momentum",
+                "kind": "histogram",
+                "unit": "price_per_bar_squared",
+                "points": points(histogram_delta2),
+                "markers": _macd_transition_markers(dates, histogram_delta2),
             },
         ]
     )
@@ -408,6 +402,107 @@ def calculate_technical_series(
         "sample_count": len(clean_bars),
         "series": series,
     }
+
+
+def calculate_macd_projection(
+    closes: Sequence[float],
+    *,
+    dates: Sequence[str],
+    source: str,
+) -> dict[str, object]:
+    """Calculate MACD values and display series without the daily indicator bundle.
+
+    Intraday projections use the same EMA seeding, histogram differences, and
+    transition markers as the daily MACD core. Keeping this wrapper narrow
+    avoids calculating unrelated daily indicators for each request.
+    """
+
+    if len(closes) != len(dates):
+        raise ValueError("MACD closes and dates must have the same length")
+    clean_closes = [float(value) for value in closes]
+    clean_dates = [str(value) for value in dates]
+    if clean_closes:
+        summary = _calculate_macd(
+            clean_closes,
+            as_of=clean_dates[-1],
+            source=source,
+        )
+    else:
+        summary = {
+            "available": False,
+            "quality_status": "unavailable",
+            "source": source,
+            "as_of": None,
+            "sample_count": 0,
+            "fast_window": MACD_FAST_WINDOW,
+            "slow_window": MACD_SLOW_WINDOW,
+            "signal_window": MACD_SIGNAL_WINDOW,
+            "dif": None,
+            "dea": None,
+            "histogram": None,
+            "histogram_delta": None,
+            "histogram_delta2": None,
+            "histogram_signals": {
+                "histogram": {"sign": "unavailable", "transition": "unavailable", "label": "样本不足"},
+                "histogram_delta": {"sign": "unavailable", "transition": "unavailable", "label": "样本不足"},
+                "histogram_delta2": {"sign": "unavailable", "transition": "unavailable", "label": "样本不足"},
+            },
+            "momentum_context": {"label": "样本不足，动量上下文不可用"},
+            "previous_dif": None,
+            "previous_dea": None,
+            "previous_histogram": None,
+            "crossover": "unavailable",
+            "zero_axis": "unavailable",
+            "momentum": "unavailable",
+            "warnings": ["MACD 没有连续完整的 5 分钟收盘价。"],
+        }
+    dif, dea, histogram, histogram_delta, histogram_delta2 = _macd_series(clean_closes)
+
+    def points(values: Sequence[float | None]) -> list[dict[str, object]]:
+        return [
+            {
+                "time": timestamp,
+                "value": round(value, 6) if value is not None else None,
+            }
+            for timestamp, value in zip(clean_dates, values, strict=True)
+        ]
+
+    summary["series"] = [
+        {
+            "series_id": "macd_dif_12_26",
+            "kind": "line",
+            "unit": "price",
+            "points": points(dif),
+        },
+        {
+            "series_id": "macd_dea_9",
+            "kind": "line",
+            "unit": "price",
+            "points": points(dea),
+        },
+        {
+            "series_id": "macd_histogram",
+            "kind": "histogram",
+            "unit": "price",
+            "points": points(histogram),
+            "markers": _macd_transition_markers(clean_dates, histogram),
+        },
+        {
+            "series_id": "macd_histogram_delta",
+            "kind": "histogram",
+            "unit": "price_per_bar",
+            "points": points(histogram_delta),
+            "markers": _macd_transition_markers(clean_dates, histogram_delta),
+        },
+        {
+            "series_id": "macd_histogram_delta2",
+            "kind": "histogram",
+            "unit": "price_per_bar_squared",
+            "points": points(histogram_delta2),
+            "markers": _macd_transition_markers(clean_dates, histogram_delta2),
+        },
+    ]
+    return summary
 
 
 def _calculate_rsi(
@@ -826,47 +921,225 @@ def _ema_series(values: list[float], window: int) -> list[float | None]:
     return series
 
 
+def _macd_series(
+    closes: list[float],
+) -> tuple[
+    list[float | None],
+    list[float | None],
+    list[float | None],
+    list[float | None],
+    list[float | None],
+]:
+    """Return aligned MACD levels and raw first/second histogram differences."""
+    fast = _ema_series(closes, MACD_FAST_WINDOW)
+    slow = _ema_series(closes, MACD_SLOW_WINDOW)
+    dif = [
+        fast[index] - slow[index]
+        if fast[index] is not None and slow[index] is not None
+        else None
+        for index in range(len(closes))
+    ]
+    dea: list[float | None] = [None] * len(closes)
+    dif_start = next((index for index, value in enumerate(dif) if value is not None), None)
+    if dif_start is not None:
+        valid_dif = [value for value in dif[dif_start:] if value is not None]
+        if len(valid_dif) >= MACD_SIGNAL_WINDOW:
+            dea_value = fmean(valid_dif[:MACD_SIGNAL_WINDOW])
+            dea[ dif_start + MACD_SIGNAL_WINDOW - 1 ] = dea_value
+            alpha = 2 / (MACD_SIGNAL_WINDOW + 1)
+            for offset, value in enumerate(valid_dif[MACD_SIGNAL_WINDOW:], start=MACD_SIGNAL_WINDOW):
+                dea_value = (value - dea_value) * alpha + dea_value
+                dea[dif_start + offset] = dea_value
+
+    histogram = [
+        dif[index] - dea[index]
+        if dif[index] is not None and dea[index] is not None
+        else None
+        for index in range(len(closes))
+    ]
+    histogram_delta: list[float | None] = [None] * len(closes)
+    histogram_delta2: list[float | None] = [None] * len(closes)
+    for index in range(1, len(closes)):
+        current = histogram[index]
+        previous = histogram[index - 1]
+        if current is not None and previous is not None:
+            histogram_delta[index] = current - previous
+    for index in range(1, len(closes)):
+        current = histogram_delta[index]
+        previous = histogram_delta[index - 1]
+        if current is not None and previous is not None:
+            histogram_delta2[index] = current - previous
+    return dif, dea, histogram, histogram_delta, histogram_delta2
+
+
+def _macd_sign(value: float | None) -> str:
+    if value is None:
+        return "unavailable"
+    rounded_value = round(value, 6)
+    if rounded_value > 0:
+        return "positive"
+    if rounded_value < 0:
+        return "negative"
+    return "zero"
+
+
+def _macd_transition(previous_sign: str, current_sign: str) -> str:
+    if "unavailable" in {previous_sign, current_sign}:
+        return "unavailable"
+    if previous_sign == current_sign:
+        return "none"
+    if current_sign == "zero":
+        return "to_zero"
+    if previous_sign == "zero":
+        return f"zero_to_{current_sign}"
+    return f"{previous_sign}_to_{current_sign}"
+
+
+def _macd_transition_label(transition: str, previous_sign: str) -> str:
+    if transition == "negative_to_positive":
+        return "负转正"
+    if transition == "positive_to_negative":
+        return "正转负"
+    if transition == "zero_to_positive":
+        return "零转正"
+    if transition == "zero_to_negative":
+        return "零转负"
+    if transition == "to_zero":
+        return "正转零" if previous_sign == "positive" else "负转零"
+    if transition == "none":
+        return "无符号穿越"
+    return "样本不足"
+
+
+def _macd_signal_label(series_name: str, sign: str) -> str:
+    if sign == "unavailable":
+        return "样本不足"
+    if series_name == "histogram":
+        return {"positive": "正柱", "negative": "负柱", "zero": "柱值为零"}[sign]
+    if series_name == "histogram_delta":
+        return {"positive": "柱值上升", "negative": "柱值下降", "zero": "柱值变化为零"}[sign]
+    return {"positive": "斜率向上变化", "negative": "斜率向下变化", "zero": "斜率变化为零"}[sign]
+
+
+def _macd_histogram_signals(
+    histogram: Sequence[float | None],
+    histogram_delta: Sequence[float | None],
+    histogram_delta2: Sequence[float | None],
+) -> dict[str, dict[str, str]]:
+    signals: dict[str, dict[str, str]] = {}
+    series = {
+        "histogram": histogram,
+        "histogram_delta": histogram_delta,
+        "histogram_delta2": histogram_delta2,
+    }
+    for series_name, values in series.items():
+        current_value = values[-1] if values else None
+        previous_value = values[-2] if len(values) > 1 else None
+        sign = _macd_sign(current_value)
+        previous_sign = _macd_sign(previous_value)
+        transition = _macd_transition(previous_sign, sign)
+        label = _macd_signal_label(series_name, sign)
+        if transition not in {"none", "unavailable"}:
+            label = f"{label} · {_macd_transition_label(transition, previous_sign)}"
+        signals[series_name] = {"sign": sign, "transition": transition, "label": label}
+    return signals
+
+
+def _macd_momentum_context_label(
+    histogram: float | None,
+    histogram_delta: float | None,
+    histogram_delta2: float | None,
+) -> str:
+    histogram_sign = _macd_sign(histogram)
+    delta_sign = _macd_sign(histogram_delta)
+    delta2_sign = _macd_sign(histogram_delta2)
+    if "unavailable" in {histogram_sign, delta_sign, delta2_sign}:
+        return "样本不足，动量上下文不可用"
+
+    if histogram_sign == "negative":
+        if delta_sign == "negative":
+            if delta2_sign == "positive":
+                return "下行动量仍增强，但恶化减速"
+            if delta2_sign == "negative":
+                return "下行动量仍增强，恶化加速"
+            return "下行动量仍增强，恶化速度暂稳"
+        if delta_sign == "positive":
+            return "负柱收窄，动量正在修复"
+        return "负柱持平，尚未形成修复"
+
+    if histogram_sign == "positive":
+        if delta_sign == "positive":
+            return "正柱扩大，上行动量增强"
+        if delta_sign == "negative":
+            if delta2_sign == "positive":
+                return "正柱仍收窄，但转弱减速"
+            if delta2_sign == "negative":
+                return "正柱收窄，转弱加速"
+            return "正柱收窄，转弱速度暂稳"
+        return "正柱持平，上行动量暂缓"
+
+    if delta_sign == "positive":
+        return "柱值在零轴并向上"
+    if delta_sign == "negative":
+        return "柱值在零轴并向下"
+    return "柱值在零轴，方向尚未形成"
+
+
+def _macd_transition_markers(
+    dates: Sequence[str], values: Sequence[float | None]
+) -> list[dict[str, object]]:
+    markers: list[dict[str, object]] = []
+    rounded_values = [round(value, 6) if value is not None else None for value in values]
+    for index in range(1, min(len(dates), len(rounded_values))):
+        previous_value = rounded_values[index - 1]
+        current_value = rounded_values[index]
+        previous_sign = _macd_sign(previous_value)
+        current_sign = _macd_sign(current_value)
+        transition = _macd_transition(previous_sign, current_sign)
+        if transition in {"none", "unavailable"}:
+            continue
+        markers.append(
+            {
+                "time": dates[index],
+                "type": transition,
+                "label": _macd_transition_label(transition, previous_sign),
+                "from_sign": previous_sign,
+                "to_sign": current_sign,
+                "value": current_value,
+            }
+        )
+    return markers
+
+
 def _calculate_macd(
     closes: list[float],
     *,
     as_of: str | None,
     source: str,
 ) -> dict[str, object]:
-    fast = _ema_series(closes, MACD_FAST_WINDOW)
-    slow = _ema_series(closes, MACD_SLOW_WINDOW)
-    dif_series: list[float | None] = [
-        (fast[index] - slow[index])
-        if fast[index] is not None and slow[index] is not None
-        else None
-        for index in range(len(closes))
-    ]
-    dif_start = next((index for index, value in enumerate(dif_series) if value is not None), None)
-    dea_series: list[float | None] = [None] * len(closes)
-    if dif_start is not None:
-        valid_dif = [value for value in dif_series[dif_start:] if value is not None]
-        if len(valid_dif) >= MACD_SIGNAL_WINDOW:
-            alpha = 2 / (MACD_SIGNAL_WINDOW + 1)
-            dea = fmean(valid_dif[:MACD_SIGNAL_WINDOW])
-            dea_index = dif_start + MACD_SIGNAL_WINDOW - 1
-            dea_series[dea_index] = dea
-            for offset, dif in enumerate(valid_dif[MACD_SIGNAL_WINDOW:], start=MACD_SIGNAL_WINDOW):
-                dea = (dif - dea) * alpha + dea
-                dea_series[dif_start + offset] = dea
-
-    histogram_series: list[float | None] = [
-        (dif_series[index] - dea_series[index])
-        if dif_series[index] is not None and dea_series[index] is not None
-        else None
-        for index in range(len(closes))
-    ]
+    dif_series, dea_series, histogram_series, histogram_delta_series, histogram_delta2_series = _macd_series(closes)
     current_index = len(closes) - 1
     previous_index = current_index - 1
     dif = dif_series[current_index]
     dea = dea_series[current_index]
     histogram = histogram_series[current_index]
+    histogram_delta = histogram_delta_series[current_index]
+    histogram_delta2 = histogram_delta2_series[current_index]
     previous_dif = dif_series[previous_index] if previous_index >= 0 else None
     previous_dea = dea_series[previous_index] if previous_index >= 0 else None
     previous_histogram = histogram_series[previous_index] if previous_index >= 0 else None
+    histogram_signals = _macd_histogram_signals(
+        histogram_series,
+        histogram_delta_series,
+        histogram_delta2_series,
+    )
+    momentum_context = {
+        "label": _macd_momentum_context_label(
+            histogram,
+            histogram_delta,
+            histogram_delta2,
+        )
+    }
 
     crossover = "none"
     if previous_dif is not None and previous_dea is not None and dif is not None and dea is not None:
@@ -917,6 +1190,10 @@ def _calculate_macd(
         "dif": round(dif, 6) if dif is not None else None,
         "dea": round(dea, 6) if dea is not None else None,
         "histogram": round(histogram, 6) if histogram is not None else None,
+        "histogram_delta": round(histogram_delta, 6) if histogram_delta is not None else None,
+        "histogram_delta2": round(histogram_delta2, 6) if histogram_delta2 is not None else None,
+        "histogram_signals": histogram_signals,
+        "momentum_context": momentum_context,
         "previous_dif": round(previous_dif, 6) if previous_dif is not None else None,
         "previous_dea": round(previous_dea, 6) if previous_dea is not None else None,
         "previous_histogram": round(previous_histogram, 6) if previous_histogram is not None else None,

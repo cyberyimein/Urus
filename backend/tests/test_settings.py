@@ -57,6 +57,42 @@ def test_settings_reject_stale_revision(client) -> None:
     assert conflict.json()["error"]["code"] == "settings_revision_conflict"
 
 
+def test_schedule_update_preserves_intraday_pool_payload(client, app) -> None:
+    intraday_pool = {
+        "schema_version": "urus.intraday.pool_settings.v1",
+        "revision": 5,
+        "active": {"source": "runtime", "member_symbols": ["SPY", "QQQ", "IWM"]},
+        "pending": None,
+    }
+    with app.state.session_factory() as session:
+        session.add(
+            RuntimeSettingsModel(
+                id=1,
+                payload={
+                    "schedule": {"post_close_observation": {"enabled": True}},
+                    "intraday_pool": intraday_pool,
+                },
+                revision=3,
+                updated_at=utc_now(),
+            )
+        )
+        session.commit()
+
+    current = client.get("/api/settings").json()
+    update = {
+        "revision": current["revision"],
+        "schedule": {"post_close_observation": {"enabled": False}},
+    }
+    response = client.put("/api/settings", json=update)
+
+    assert response.status_code == 200
+    with app.state.session_factory() as session:
+        saved = session.get(RuntimeSettingsModel, 1)
+        assert saved is not None
+        assert saved.payload["intraday_pool"] == intraday_pool
+        assert saved.payload["schedule"]["post_close_observation"]["enabled"] is False
+
+
 def test_removed_persisted_schedule_fields_are_ignored() -> None:
     settings = Settings(scheduled_post_close_enabled=True)
     apply_payload(

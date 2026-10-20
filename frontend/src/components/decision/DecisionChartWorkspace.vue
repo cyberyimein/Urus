@@ -4,6 +4,7 @@ import { computed, ref } from 'vue'
 import type { ChartSeries, DecisionChartProjection, DailyBar } from '@/types/dailyEvidence'
 
 type RangeKey = '3M' | '6M' | '1Y' | 'ALL'
+type MacdViewKey = 'macd' | 'delta' | 'delta2'
 
 const props = withDefaults(defineProps<{
   projection: DecisionChartProjection | null
@@ -33,6 +34,7 @@ const emit = defineEmits<{
 }>()
 
 const localCursorIndex = ref<number | null>(null)
+const macdView = ref<MacdViewKey>('macd')
 const width = 1000
 const height = 642
 const left = 54
@@ -110,9 +112,36 @@ const priceBounds = computed(() => {
 })
 
 const volumeMax = computed(() => Math.max(...bars.value.map((bar) => bar.volume), 1))
+const macdHistogramSeriesId = computed(() => {
+  if (macdView.value === 'delta') return 'macd_histogram_delta'
+  if (macdView.value === 'delta2') return 'macd_histogram_delta2'
+  return 'macd_histogram'
+})
+const macdTransitionMarkers = computed(() => {
+  const markers = seriesById.value[macdHistogramSeriesId.value]?.markers
+  if (!Array.isArray(markers)) return []
+  const visibleDates = new Set(bars.value.map((bar) => bar.date))
+  return markers.filter((marker) => visibleDates.has(marker.time))
+})
+const macdSelectionStatus = computed(() => {
+  const seriesId = macdHistogramSeriesId.value
+  const selectedSeries = seriesById.value[seriesId]
+  if (!selectedSeries || !Array.isArray(selectedSeries.markers)) return '未计算此版本'
+  if (!latestBar.value) return '暂无最新日 K'
+  if (valueFor(seriesId, latestBar.value) === null) return '最新 bar 样本不足'
+  return ''
+})
+const macdPaneLabel = computed(() => {
+  if (macdView.value === 'delta') return 'MACD ΔH'
+  if (macdView.value === 'delta2') return 'MACD Δ²H'
+  return 'MACD H / DIF / DEA'
+})
 const macdValues = computed(() => {
   const values: number[] = []
-  for (const id of ['macd_dif_12_26', 'macd_dea_9', 'macd_histogram']) {
+  const seriesIds = macdView.value === 'macd'
+    ? ['macd_dif_12_26', 'macd_dea_9', 'macd_histogram']
+    : [macdHistogramSeriesId.value]
+  for (const id of seriesIds) {
     for (const bar of bars.value) {
       const value = valueFor(id, bar)
       if (value !== null) values.push(value)
@@ -271,8 +300,8 @@ function seriesColor(seriesId: string): string {
   return '#c7d1d8'
 }
 
-function histogramColor(bar: DailyBar): string {
-  const value = valueFor('macd_histogram', bar)
+function histogramColor(bar: DailyBar, seriesId: string): string {
+  const value = valueFor(seriesId, bar)
   return value !== null && value >= 0 ? '#26a69a' : '#ef5350'
 }
 </script>
@@ -287,6 +316,13 @@ function histogramColor(bar: DailyBar): string {
         <span v-if="props.layers.ma200"><i class="legend-line ma200"></i> MA200</span>
         <span v-if="bollingerActive"><i class="legend-line bollinger"></i> Bollinger</span>
         <span v-if="relativeActive"><i class="legend-line relative"></i> Relative</span>
+      </div>
+      <div v-if="macdActive" class="macd-series-tabs" role="group" aria-label="选择 MACD 序列">
+        <span>MACD</span>
+        <button type="button" :aria-pressed="macdView === 'macd'" :class="{ active: macdView === 'macd' }" @click="macdView = 'macd'">H</button>
+        <button type="button" :aria-pressed="macdView === 'delta'" :class="{ active: macdView === 'delta' }" @click="macdView = 'delta'">ΔH</button>
+        <button type="button" :aria-pressed="macdView === 'delta2'" :class="{ active: macdView === 'delta2' }" @click="macdView = 'delta2'">Δ²H</button>
+        <small v-if="macdSelectionStatus" role="status">{{ macdSelectionStatus }}</small>
       </div>
       <button class="chart-latest-button" type="button" @click="setCursorToLatest">回到最新</button>
     </div>
@@ -344,9 +380,15 @@ function histogramColor(bar: DailyBar): string {
       </g>
       <g v-if="macdSeries.length" class="macd-layer">
         <line :x1="left" :x2="left + plotWidth" :y1="macdY(0)" :y2="macdY(0)" class="macd-zero" />
-        <rect v-for="(bar, index) in bars" :key="`macd-${bar.date}`" :x="xForIndex(index) - candleWidth / 2" :y="Math.min(macdY(0), macdY(valueFor('macd_histogram', bar) ?? 0))" :width="candleWidth" :height="Math.max(1, Math.abs(macdY(valueFor('macd_histogram', bar) ?? 0) - macdY(0)))" :fill="histogramColor(bar)" class="macd-histogram" />
-        <path :d="linePath(seriesById.macd_dif_12_26, macdY)" class="macd-dif" :class="{ 'series-strategy-highlight': activeStrategySeriesIds.has('macd_dif_12_26') }" />
-        <path :d="linePath(seriesById.macd_dea_9, macdY)" class="macd-dea" :class="{ 'series-strategy-highlight': activeStrategySeriesIds.has('macd_dea_9') }" />
+        <template v-for="(bar, index) in bars" :key="`macd-${bar.date}`">
+          <rect v-if="valueFor(macdHistogramSeriesId, bar) !== null" :x="xForIndex(index) - candleWidth / 2" :y="Math.min(macdY(0), macdY(valueFor(macdHistogramSeriesId, bar) ?? 0))" :width="candleWidth" :height="Math.max(1, Math.abs(macdY(valueFor(macdHistogramSeriesId, bar) ?? 0) - macdY(0)))" :fill="histogramColor(bar, macdHistogramSeriesId)" class="macd-histogram" />
+        </template>
+        <path v-if="macdView === 'macd'" :d="linePath(seriesById.macd_dif_12_26, macdY)" class="macd-dif" :class="{ 'series-strategy-highlight': activeStrategySeriesIds.has('macd_dif_12_26') }" />
+        <path v-if="macdView === 'macd'" :d="linePath(seriesById.macd_dea_9, macdY)" class="macd-dea" :class="{ 'series-strategy-highlight': activeStrategySeriesIds.has('macd_dea_9') }" />
+        <g v-for="marker in macdTransitionMarkers" :key="`${macdHistogramSeriesId}-${marker.time}-${marker.type}`" class="macd-transition-marker">
+          <circle :cx="xForTime(marker.time)" :cy="macdY(marker.value)" r="4.5" />
+          <title>{{ marker.label }} · {{ marker.time }} · {{ marker.from_sign }} → {{ marker.to_sign }} · {{ marker.value.toFixed(6) }}</title>
+        </g>
       </g>
       <g v-if="relativeSeries" class="relative-layer">
         <line :x1="left" :x2="left + plotWidth" :y1="relativeY(100)" :y2="relativeY(100)" class="relative-reference" />
@@ -356,7 +398,7 @@ function histogramColor(bar: DailyBar): string {
       <g class="chart-axis-labels">
         <text v-for="tick in priceTicks" :key="`price-label-${tick.value}`" :x="width - 4" :y="tick.y + 3" text-anchor="end">{{ tick.label }}</text>
         <text :x="left" :y="volumeTop - 10">VOLUME</text>
-        <text :x="left" :y="momentumTop - 10">{{ macdActive ? 'MACD' : rsiSeries ? rsiSeries.series_id.toUpperCase() : relativeActive ? 'RELATIVE' : 'MOMENTUM' }}</text>
+        <text :x="left" :y="momentumTop - 10">{{ macdActive ? macdPaneLabel : rsiSeries ? rsiSeries.series_id.toUpperCase() : relativeActive ? 'RELATIVE' : 'MOMENTUM' }}</text>
         <text v-if="relativeSeries" :x="left" :y="relativeTop - 8">RELATIVE STRENGTH · QQQ</text>
         <text v-for="label in dateLabels" :key="`date-label-${label.label}`" :x="label.x" :y="height - 12" text-anchor="middle">{{ label.label }}</text>
       </g>

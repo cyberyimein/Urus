@@ -160,6 +160,22 @@ export interface ObservationReport {
   content_sha256: string
 }
 
+export interface ObservationRunSummary {
+  run_id: string
+  status: string
+  trigger_mode: string
+  trading_date: string
+  universe_revision_id: string | null
+  universe_freshness: string
+  group_count: number
+  successful_group_count: number
+  failed_group_count: number
+  quality_issue_count: number
+  created_at: string
+  completed_at: string | null
+  error_message: string | null
+}
+
 export interface ObservationRun {
   run_id: string
   status: string

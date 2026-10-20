@@ -54,7 +54,6 @@ const optionsAlignment = ref<PostCloseOptionAlignment | null>(null)
 const optionsSourceRun = ref<{ run_type: string; cutoff_time: string | null } | null>(null)
 let evidenceRequestGeneration = 0
 let evidenceController: AbortController | null = null
-let frozenEvidence: DailyEvidenceResponse | null = null
 let optionsRequestGeneration = 0
 const layers = reactive<Record<LayerKey, boolean>>({
   ma20: true,
@@ -135,10 +134,10 @@ const latestChange = computed(() => {
 
 function latestSeriesValue(seriesId: string): number | null {
   const item = projection.value?.instruments?.[selectedSymbol.value]?.series?.find((entry) => entry.series_id === seriesId)
-  if (!item) return null
-  const points = [...item.points].reverse()
-  const point = points.find((entry) => typeof entry.value === 'number')
-  return point?.value ?? null
+  const latestDate = bars.value.at(-1)?.date
+  if (!item || !latestDate) return null
+  const point = item.points.find((entry) => entry.time === latestDate)
+  return typeof point?.value === 'number' && Number.isFinite(point.value) ? point.value : null
 }
 
 function numericSeriesValues(seriesId: string, startsWith = false): number[] {
@@ -155,6 +154,34 @@ const ma50 = computed(() => latestSeriesValue('ma50'))
 const ma200 = computed(() => latestSeriesValue('ma200'))
 const rsi = computed(() => latestSeriesValue('rsi14'))
 const macdHistogram = computed(() => latestSeriesValue('macd_histogram'))
+const macdHistogramDelta = computed(() => latestSeriesValue('macd_histogram_delta'))
+const macdHistogramDelta2 = computed(() => latestSeriesValue('macd_histogram_delta2'))
+const macdSignalCards = computed(() => {
+  const instrument = projection.value?.instruments?.[selectedSymbol.value]
+  const signals = instrument?.macd_momentum?.histogram_signals
+  const definitions = [
+    { key: 'histogram', label: 'H', seriesId: 'macd_histogram' },
+    { key: 'histogram_delta', label: 'ΔH', seriesId: 'macd_histogram_delta' },
+    { key: 'histogram_delta2', label: 'Δ²H', seriesId: 'macd_histogram_delta2' },
+  ] as const
+  return definitions.map((definition) => {
+    const series = instrument?.series.find((item) => item.series_id === definition.seriesId)
+    const markers = series?.markers
+    const signal = signals?.[definition.key] ?? null
+    return {
+      ...definition,
+      signal,
+      latestMarker: signal && signal.sign !== 'unavailable' && Array.isArray(markers)
+        ? markers.at(-1) ?? null
+        : null,
+      markersAvailable: Array.isArray(markers),
+    }
+  })
+})
+const macdMomentumContextLabel = computed(() => {
+  const context = projection.value?.instruments?.[selectedSymbol.value]?.macd_momentum?.momentum_context
+  return typeof context?.label === 'string' && context.label ? context.label : '未计算此版本'
+})
 const relative = computed(() => {
   const series = projection.value?.instruments?.[selectedSymbol.value]?.series?.find((entry) => entry.series_id.startsWith('relative_performance'))
   if (!series) return null
@@ -167,11 +194,7 @@ const relativeFiveDayChange = computed(() => {
   const previous = values.at(-6)!
   return previous === 0 ? null : ((current / previous) - 1) * 100
 })
-const macdHistogramChange = computed(() => {
-  const values = numericSeriesValues('macd_histogram')
-  if (values.length < 2) return null
-  return values.at(-1)! - values.at(-2)!
-})
+const macdHistogramChange = macdHistogramDelta
 
 const trend = computed(() => {
   const close = latestBar.value?.close
@@ -185,8 +208,10 @@ const momentum = computed(() => {
   if (rsi.value === null && macdHistogram.value === null) return { label: '等待动量', tone: 'neutral', detail: 'RSI / MACD 尚未可用' }
   if (rsi.value !== null && rsi.value >= 70) return { label: '动量过热', tone: 'warning', detail: `RSI14 ${rsi.value.toFixed(1)}，需防止追高` }
   if (rsi.value !== null && rsi.value <= 30) return { label: '动量超卖', tone: 'warning', detail: `RSI14 ${rsi.value.toFixed(1)}，等待反转确认` }
-  if (macdHistogram.value !== null && macdHistogram.value > 0) return { label: '动量改善', tone: 'positive', detail: 'MACD 柱体位于零轴上方' }
-  return { label: '动量偏弱', tone: 'negative', detail: 'MACD 柱体位于零轴下方' }
+  if (macdHistogram.value !== null && macdHistogram.value > 0) return { label: '正柱', tone: 'positive', detail: 'H 位于零轴上方；结合 ΔH 判断正柱正在扩大还是收窄。' }
+  if (macdHistogram.value !== null && macdHistogram.value < 0) return { label: '负柱', tone: 'negative', detail: 'H 位于零轴下方；Δ²H 为正也可能只是下行减速。' }
+  if (macdHistogram.value === 0) return { label: 'H 在零轴', tone: 'neutral', detail: '柱值为零；继续观察后续完整日 K。' }
+  return { label: '动量不可用', tone: 'neutral', detail: 'MACD 样本尚未达到预热要求。' }
 })
 
 const relativeState = computed(() => {
@@ -359,10 +384,14 @@ const relativeMetric = computed(() => {
 })
 const momentumMetric = computed(() => {
   const rsiText = rsi.value === null ? '—' : rsi.value.toFixed(1)
-  const macdText = macdHistogram.value === null ? '—' : macdHistogram.value.toFixed(3)
-  const change = macdHistogramChange.value
-  const changeText = change === null ? '—' : `${change >= 0 ? '+' : ''}${change.toFixed(3)}`
-  return `RSI14 ${rsiText} · MACD ${macdText} (${changeText})`
+  const valueText = (seriesId: string, value: number | null) => {
+    const hasSeries = projection.value?.instruments?.[selectedSymbol.value]?.series.some((item) => item.series_id === seriesId) ?? false
+    if (!hasSeries) return '未计算此版本'
+    if (value === null) return '样本不足'
+    const precision = seriesId === 'macd_histogram_delta' || seriesId === 'macd_histogram_delta2' ? 6 : 3
+    return `${value >= 0 ? '+' : ''}${value.toFixed(precision)}`
+  }
+  return `RSI14 ${rsiText} · H ${valueText('macd_histogram', macdHistogram.value)} · ΔH ${valueText('macd_histogram_delta', macdHistogramDelta.value)} · Δ²H ${valueText('macd_histogram_delta2', macdHistogramDelta2.value)}`
 })
 const trendMetric = computed(() => {
   const close = latestBar.value?.close
@@ -446,7 +475,6 @@ async function loadEvidence() {
   evidenceController = controller
   const requestSymbol = selectedSymbol.value
   const requestDatasetId = historicalDatasetId.value
-  if (frozenEvidence?.dataset.dataset_id !== requestDatasetId) frozenEvidence = null
   loading.value = true
   error.value = ''
   demoReason.value = ''
@@ -458,26 +486,16 @@ async function loadEvidence() {
   deterministicSynthesis.value = {}
   try {
     if (requestDatasetId) {
-      // A frozen chart already contains all symbols. Reuse this one dataset
-      // while navigating within it, avoiding repeated large chart allocations.
-      const [storedDataset, storedChart, storedStrategies] = await Promise.all([
-        frozenEvidence ? Promise.resolve(frozenEvidence.dataset) : api.getDailyDataset(requestDatasetId, controller.signal),
-        frozenEvidence ? Promise.resolve(frozenEvidence.chart) : api.getDailyChart(requestDatasetId, controller.signal),
-        api.getDailyStrategies(requestDatasetId, controller.signal),
-      ])
+      // Read only this instrument, with overlays and decisions pinned to the
+      // same strategy set by the backend. Release the previous chart on switch.
+      const response = await api.getDailyInstrumentEvidence(requestDatasetId, requestSymbol, controller.signal)
       if (requestGeneration !== evidenceRequestGeneration || requestSymbol !== selectedSymbol.value || requestDatasetId !== historicalDatasetId.value) return
-      if (storedDataset.dataset_id !== requestDatasetId || storedChart.dataset_id !== requestDatasetId || storedStrategies.dataset_id !== requestDatasetId) {
+      if (response.dataset.dataset_id !== requestDatasetId || response.chart.dataset_id !== requestDatasetId || response.chart.symbol !== requestSymbol) {
         throw new Error('冻结证据的 dataset_id 不一致，已拒绝加载。')
       }
-      const chartBars = storedChart.instruments?.[requestSymbol]?.price?.bars ?? []
+      const chartBars = response.chart.instruments?.[requestSymbol]?.price?.bars ?? []
       if (!chartBars.length) throw new Error(`冻结 dataset 中没有 ${requestSymbol} 的日 K`)
-      frozenEvidence = {
-        dataset: storedDataset,
-        chart: storedChart,
-        strategy_decisions: storedStrategies.strategy_decisions,
-        deterministic_synthesis: storedStrategies.deterministic_synthesis,
-      }
-      applyResponse(frozenEvidence)
+      applyResponse(response)
     } else {
       const response = await api.createDailyDataset({
         scope_type: 'instrument',
@@ -721,7 +739,6 @@ onBeforeUnmount(() => {
   evidenceRequestGeneration += 1
   optionsRequestGeneration += 1
   evidenceController?.abort()
-  frozenEvidence = null
 })
 
 onMounted(() => {
@@ -1008,6 +1025,21 @@ watch(
                 <div class="fact-row"><span class="fact-icon" :data-tone="momentum.tone">◒</span><div><small>MOMENTUM</small><strong>{{ momentum.label }}</strong><p>{{ momentum.detail }}</p><em>{{ momentumMetric }}</em></div></div>
                 <div class="fact-row"><span class="fact-icon" :data-tone="relativeState.tone">⇄</span><div><small>RELATIVE STRENGTH</small><strong>{{ relativeState.label }}</strong><p>{{ relativeState.detail }}</p><em>{{ relativeMetric }}</em></div></div>
               </div>
+              <section class="macd-signal-panel" aria-label="MACD 符号状态">
+                <div class="macd-signal-context"><span>MACD CONTEXT</span><strong>{{ macdMomentumContextLabel }}</strong></div>
+                <div class="macd-signal-grid">
+                  <article v-for="item in macdSignalCards" :key="item.key" class="macd-signal-card" :data-sign="item.signal?.sign ?? 'unavailable'">
+                    <span>{{ item.label }}</span>
+                    <strong>{{ item.signal?.label ?? '未计算此版本' }}</strong>
+                    <small v-if="item.latestMarker">最近穿越：{{ item.latestMarker.label }} · {{ item.latestMarker.time }}</small>
+                    <small v-else-if="!item.signal">状态与穿越标记未计算此版本</small>
+                    <small v-else-if="!item.markersAvailable">穿越标记未计算此版本</small>
+                    <small v-else-if="item.signal?.sign === 'unavailable'">信号样本不足</small>
+                    <small v-else-if="item.signal?.transition === 'unavailable'">缺少相邻有效点，暂不能判断穿越</small>
+                    <small v-else>暂无符号穿越</small>
+                  </article>
+                </div>
+              </section>
             </article>
 
             <article class="insight-card ai-card">
